@@ -478,10 +478,12 @@ namespace Trecs.Internal
             }
         }
 
+        internal bool SuppressDisposeWarnings { get; set; }
+
         internal void Dispose()
         {
             TrecsDebugAssert.That(!_isDisposed);
-            ClearAll(warnUndisposed: true);
+            ClearAll(warnUndisposed: !SuppressDisposeWarnings);
 
             DisposeAllChunks();
             _chunkDirectory.Dispose();

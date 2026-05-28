@@ -661,6 +661,8 @@ namespace Trecs.Internal
             return reclaimed;
         }
 
+        internal bool SuppressDisposeWarnings { get; set; }
+
         public void Dispose()
         {
             TrecsDebugAssert.That(!_isDisposed);
@@ -671,7 +673,8 @@ namespace Trecs.Internal
             // (Bucket slots themselves are reclaimed by the unconditional FreePage loop
             // below, regardless of leak state.)
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            WarnAboutLiveLeaks();
+            if (!SuppressDisposeWarnings)
+                WarnAboutLiveLeaks();
 
             for (int n = 0; n < _denseSlotIndices.Length; n++)
             {

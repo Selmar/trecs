@@ -127,6 +127,9 @@ namespace Trecs.Tests.PlayMode
                     }
                 }
 
+                SceneManager.CreateScene("__sample_teardown");
+                yield return SceneManager.UnloadSceneAsync("FeedingFrenzyBenchmark");
+
                 LogAssert.NoUnexpectedReceived();
             }
             finally
@@ -181,6 +184,9 @@ namespace Trecs.Tests.PlayMode
             {
                 yield return null;
             }
+
+            SceneManager.CreateScene("__sample_teardown");
+            yield return SceneManager.UnloadSceneAsync(sceneName);
 
             LogAssert.NoUnexpectedReceived();
         }

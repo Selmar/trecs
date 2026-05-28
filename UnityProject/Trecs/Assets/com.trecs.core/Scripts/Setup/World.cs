@@ -390,6 +390,15 @@ namespace Trecs
             }
         }
 
+        internal bool SuppressDisposeWarnings
+        {
+            set
+            {
+                _heapAllocator.NativeUniqueChunkStore.SuppressDisposeWarnings = value;
+                _heapAllocator.NativeSharedHeap.SuppressDisposeWarnings = value;
+            }
+        }
+
         internal EcsHeapAllocator HeapAllocator
         {
             get
