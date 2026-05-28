@@ -78,21 +78,21 @@ namespace Trecs.Internal
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static (NativeComponentBufferRead<T> buffer, int count) GetBufferReadForJob<T>(
             this WorldAccessor world,
-            Group group
+            GroupIndex group
         )
             where T : unmanaged, IEntityComponent => world.GetBufferReadForJobScheduling<T>(group);
 
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static (NativeComponentBufferWrite<T> buffer, int count) GetBufferWriteForJob<T>(
             this WorldAccessor world,
-            Group group
+            GroupIndex group
         )
             where T : unmanaged, IEntityComponent => world.GetBufferWriteForJobScheduling<T>(group);
 
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static NativeEntityHandleBuffer GetEntityHandleBufferForJob(
             this WorldAccessor world,
-            Group group
+            GroupIndex group
         ) => world.GetEntityHandleBufferForJobScheduling(group);
 
         [EditorBrowsable(EditorBrowsableState.Never)]
@@ -112,7 +112,7 @@ namespace Trecs.Internal
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static NativeComponentLookupRead<T> CreateNativeComponentLookupReadForJob<T>(
             this WorldAccessor world,
-            ReadOnlyFastList<Group> groups,
+            ReadOnlyList<GroupIndex> groups,
             Allocator allocator
         )
             where T : unmanaged, IEntityComponent =>
@@ -121,7 +121,7 @@ namespace Trecs.Internal
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static NativeComponentLookupWrite<T> CreateNativeComponentLookupWriteForJob<T>(
             this WorldAccessor world,
-            ReadOnlyFastList<Group> groups,
+            ReadOnlyList<GroupIndex> groups,
             Allocator allocator
         )
             where T : unmanaged, IEntityComponent =>
@@ -132,28 +132,31 @@ namespace Trecs.Internal
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static NativeComponentBufferRead<T> GetBufferForGroupForJob<T>(
             this NativeComponentLookupRead<T> lookup,
-            Group group
+            GroupIndex group
         )
             where T : unmanaged, IEntityComponent => lookup.GetBufferForGroupInternal(group);
 
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static NativeComponentBufferWrite<T> GetBufferForGroupForJob<T>(
             this NativeComponentLookupWrite<T> lookup,
-            Group group
+            GroupIndex group
         )
             where T : unmanaged, IEntityComponent => lookup.GetBufferForGroupInternal(group);
 
-        // ── NativeSetWrite (immediate set writes, flushed by SetFlushJob) ──
+        // ── NativeSetCommandBuffer (job-side set writes, flushed by SetFlushJob) ──
 
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public static NativeSetWrite<TSet> CreateNativeSetWriteForJob<TSet>(
+        public static NativeSetCommandBuffer<TSet> CreateNativeSetCommandBufferForJob<TSet>(
             this WorldAccessor world
         )
-            where TSet : struct, IEntitySet =>
-            world.GetSetForJobScheduling<TSet>().CreateWriter<TSet>();
+            where TSet : struct, IEntitySet
+        {
+            world.AssertCanMakeStructuralChanges();
+            return world.GetSetForJobScheduling<TSet>().CreateWriter<TSet>();
+        }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public static JobHandle IncludeNativeSetWriteDepsForJob<TSet>(
+        public static JobHandle IncludeNativeSetCommandBufferDepsForJob<TSet>(
             this WorldAccessor world,
             JobHandle deps
         )
@@ -161,14 +164,14 @@ namespace Trecs.Internal
         {
             var rid = ResourceId.Set(EntitySet<TSet>.Value.Id);
             var scheduler = world.JobScheduler;
-            ref var collection = ref world.GetSetForJobScheduling<TSet>();
-            foreach (var entry in collection._entriesPerGroup)
-                deps = scheduler.IncludeWriteDep(deps, rid, entry.Key);
+            var collection = world.GetSetForJobScheduling<TSet>();
+            for (int i = 0; i < collection._registeredGroups.Length; i++)
+                deps = scheduler.IncludeWriteDep(deps, rid, collection._registeredGroups[i]);
             return deps;
         }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public static void TrackNativeSetWriteDepsForJob<TSet>(
+        public static unsafe void TrackNativeSetCommandBufferDepsForJob<TSet>(
             this WorldAccessor world,
             JobHandle handle
         )
@@ -176,19 +179,26 @@ namespace Trecs.Internal
         {
             var rid = ResourceId.Set(EntitySet<TSet>.Value.Id);
             var scheduler = world.JobScheduler;
-            ref var collection = ref world.GetSetForJobScheduling<TSet>();
+            var collection = world.GetSetForJobScheduling<TSet>();
 
             var flushJob = new SetFlushJob
             {
                 AddQueue = collection._jobAddQueue,
                 RemoveQueue = collection._jobRemoveQueue,
                 EntriesPerGroup = collection._entriesPerGroup,
-                RequireDeterministic = world.RequireDeterministicSubmission,
+                RegisteredGroups = collection._registeredGroups,
+                ClearRequested = collection._jobClearRequested,
             };
             var flushHandle = flushJob.Schedule(handle);
 
-            foreach (var entry in collection._entriesPerGroup)
-                scheduler.TrackJobWrite(flushHandle, rid, entry.Key);
+            var name = SetFlushJobName<TSet>.Value;
+            for (int i = 0; i < collection._registeredGroups.Length; i++)
+                scheduler.TrackJobWrite(flushHandle, rid, collection._registeredGroups[i], name);
+        }
+
+        static class SetFlushJobName<TSet>
+        {
+            public static readonly string Value = "SetFlushJob<" + typeof(TSet).Name + ">";
         }
 
         // ── NativeEntitySetIndices (read-only set indices for one group) ──
@@ -196,12 +206,12 @@ namespace Trecs.Internal
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static NativeEntitySetIndices<TSet> GetSetIndicesForJob<TSet>(
             this WorldAccessor world,
-            Group group
+            GroupIndex group
         )
             where TSet : struct, IEntitySet
         {
-            ref var collection = ref world.GetSetForJobScheduling<TSet>();
-            if (collection._entriesPerGroup.TryGetValue(group, out var groupEntry))
+            var collection = world.GetSetForJobScheduling<TSet>();
+            if (collection.TryGetGroupEntry(group, out var groupEntry))
             {
                 var indices = groupEntry.Indices;
                 return new NativeEntitySetIndices<TSet>(indices.Buffer, indices.Count);
@@ -215,7 +225,7 @@ namespace Trecs.Internal
         public static NativeSetRead<TSet> CreateNativeSetReadForJob<TSet>(this WorldAccessor world)
             where TSet : struct, IEntitySet
         {
-            ref var collection = ref world.GetSetForJobScheduling<TSet>();
+            var collection = world.GetSetForJobScheduling<TSet>();
             return new NativeSetRead<TSet>(collection);
         }
 
@@ -229,9 +239,9 @@ namespace Trecs.Internal
             var setId = EntitySet<TSet>.Value.Id;
             var rid = ResourceId.Set(setId);
             var scheduler = world.JobScheduler;
-            ref var collection = ref world.GetSetForJobScheduling(setId);
-            foreach (var entry in collection._entriesPerGroup)
-                deps = scheduler.IncludeReadDep(deps, rid, entry.Key);
+            var collection = world.GetSetForJobScheduling(setId);
+            for (int i = 0; i < collection._registeredGroups.Length; i++)
+                deps = scheduler.IncludeReadDep(deps, rid, collection._registeredGroups[i]);
             return deps;
         }
 
@@ -245,9 +255,15 @@ namespace Trecs.Internal
             var setId = EntitySet<TSet>.Value.Id;
             var rid = ResourceId.Set(setId);
             var scheduler = world.JobScheduler;
-            ref var collection = ref world.GetSetForJobScheduling(setId);
-            foreach (var entry in collection._entriesPerGroup)
-                scheduler.TrackJobRead(handle, rid, entry.Key);
+            var collection = world.GetSetForJobScheduling(setId);
+            var name = SetReadName<TSet>.Value;
+            for (int i = 0; i < collection._registeredGroups.Length; i++)
+                scheduler.TrackJobRead(handle, rid, collection._registeredGroups[i], name);
+        }
+
+        static class SetReadName<TSet>
+        {
+            public static readonly string Value = "SetRead<" + typeof(TSet).Name + ">";
         }
 
         // ── Sparse iteration helpers ──

@@ -7,16 +7,16 @@ namespace Trecs.Samples.FeedingFrenzy101
     /// simulation values, making visuals fluid even at low fixed
     /// timestep rates.
     ///
-    /// Runs as [VariableUpdate] before the RendererSystem. Writes to
-    /// Position/Rotation (read by RendererSystem) by lerping toward
+    /// Runs in the Presentation phase before the IndirectRenderer. Writes to
+    /// Position/Rotation (read by IndirectRenderer) by lerping toward
     /// SimPosition/SimRotation (written by fixed-update systems).
     /// </summary>
-    [VariableUpdate]
+    [ExecuteIn(SystemPhase.Presentation)]
     public partial class VisualSmoothingSystem : ISystem
     {
         const float ChaseSpeed = 15f;
 
-        [ForEachEntity(Tag = typeof(FrenzyTags.Fish))]
+        [ForEachEntity(typeof(FrenzyTags.Fish))]
         [WrapAsJob]
         static void Execute(in Fish fish, in NativeWorldAccessor world)
         {

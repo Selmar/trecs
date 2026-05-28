@@ -6,12 +6,12 @@ namespace Trecs.Samples.Partitions
     /// Counts down the rest timer on Resting balls. When the timer expires,
     /// the ball is launched upward and transitions back to the Active partition.
     /// </summary>
-    [ExecutesAfter(typeof(PhysicsSystem))]
+    [ExecuteAfter(typeof(PhysicsSystem))]
     public partial class WakeUpSystem : ISystem
     {
         const float LaunchSpeed = 8f;
 
-        [ForEachEntity(Tags = new[] { typeof(BallTags.Ball), typeof(BallTags.Resting) })]
+        [ForEachEntity(typeof(BallTags.Ball), Without = typeof(BallTags.Active))]
         void Execute(in RestingBall ball)
         {
             ball.RestTimer -= World.DeltaTime;
@@ -21,7 +21,7 @@ namespace Trecs.Samples.Partitions
                 float angle = World.Rng.Next() * 2f * math.PI;
                 ball.Velocity = new float3(math.cos(angle) * 2f, LaunchSpeed, math.sin(angle) * 2f);
 
-                ball.MoveTo<BallTags.Ball, BallTags.Active>(World);
+                ball.SetTag<BallTags.Active>(World);
             }
         }
 

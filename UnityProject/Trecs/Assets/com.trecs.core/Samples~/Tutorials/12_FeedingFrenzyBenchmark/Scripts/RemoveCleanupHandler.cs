@@ -8,7 +8,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
 
         public RemoveCleanupHandler(World world)
         {
-            World = world.CreateAccessor();
+            World = world.CreateAccessor(AccessorRole.Fixed);
 
             World
                 .Events.EntitiesWithTags<FrenzyTags.Fish>()
@@ -28,7 +28,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
         {
             if (targetMeal.Value.Exists(World))
             {
-                World.RemoveEntity(targetMeal.Value);
+                targetMeal.Value.Remove(World);
             }
         }
 
@@ -37,7 +37,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
         {
             if (fish.Value.Exists(World))
             {
-                World.RemoveEntity(fish.Value);
+                fish.Value.Remove(World);
             }
         }
 

@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Trecs.Internal;
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 
 namespace Trecs
 {
@@ -12,9 +14,10 @@ namespace Trecs
     [EditorBrowsable(EditorBrowsableState.Never)]
     internal readonly struct SetGroupLookup
     {
-        readonly NativeDenseDictionary<Group, SetGroupEntry> _entriesPerGroup;
+        [NativeDisableContainerSafetyRestriction]
+        readonly NativeList<SetGroupEntry> _entriesPerGroup;
 
-        internal SetGroupLookup(in EntitySet set)
+        internal SetGroupLookup(in EntitySetStorage set)
         {
             _entriesPerGroup = set._entriesPerGroup;
         }
@@ -26,9 +29,15 @@ namespace Trecs
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool TryGetGroupEntry(Group group, out SetGroupEntryRead groupEntry)
+        public bool TryGetGroupEntry(GroupIndex group, out SetGroupEntryRead groupEntry)
         {
-            if (_entriesPerGroup.TryGetValue(group, out var entry))
+            if (group.IsNull)
+            {
+                groupEntry = default;
+                return false;
+            }
+            var entry = _entriesPerGroup[group.Index];
+            if (entry.IsValid)
             {
                 groupEntry = new SetGroupEntryRead(entry);
                 return true;

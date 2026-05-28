@@ -6,7 +6,7 @@ namespace Trecs.Samples.FeedingFrenzy101
     /// Pairs idle fish with available meals each frame.
     ///
     /// Demonstrates: Aspect queries with partition-based tag filtering
-    /// and MoveTo partition transitions.
+    /// and SetTag partition transitions.
     ///
     /// This system is serial (not a job) because pairing fish 1:1 with
     /// meals is inherently sequential — each pairing removes both from
@@ -36,8 +36,8 @@ namespace Trecs.Samples.FeedingFrenzy101
         void PairFishWithMeal(in Fish fish, in Meal meal)
         {
             // Store a stable handle to the meal (survives group moves)
-            fish.TargetMeal = meal.EntityIndex.ToHandle(World);
-            meal.ApproachingFish = fish.EntityIndex.ToHandle(World);
+            fish.TargetMeal = meal.Handle(World);
+            meal.ApproachingFish = fish.Handle(World);
 
             // Set destination at the meal's position, keeping the fish's Y
             var destPos = meal.Position;
@@ -52,8 +52,8 @@ namespace Trecs.Samples.FeedingFrenzy101
 
             // Transition both to Eating partition — this moves them into
             // separate groups so eating systems only iterate eating entities
-            fish.MoveTo<FrenzyTags.Fish, FrenzyTags.Eating>(World);
-            meal.MoveTo<FrenzyTags.Meal, FrenzyTags.Eating>(World);
+            fish.SetTag<FrenzyTags.Eating>(World);
+            meal.SetTag<FrenzyTags.Eating>(World);
         }
 
         partial struct Fish

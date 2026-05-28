@@ -159,18 +159,28 @@ namespace Trecs.SourceGen.Shared
         }
 
         /// <summary>
-        /// Appends a property with getter using optimized formatting
+        /// Appends a property with getter using optimized formatting.
+        /// When <paramref name="attributeLine"/> is non-empty it is emitted on
+        /// the line immediately above the property declaration (so callers can
+        /// stamp <c>[GeneratedCode]</c> on per-member output emitted into a
+        /// partial re-open of a user-authored type).
         /// </summary>
         public OptimizedStringBuilder AppendProperty(
             string returnType,
             string propertyName,
             string getterExpression,
             int indentLevel = 0,
-            bool isInlined = true
+            bool isInlined = true,
+            string attributeLine = ""
         )
         {
             var indent = new string(' ', indentLevel * SpacesPerIndent);
             var innerIndent = new string(' ', (indentLevel + 1) * SpacesPerIndent);
+
+            if (!string.IsNullOrEmpty(attributeLine))
+            {
+                _sb.Append(indent).AppendLine(attributeLine);
+            }
 
             _sb.Append(indent)
                 .Append("public ")
@@ -211,6 +221,41 @@ namespace Trecs.SourceGen.Shared
             contentGenerator(this);
 
             _sb.AppendLine("}");
+            return this;
+        }
+
+        /// <summary>
+        /// Opens a stack of <c>partial &lt;kind&gt; &lt;Name&gt;&lt;TypeParams&gt;</c>
+        /// wrappers for every entry in <paramref name="containingTypes"/>
+        /// (outer-first), invokes <paramref name="contentGenerator"/> with the
+        /// indent level inside the innermost wrapper, then closes the
+        /// wrappers in reverse. When the chain is empty, just calls the
+        /// content generator at <paramref name="startIndentLevel"/>.
+        /// </summary>
+        public OptimizedStringBuilder WrapInContainingTypes(
+            IReadOnlyList<ContainingTypeInfo> containingTypes,
+            int startIndentLevel,
+            Action<OptimizedStringBuilder, int> contentGenerator
+        )
+        {
+            int indentLevel = startIndentLevel;
+            foreach (var ct in containingTypes)
+            {
+                AppendLine(
+                    indentLevel,
+                    $"{ct.Accessibility} partial {ct.Kind} {ct.Name}{ct.TypeParameterList}"
+                );
+                AppendLine(indentLevel, "{");
+                indentLevel++;
+            }
+
+            contentGenerator(this, indentLevel);
+
+            for (int i = containingTypes.Count - 1; i >= 0; i--)
+            {
+                indentLevel--;
+                AppendLine(indentLevel, "}");
+            }
             return this;
         }
 

@@ -9,7 +9,7 @@ namespace Trecs
     /// <summary>
     /// Fluent builder for constructing and configuring a Trecs <see cref="World"/> instance.
     /// </summary>
-    public class WorldBuilder
+    public sealed class WorldBuilder
     {
         readonly List<ISystem> _systems = new();
         readonly List<IBlobStore> _blobStores = new();
@@ -17,40 +17,78 @@ namespace Trecs
 
         internal readonly List<IInterpolatedPreviousSaver> _interpolatedPreviousSavers = new();
         readonly List<Template> _templates = new();
-        readonly List<SetDef> _sets = new();
-        internal ISystemMetadataProvider _systemMetadataProvider;
+        readonly List<EntitySet> _sets = new();
+        internal ISystemEntryProvider _systemEntryProvider;
+        readonly SerializerRegistry _serializerRegistry;
+        readonly ComponentArraySerializerRegistry _componentArraySerializerRegistry = new();
 
         bool _hasBuilt;
         BlobCacheSettings _blobCacheSettings;
         WorldSettings _settings;
         ITrecsPoolManager _poolManager;
+        string _debugName;
 
         /// <summary>
-        /// Creates a new empty WorldBuilder.
+        /// Creates a new WorldBuilder. Pass an externally-owned
+        /// <see cref="SerializerRegistry"/> when the registry must live in
+        /// the DI container and be resolvable before the world exists
+        /// (e.g. installers that register custom serializers at install
+        /// time). The caller is responsible for pre-populating defaults
+        /// on a supplied registry; when <paramref name="serializerRegistry"/>
+        /// is null the builder creates one and auto-populates it with the
+        /// common trecs serializers.
         /// </summary>
-        public WorldBuilder() { }
+        public WorldBuilder(SerializerRegistry serializerRegistry = null)
+        {
+            if (serializerRegistry == null)
+            {
+                _serializerRegistry = new SerializerRegistry();
+                DefaultTrecsSerializers.RegisterCommonTrecsSerializers(_serializerRegistry);
+            }
+            else
+            {
+                _serializerRegistry = serializerRegistry;
+            }
+        }
+
+        /// <summary>
+        /// Sets a human-readable debug name on the resulting <see cref="World.DebugName"/>.
+        /// Surfaced by editor tooling (e.g. the World dropdown in <c>TrecsPlayerWindow</c>).
+        /// </summary>
+        public WorldBuilder SetDebugName(string debugName)
+        {
+            TrecsAssert.That(debugName != null, "debugName must not be null");
+            TrecsAssert.That(_debugName == null, "DebugName has already been set");
+            _debugName = debugName;
+            return this;
+        }
 
         /// <summary>
         /// Sets the <see cref="WorldSettings"/> for the world being built.
         /// </summary>
         public WorldBuilder SetSettings(WorldSettings settings)
         {
-            Assert.IsNotNull(settings);
-            Assert.IsNull(_settings, "Settings have already been set");
+            TrecsAssert.That(settings != null, "settings must not be null");
+            TrecsAssert.That(_settings == null, "Settings have already been set");
             _settings = settings;
             return this;
         }
 
         /// <summary>
-        /// Registers a concrete entity type with the world. Each entity type
+        /// Registers a concrete template with the world. Each concrete template
         /// determines a group (contiguous memory layout) for its component
-        /// arrays. Only register entity types that will be instantiated
+        /// arrays. Only register templates that will be instantiated
         /// directly — base templates used via <c>IExtends</c> are discovered
         /// automatically and should not be registered here.
         /// </summary>
-        public WorldBuilder AddEntityType(Template template)
+        public WorldBuilder AddTemplate(Template template)
         {
-            Assert.IsNotNull(template);
+            TrecsAssert.That(template != null, "template must not be null");
+            TrecsAssert.That(
+                !template.IsAbstract,
+                "Template '{0}' is marked abstract — abstract templates may only be used as IExtends<> bases. Remove the 'abstract' keyword or register a concrete derived template instead.",
+                template.DebugName
+            );
             _templates.Add(template);
             return this;
         }
@@ -61,33 +99,29 @@ namespace Trecs
         public WorldBuilder AddSet<T>()
             where T : struct, IEntitySet
         {
-            var setDef = EntitySet<T>.Value;
+            // EntitySet<T>.Value's cctor runs SetFactory.CreateSet, which populates the
+            // registries that SetId<T>.Value (and everything downstream) depends on.
+            var entitySet = EntitySet<T>.Value;
 
-            // Force EntitySetId<T> static constructor to run on the main thread,
-            // so the SharedStatic is populated before any Burst job accesses it.
-            // Without this, the [BurstDiscard] on Init() strips the initialization
-            // when the static constructor first runs inside a Burst-compiled job.
-            _ = EntitySetId<T>.Value;
-
-            Assert.That(
-                !_sets.Any(f => f.Id == setDef.Id),
-                "Set '{}' is already added to the WorldBuilder",
-                setDef.DebugName
+            TrecsAssert.That(
+                !_sets.Any(f => f.Id == entitySet.Id),
+                "Set '{0}' is already added to the WorldBuilder",
+                entitySet.DebugName
             );
-            _sets.Add(setDef);
+            _sets.Add(entitySet);
 
             return this;
         }
 
         /// <summary>
-        /// Registers multiple concrete entity types with the world.
+        /// Registers multiple concrete templates with the world.
         /// </summary>
-        public WorldBuilder AddEntityTypes(IEnumerable<Template> templates)
+        public WorldBuilder AddTemplates(IEnumerable<Template> templates)
         {
-            Assert.IsNotNull(templates);
+            TrecsAssert.That(templates != null, "templates must not be null");
             foreach (var template in templates)
             {
-                AddEntityType(template);
+                AddTemplate(template);
             }
             return this;
         }
@@ -97,8 +131,8 @@ namespace Trecs
         /// </summary>
         public WorldBuilder SetPoolManager(ITrecsPoolManager poolManager)
         {
-            Assert.IsNotNull(poolManager);
-            Assert.IsNull(_poolManager, "PoolManager has already been set");
+            TrecsAssert.That(poolManager != null, "poolManager must not be null");
+            TrecsAssert.That(_poolManager == null, "PoolManager has already been set");
             _poolManager = poolManager;
             return this;
         }
@@ -108,7 +142,7 @@ namespace Trecs
         /// </summary>
         public WorldBuilder AddSystem(ISystem system)
         {
-            Assert.IsNotNull(system);
+            TrecsAssert.That(system != null, "system must not be null");
             _systems.Add(system);
             return this;
         }
@@ -118,7 +152,7 @@ namespace Trecs
         /// </summary>
         public WorldBuilder AddSystems(IEnumerable<ISystem> systems)
         {
-            Assert.IsNotNull(systems);
+            TrecsAssert.That(systems != null, "systems must not be null");
             foreach (var system in systems)
             {
                 AddSystem(system);
@@ -127,21 +161,27 @@ namespace Trecs
         }
 
         /// <summary>
-        /// Adds a blob store for loading shared blob data.
+        /// Adds a blob store for loading shared blob data. Pass an instance of one of the
+        /// supplied store types — <see cref="BlobStoreInMemory"/>, or the Svkj-package
+        /// <c>BlobStoreFiles</c> / <c>BlobStoreAddressables</c>. The <see cref="IBlobStore"/>
+        /// contract is not intended for external implementation.
+        ///
+        /// If no blob store is added before <see cref="Build"/>, the builder falls back to a
+        /// <see cref="BlobStoreInMemory"/> with <see cref="BlobStoreInMemorySettings.Default"/>.
         /// </summary>
         public WorldBuilder AddBlobStore(IBlobStore store)
         {
-            Assert.IsNotNull(store);
+            TrecsAssert.That(store != null, "store must not be null");
             _blobStores.Add(store);
             return this;
         }
 
         /// <summary>
-        /// Adds multiple blob stores for loading shared blob data.
+        /// Adds multiple blob stores for loading shared blob data. See <see cref="AddBlobStore"/>.
         /// </summary>
         public WorldBuilder AddBlobStores(IEnumerable<IBlobStore> stores)
         {
-            Assert.IsNotNull(stores);
+            TrecsAssert.That(stores != null, "stores must not be null");
             foreach (var store in stores)
             {
                 AddBlobStore(store);
@@ -154,8 +194,8 @@ namespace Trecs
         /// </summary>
         public WorldBuilder SetBlobCacheSettings(BlobCacheSettings settings)
         {
-            Assert.IsNotNull(settings);
-            Assert.IsNull(_blobCacheSettings, "BlobCacheSettings have already been set");
+            TrecsAssert.That(settings != null, "settings must not be null");
+            TrecsAssert.That(_blobCacheSettings == null, "BlobCacheSettings have already been set");
             _blobCacheSettings = settings;
             return this;
         }
@@ -185,11 +225,63 @@ namespace Trecs
             IEnumerable<SystemOrderConstraint> constraints
         )
         {
-            Assert.IsNotNull(constraints);
+            TrecsAssert.That(constraints != null, "constraints must not be null");
             foreach (var constraint in constraints)
             {
                 AddSystemOrderConstraint(constraint);
             }
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a custom serializer instance. The serializer must
+        /// implement <see cref="ISerializer{T}"/>; the handled object type
+        /// is inferred from that interface. Instance registration is
+        /// exclusive — throws if the target object type already has a
+        /// serializer registered (instance or Type-based).
+        /// </summary>
+        public WorldBuilder RegisterSerializer(ISerializer serializer)
+        {
+            _serializerRegistry.RegisterSerializer(serializer);
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a serializer by Type. The target object type is read
+        /// via reflection at registration time, but the serializer is
+        /// lazily constructed via its parameterless constructor on first
+        /// lookup and cached. The same serializer Type may be registered
+        /// from multiple call sites — extra registrations are silently
+        /// ignored. Different serializer Types targeting the same object
+        /// type still throw.
+        /// </summary>
+        public WorldBuilder RegisterSerializer<TSerializer>()
+            where TSerializer : ISerializer, new()
+        {
+            _serializerRegistry.RegisterSerializer<TSerializer>();
+            return this;
+        }
+
+        /// <inheritdoc cref="RegisterSerializer{TSerializer}"/>
+        public WorldBuilder RegisterSerializer(Type serializerType)
+        {
+            _serializerRegistry.RegisterSerializer(serializerType);
+            return this;
+        }
+
+        /// <summary>
+        /// Registers an <see cref="IComponentArraySerializer{T}"/> for component
+        /// type <typeparamref name="T"/>. Equivalent to calling
+        /// <c>world.ComponentArraySerializerRegistry.Register(serializer)</c>
+        /// post-build, but available up front for callers that pre-configure
+        /// everything via the builder.
+        /// </summary>
+        public WorldBuilder RegisterComponentArraySerializer<T>(
+            IComponentArraySerializer<T> serializer
+        )
+            where T : unmanaged, IEntityComponent
+        {
+            _componentArraySerializerRegistry.Register(serializer);
             return this;
         }
 
@@ -200,9 +292,9 @@ namespace Trecs
             var seenTemplates = new HashSet<Template>();
             foreach (var template in _templates)
             {
-                Assert.That(
+                TrecsDebugAssert.That(
                     seenTemplates.Add(template),
-                    "Duplicate template '{}' added to WorldBuilder",
+                    "Duplicate template '{0}' added to WorldBuilder",
                     template.DebugName
                 );
             }
@@ -220,7 +312,15 @@ namespace Trecs
         public World BuildAndInitialize()
         {
             var world = Build();
-            world.Initialize();
+            try
+            {
+                world.Initialize();
+            }
+            catch
+            {
+                world.Dispose();
+                throw;
+            }
             return world;
         }
 
@@ -229,7 +329,7 @@ namespace Trecs
         /// </summary>
         public World Build()
         {
-            Assert.That(!_hasBuilt, "Build() has already been called");
+            TrecsAssert.That(!_hasBuilt, "Build() has already been called");
             _hasBuilt = true;
 
 #if DEBUG && !TRECS_IS_PROFILING
@@ -238,46 +338,64 @@ namespace Trecs
 
             var settings = _settings ?? new WorldSettings();
 
-            var worldInfo = new WorldInfo(_templates);
+            // One TrecsLog instance per World — every framework class caches this same
+            // reference. WorldAccessor.Log exposes it to user systems.
+            var log = new TrecsLog(settings);
 
-            var uniqueHeap = new UniqueHeap(_poolManager);
-            var blobCache = new BlobCache(_blobStores, _blobCacheSettings);
-            var sharedHeap = new SharedHeap(blobCache);
-            var nativeSharedHeap = new NativeSharedHeap(blobCache);
-            var frameScopedUniqueHeap = new FrameScopedUniqueHeap(_poolManager);
-            var frameScopedSharedHeap = new FrameScopedSharedHeap(blobCache);
-            var nativeFrameScopedSharedHeap = new FrameScopedNativeSharedHeap(blobCache);
-            var nativeUniqueHeap = new NativeUniqueHeap();
-            var frameScopedNativeUniqueHeap = new FrameScopedNativeUniqueHeap();
+            var worldInfo = new WorldInfo(log, _templates, _sets);
 
-            var accessorRegistry = new WorldAccessorRegistry();
+            var uniqueHeap = new UniqueHeap(log, _poolManager);
+            var nativeBlobBoxPool = new NativeBlobBoxPool();
 
-            _systemMetadataProvider ??= new DefaultSystemMetadataProvider(
+            // If no blob stores were registered, fall back to an in-memory store with default
+            // settings so heap operations work out of the box. Callers that added at least one
+            // store (even a read-only one like BlobStoreAddressables) are assumed to have
+            // configured things intentionally, so we leave their list untouched.
+            if (_blobStores.Count == 0)
+            {
+                _blobStores.Add(new BlobStoreInMemory(BlobStoreInMemorySettings.Default));
+            }
+
+            var blobCache = new BlobCache(log, _blobStores, _blobCacheSettings, nativeBlobBoxPool);
+            var sharedHeap = new SharedHeap(log, blobCache);
+            var nativeSharedHeap = new NativeSharedHeap(log, blobCache);
+            var nativeUniqueChunkStore = new NativeHeap(log);
+            var inputNativeUniqueHeap = new InputNativeUniqueHeap(log);
+            var inputNativeSharedHeap = new InputNativeSharedHeap(log, blobCache);
+            var inputSharedHeap = new InputSharedHeap(log, blobCache);
+            var inputUniqueHeap = new InputUniqueHeap(log, _poolManager);
+
+            var accessorRegistry = new WorldAccessorRegistry(log);
+
+            _systemEntryProvider ??= new DefaultSystemEntryProvider(
+                log,
                 _systemOrderConstraints,
                 accessorRegistry
             );
 
-            _systems.Add(new FixedUpdateSystem());
+            var systemLoader = new SystemLoader(log, _systemEntryProvider);
 
-            var systemLoader = new SystemLoader(
-                accessorRegistry,
-                _systemMetadataProvider,
-                worldInfo
-            );
+            var eventsManager = new EventsManager(log);
 
-            var eventsManager = new EventsManager();
+            var componentStore = new ComponentStore(log, worldInfo.AllGroups.Count);
+            var setStore = new SetStore(worldInfo.AllGroups.Count);
 
-            var componentStore = new ComponentStore();
-            var setStore = new SetStore();
-
-            foreach (var setDef in _sets)
+            foreach (var entitySet in _sets)
             {
-                setStore.RegisterSet(setDef, worldInfo);
+                setStore.RegisterSet(entitySet, worldInfo);
             }
 
-            var entityQuerier = new EntityQuerier(componentStore, setStore);
+            var entityQuerier = new EntityQuerier(
+                log,
+                componentStore,
+                setStore,
+                worldInfo.AllGroups.Count
+            );
+
+            var jobScheduler = new RuntimeJobScheduler();
 
             var submitter = new EntitySubmitter(
+                log,
                 worldInfo,
                 accessorRegistry,
                 eventsManager,
@@ -286,38 +404,43 @@ namespace Trecs
                 settings,
                 entityQuerier,
                 nativeSharedHeap,
-                nativeUniqueHeap,
-                frameScopedNativeUniqueHeap
+                inputNativeSharedHeap,
+                nativeUniqueChunkStore,
+                jobScheduler
             );
 
             var interpolatedPreviousSaverManager = new InterpolatedPreviousSaverManager(
                 _interpolatedPreviousSavers
             );
 
-            var systemRunner = new SystemRunner(
-                submitter,
-                settings,
-                interpolatedPreviousSaverManager
-            );
-
             var entityInputQueue = new EntityInputQueue(
-                frameScopedSharedHeap,
-                nativeFrameScopedSharedHeap,
-                frameScopedUniqueHeap,
-                frameScopedNativeUniqueHeap,
-                systemRunner,
+                log,
+                inputSharedHeap,
+                inputNativeSharedHeap,
+                inputUniqueHeap,
+                inputNativeUniqueHeap,
                 worldInfo
             );
 
-            return new World(
+            var systemRunner = new SystemRunner(
+                log,
+                submitter,
+                settings,
+                interpolatedPreviousSaverManager,
+                jobScheduler,
+                entityInputQueue
+            );
+
+            var world = new World(
+                log: log,
                 entityInputQueue: entityInputQueue,
                 systemRunner: systemRunner,
                 uniqueHeap: uniqueHeap,
-                frameScopedUniqueHeap: frameScopedUniqueHeap,
-                frameScopedSharedHeap: frameScopedSharedHeap,
-                nativeFrameScopedSharedHeap: nativeFrameScopedSharedHeap,
-                nativeUniqueHeap: nativeUniqueHeap,
-                frameScopedNativeUniqueHeap: frameScopedNativeUniqueHeap,
+                nativeUniqueChunkStore: nativeUniqueChunkStore,
+                inputNativeUniqueHeap: inputNativeUniqueHeap,
+                inputNativeSharedHeap: inputNativeSharedHeap,
+                inputSharedHeap: inputSharedHeap,
+                inputUniqueHeap: inputUniqueHeap,
                 accessorRegistry: accessorRegistry,
                 entitySubmitter: submitter,
                 entitiesDb: entityQuerier,
@@ -329,10 +452,16 @@ namespace Trecs
                 sharedHeap: sharedHeap,
                 settings: settings,
                 blobCache: blobCache,
+                nativeBlobBoxPool: nativeBlobBoxPool,
                 interpolatedPreviousSaverManager: interpolatedPreviousSaverManager,
                 componentStore: componentStore,
-                systems: _systems
+                systems: _systems,
+                serializerRegistry: _serializerRegistry,
+                componentArraySerializerRegistry: _componentArraySerializerRegistry
             );
+            world.DebugName = _debugName;
+
+            return world;
         }
     }
 }
@@ -348,26 +477,26 @@ namespace Trecs.Internal
         /// <summary>
         /// Registers an interpolated previous-frame state saver for smooth visual interpolation.
         /// </summary>
-        public static WorldBuilder AddInterpolatedPreviousSaver(
+        public static WorldBuilder AddInterpolatedPreviousSaver<T>(
             this WorldBuilder builder,
-            IInterpolatedPreviousSaver saver
+            InterpolatedPreviousSaver<T> saver
         )
+            where T : unmanaged, IEntityComponent
         {
             builder._interpolatedPreviousSavers.Add(saver);
             return builder;
         }
 
         /// <summary>
-        /// Overrides the default system metadata provider used for system ordering and accessor resolution.
+        /// Overrides the default system entry provider used for system ordering and accessor resolution.
         /// </summary>
-        // This isn't officially in api yet
-        public static WorldBuilder SetSystemMetadataProvider(
+        public static WorldBuilder SetSystemEntryProvider(
             this WorldBuilder builder,
-            ISystemMetadataProvider systemMetadataProvider
+            ISystemEntryProvider systemEntryProvider
         )
         {
-            Assert.IsNotNull(systemMetadataProvider);
-            builder._systemMetadataProvider = systemMetadataProvider;
+            TrecsAssert.That(systemEntryProvider != null, "systemEntryProvider must not be null");
+            builder._systemEntryProvider = systemEntryProvider;
             return builder;
         }
     }

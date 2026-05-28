@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Trecs.Internal;
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 
 namespace Trecs
 {
@@ -14,45 +16,46 @@ namespace Trecs
     {
         readonly WorldAccessor _world;
         readonly SetId _setId;
-        readonly NativeDenseDictionary<Group, SetGroupEntry> _entriesPerGroup;
 
-        internal SetWrite(
-            WorldAccessor world,
-            SetId setId,
-            NativeDenseDictionary<Group, SetGroupEntry> entriesPerGroup
-        )
+        [NativeDisableContainerSafetyRestriction]
+        readonly NativeList<SetGroupEntry> _entriesPerGroup;
+
+        readonly NativeList<GroupIndex> _registeredGroups;
+
+        internal SetWrite(WorldAccessor world, SetId setId, in EntitySetStorage set)
         {
             _world = world;
             _setId = setId;
-            _entriesPerGroup = entriesPerGroup;
+            _entriesPerGroup = set._entriesPerGroup;
+            _registeredGroups = set._registeredGroups;
         }
 
         // ── Write operations ─────────────────────────────────────────────
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void AddImmediate(EntityIndex entityIndex)
+        public void Add(EntityIndex entityIndex)
         {
-            AssertValidGroup(entityIndex.Group);
-            _entriesPerGroup[entityIndex.Group].Add(entityIndex.Index);
+            AssertValidGroup(entityIndex.GroupIndex);
+            _entriesPerGroup[entityIndex.GroupIndex.Index].Add(entityIndex.Index);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void RemoveImmediate(EntityIndex entityIndex)
+        public void Remove(EntityIndex entityIndex)
         {
-            AssertValidGroup(entityIndex.Group);
-            _entriesPerGroup[entityIndex.Group].Remove(entityIndex.Index);
+            AssertValidGroup(entityIndex.GroupIndex);
+            _entriesPerGroup[entityIndex.GroupIndex.Index].Remove(entityIndex.Index);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void AddImmediate(EntityHandle entityHandle)
+        public void Add(EntityHandle entityHandle)
         {
-            AddImmediate(entityHandle.ToIndex(_world));
+            Add(entityHandle.ToIndex(_world));
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void RemoveImmediate(EntityHandle entityHandle)
+        public void Remove(EntityHandle entityHandle)
         {
-            RemoveImmediate(entityHandle.ToIndex(_world));
+            Remove(entityHandle.ToIndex(_world));
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -64,23 +67,31 @@ namespace Trecs
         // ── Read operations (write-sync is a superset of read-sync) ──────
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool Exists(EntityIndex entityIndex)
+        public bool Contains(EntityIndex entityIndex)
         {
-            if (_entriesPerGroup.TryGetValue(entityIndex.Group, out var groupEntry))
-                return groupEntry.Exists(entityIndex.Index);
-            return false;
+            var group = entityIndex.GroupIndex;
+            if (group.IsNull)
+                return false;
+            var entry = _entriesPerGroup[group.Index];
+            return entry.IsValid && entry.Contains(entityIndex.Index);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool Exists(EntityHandle entityHandle)
+        public bool Contains(EntityHandle entityHandle)
         {
-            return Exists(entityHandle.ToIndex(_world));
+            return Contains(entityHandle.ToIndex(_world));
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool TryGetGroupEntry(Group group, out SetGroupEntry groupEntry)
+        public bool TryGetGroupEntry(GroupIndex group, out SetGroupEntry groupEntry)
         {
-            return _entriesPerGroup.TryGetValue(group, out groupEntry);
+            if (group.IsNull)
+            {
+                groupEntry = default;
+                return false;
+            }
+            groupEntry = _entriesPerGroup[group.Index];
+            return groupEntry.IsValid;
         }
 
         public int Count
@@ -89,9 +100,10 @@ namespace Trecs
             get
             {
                 int count = 0;
-                var groupEntries = _entriesPerGroup.GetValuesRead(out var groupCount);
-                for (int i = 0; i < groupCount; i++)
-                    count += groupEntries[i].Count;
+                for (int i = 0; i < _registeredGroups.Length; i++)
+                {
+                    count += _entriesPerGroup[_registeredGroups[i].Index].Count;
+                }
                 return count;
             }
         }
@@ -99,18 +111,18 @@ namespace Trecs
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public EntitySetIterator GetEnumerator()
         {
-            return new EntitySetIterator(_entriesPerGroup);
+            return new EntitySetIterator(_entriesPerGroup, _registeredGroups);
         }
 
         // ── Validation ───────────────────────────────────────────────────
 
         [Conditional("DEBUG")]
-        void AssertValidGroup(Group group)
+        void AssertValidGroup(GroupIndex group)
         {
 #if DEBUG
-            Assert.That(
-                _entriesPerGroup.ContainsKey(group),
-                "Group {} does not belong to this set's template",
+            TrecsDebugAssert.That(
+                !group.IsNull && _entriesPerGroup[group.Index].IsValid,
+                "GroupIndex {0} does not belong to this set's template",
                 group
             );
 #endif

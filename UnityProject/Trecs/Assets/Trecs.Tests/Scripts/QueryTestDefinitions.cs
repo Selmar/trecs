@@ -17,33 +17,33 @@ namespace Trecs.Tests
     // --- Templates ---
 
     // Has QCatA + two components
-    public partial class QTestEntityA : ITemplate, IHasTags<QId1>, IHasTags<QCatA>
+    public partial class QTestEntityA : ITemplate, ITagged<QId1>, ITagged<QCatA>
     {
-        public TestInt TestInt;
-        public TestFloat TestFloat;
+        TestInt TestInt;
+        TestFloat TestFloat;
     }
 
     // Has QCatA + QCatB + two components
-    public partial class QTestEntityAB : ITemplate, IHasTags<QId2>, IHasTags<QCatA>, IHasTags<QCatB>
+    public partial class QTestEntityAB : ITemplate, ITagged<QId2>, ITagged<QCatA>, ITagged<QCatB>
     {
-        public TestInt TestInt;
-        public TestFloat TestFloat;
+        TestInt TestInt;
+        TestFloat TestFloat;
     }
 
     // Has QCatB + only TestInt (no TestFloat, for MatchByComponents tests)
-    public partial class QTestEntityB : ITemplate, IHasTags<QId3>, IHasTags<QCatB>
+    public partial class QTestEntityB : ITemplate, ITagged<QId3>, ITagged<QCatB>
     {
-        public TestInt TestInt;
+        TestInt TestInt;
     }
 
     // Has QCatA + all five test components (for multi-interface aspect tests)
-    public partial class QTestEntityAll : ITemplate, IHasTags<QId4>, IHasTags<QCatA>
+    public partial class QTestEntityAll : ITemplate, ITagged<QId4>, ITagged<QCatA>
     {
-        public TestInt TestInt;
-        public TestFloat TestFloat;
-        public TestVec TestVec;
-        public TestBool TestBool;
-        public TestShort TestShort;
+        TestInt TestInt;
+        TestFloat TestFloat;
+        TestVec TestVec;
+        TestBool TestBool;
+        TestShort TestShort;
     }
 
     // --- Shared Set ---

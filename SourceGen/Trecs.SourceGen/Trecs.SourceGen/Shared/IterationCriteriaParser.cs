@@ -12,17 +12,20 @@ namespace Trecs.SourceGen.Shared
     {
         public List<ITypeSymbol> TagTypes { get; }
         public List<ITypeSymbol> SetTypes { get; }
+        public List<ITypeSymbol> WithoutTagTypes { get; }
         public bool MatchByComponents { get; }
 
         public IterationCriteria(
             List<ITypeSymbol> tagTypes,
             List<ITypeSymbol> setTypes,
-            bool matchByComponents
+            bool matchByComponents,
+            List<ITypeSymbol>? withoutTagTypes = null
         )
         {
             TagTypes = tagTypes;
             SetTypes = setTypes;
             MatchByComponents = matchByComponents;
+            WithoutTagTypes = withoutTagTypes ?? new List<ITypeSymbol>();
         }
     }
 
@@ -31,51 +34,49 @@ namespace Trecs.SourceGen.Shared
         internal static string ExtractAttributeName(string name)
         {
             var simple = name.Split('.').Last();
+            // Strip generic arity ([ForEachEntity<Tag>] → "ForEachEntity") so the
+            // returned name matches Roslyn's INamedTypeSymbol.Name (which also has
+            // the arity stripped).
+            int genericStart = simple.IndexOf('<');
+            if (genericStart >= 0)
+                simple = simple.Substring(0, genericStart);
             return simple.EndsWith("Attribute") ? simple : simple + "Attribute";
         }
 
         /// <summary>
         /// Parses an iteration attribute (<c>[ForEachEntity]</c> or <c>[SingleEntity]</c>)
-        /// for Tags / Tag / Set / MatchByComponents named arguments.
+        /// for Tags / Tag / Set / MatchByComponents named arguments. Tag-source
+        /// extraction (positional / generic / named) and the TRECS053
+        /// mutual-exclusion check are delegated to <see cref="TagSourceParser"/>;
+        /// only the iteration-specific <c>Set</c> / <c>MatchByComponents</c>
+        /// extras are read here.
         /// </summary>
         /// <param name="attributeName">
-        /// The attribute class name to match (e.g. <c>TrecsAttributeNames.EntityFilter</c>
+        /// The attribute class name to match (e.g. <c>TrecsAttributeNames.ForEachEntity</c>
         /// or <c>TrecsAttributeNames.SingleEntity</c>).
         /// </param>
         internal static IterationCriteria? ParseIterationAttribute(
-            SourceProductionContext context,
+            System.Action<Diagnostic> reportDiagnostic,
             MethodDeclarationSyntax method,
             IMethodSymbol methodSymbol,
             string containerName,
             string attributeName = "ForEachEntityAttribute"
         )
         {
-            var tagTypes = new List<ITypeSymbol>();
             var setTypes = new List<ITypeSymbol>();
-            ITypeSymbol? singleTag = null;
+            var withoutTagTypes = new List<ITypeSymbol>();
             bool matchByComponents = false;
+            AttributeData? matched = null;
 
             foreach (var attr in PerformanceCache.GetAttributes(methodSymbol))
             {
                 if (attr.AttributeClass?.Name != attributeName)
                     continue;
+                matched = attr;
                 foreach (var named in attr.NamedArguments)
                 {
                     switch (named.Key)
                     {
-                        case "Tags" when named.Value.Kind == TypedConstantKind.Array:
-                            foreach (var element in named.Value.Values)
-                                if (
-                                    element.Kind == TypedConstantKind.Type
-                                    && element.Value is ITypeSymbol t
-                                )
-                                    tagTypes.Add(t);
-                            break;
-                        case "Tag"
-                            when named.Value.Kind == TypedConstantKind.Type
-                                && named.Value.Value is ITypeSymbol t1:
-                            singleTag = t1;
-                            break;
                         case "Set"
                             when named.Value.Kind == TypedConstantKind.Type
                                 && named.Value.Value is ITypeSymbol s1:
@@ -84,32 +85,53 @@ namespace Trecs.SourceGen.Shared
                         case "MatchByComponents" when named.Value.Value is bool b:
                             matchByComponents = b;
                             break;
+                        case "Without"
+                            when named.Value.Kind == TypedConstantKind.Type
+                                && named.Value.Value is ITypeSymbol w1:
+                            withoutTagTypes.Add(w1);
+                            break;
+                        case "Withouts" when named.Value.Kind == TypedConstantKind.Array:
+                            foreach (var elem in named.Value.Values)
+                            {
+                                if (
+                                    elem.Kind == TypedConstantKind.Type
+                                    && elem.Value is ITypeSymbol ws
+                                )
+                                    withoutTagTypes.Add(ws);
+                            }
+                            break;
                     }
                 }
                 break;
             }
 
             // Strip "Attribute" suffix for diagnostic messages.
-            var shortName = attributeName.EndsWith("Attribute")
-                ? attributeName.Substring(0, attributeName.Length - "Attribute".Length)
-                : attributeName;
+            var shortName = TagSourceParser.StripAttributeSuffix(attributeName);
 
-            if (singleTag != null && tagTypes.Count > 0)
-            {
-                context.ReportDiagnostic(
-                    Diagnostic.Create(
-                        DiagnosticDescriptors.TagAndTagsBothSpecified,
-                        method.Identifier.GetLocation(),
-                        method.Identifier.Text,
-                        shortName
-                    )
+            if (matched == null)
+                return new IterationCriteria(
+                    new List<ITypeSymbol>(),
+                    setTypes,
+                    matchByComponents,
+                    withoutTagTypes
                 );
-                return null;
-            }
-            if (singleTag != null)
-                tagTypes.Add(singleTag);
 
-            return new IterationCriteria(tagTypes, setTypes, matchByComponents);
+            var result = TagSourceParser.Parse(
+                matched,
+                reportDiagnostic,
+                method.Identifier.GetLocation(),
+                method.Identifier.Text,
+                shortName
+            );
+            if (!result.Ok)
+                return null;
+
+            return new IterationCriteria(
+                result.TagTypes!,
+                setTypes,
+                matchByComponents,
+                withoutTagTypes
+            );
         }
     }
 }

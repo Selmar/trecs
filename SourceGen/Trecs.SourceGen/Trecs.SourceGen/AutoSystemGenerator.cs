@@ -2,12 +2,10 @@
 
 using System;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Trecs.SourceGen.Aspect;
 using Trecs.SourceGen.Internal;
 using Trecs.SourceGen.Performance;
 using Trecs.SourceGen.Shared;
@@ -15,9 +13,15 @@ using Trecs.SourceGen.Shared;
 namespace Trecs.SourceGen
 {
     /// <summary>
-    /// Source generator for all ISystem classes. Generates
-    /// explicit interface implementation for Ready (with partial method hook),
-    /// iteration method wrappers, and Execute.
+    /// Source generator for all <c>ISystem</c> classes. Generates explicit interface
+    /// implementation for <c>Ready</c> (with partial method hook), iteration-method
+    /// wrappers, and the World/Shutdown wiring.
+    ///
+    /// <para>Pipeline shape: the transform produces a fully-precomputed
+    /// <see cref="AutoSystemModel"/> (value-equatable, holds no symbols or syntax) and
+    /// the terminal stage materializes diagnostics + emits source. Global-namespace
+    /// name is folded in via a lightweight <see cref="IIncrementalGenerator"/> combine
+    /// (a single string, value-equatable, doesn't pin the compilation).</para>
     /// </summary>
     [Generator]
     public class AutoSystemGenerator : IIncrementalGenerator
@@ -26,21 +30,26 @@ namespace Trecs.SourceGen
         {
             var hasTrecsReference = AssemblyFilterHelper.CreateTrecsReferenceCheck(context);
 
-            var classProviderRaw = context
+            var modelsRaw = context
                 .SyntaxProvider.CreateSyntaxProvider(
                     predicate: static (s, _) => IsSystemClass(s),
-                    transform: static (ctx, _) => GetClassData(ctx)
+                    transform: static (ctx, _) => BuildModel(ctx)
                 )
                 .Where(static m => m is not null);
-            var classProvider = AssemblyFilterHelper.FilterByTrecsReference(
-                classProviderRaw,
-                hasTrecsReference
+            var models = AssemblyFilterHelper.FilterByTrecsReference(modelsRaw, hasTrecsReference);
+
+            // Only the global-namespace name leaves the CompilationProvider; the rest of
+            // the compilation is not referenced in code generation. This stays value-
+            // equatable so unrelated edits to other types do not invalidate the combine.
+            var globalNsProvider = context.CompilationProvider.Select(
+                static (c, _) =>
+                    PerformanceCache.GetDisplayString(c.GlobalNamespace) ?? string.Empty
             );
 
-            var classWithCompilation = classProvider.Combine(context.CompilationProvider);
+            var withGlobalNs = models.Combine(globalNsProvider);
 
             context.RegisterSourceOutput(
-                classWithCompilation,
+                withGlobalNs,
                 static (spc, source) => GenerateAutoSystemSource(spc, source.Left!, source.Right)
             );
         }
@@ -52,7 +61,7 @@ namespace Trecs.SourceGen
                 && classDecl.BaseList.Types.Count > 0;
         }
 
-        private static AutoSystemClassData? GetClassData(GeneratorSyntaxContext context)
+        private static AutoSystemModel? BuildModel(GeneratorSyntaxContext context)
         {
             var classDecl = (ClassDeclarationSyntax)context.Node;
 
@@ -61,94 +70,119 @@ namespace Trecs.SourceGen
             if (classSymbol == null)
                 return null;
 
+            // Final gate: only types that implement Trecs.ISystem participate.
             bool isSystem = false;
             foreach (var i in classSymbol.AllInterfaces)
             {
-                if (SymbolAnalyzer.IsInNamespace(i.ContainingNamespace, "Trecs"))
+                if (
+                    SymbolAnalyzer.IsInNamespace(i.ContainingNamespace, "Trecs")
+                    && i.Name == "ISystem"
+                )
                 {
-                    if (i.Name == "ISystem")
-                    {
-                        isSystem = true;
-                    }
+                    isSystem = true;
+                    break;
                 }
             }
-
             if (!isSystem)
                 return null;
 
-            return new AutoSystemClassData(classDecl, classSymbol);
+            var diagnostics = new List<DiagnosticInfo>();
+            AutoSystemInfo? info = null;
+            bool isValid;
+            try
+            {
+                isValid = ValidateAndCollect(
+                    classDecl,
+                    classSymbol,
+                    diagnostics,
+                    context.SemanticModel,
+                    out info
+                );
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add(
+                    DiagnosticInfo.Create(
+                        DiagnosticDescriptors.SourceGenerationError,
+                        classDecl.GetLocation(),
+                        "AutoSystem validation",
+                        ex.Message
+                    )
+                );
+                isValid = false;
+                info = null;
+            }
+
+            return new AutoSystemModel(
+                ClassName: classDecl.Identifier.Text,
+                Namespace: SymbolAnalyzer.GetNamespace(classDecl),
+                HintFileName: SymbolAnalyzer.GetSafeFileName(classSymbol, "AutoSystem"),
+                TypeParameterList: classDecl.TypeParameterList?.ToString() ?? string.Empty,
+                ConstraintClauses: classDecl.ConstraintClauses.Count > 0
+                    ? " " + string.Join(" ", classDecl.ConstraintClauses.Select(c => c.ToString()))
+                    : string.Empty,
+                IsValid: isValid,
+                Info: info ?? AutoSystemInfo.Empty,
+                Diagnostics: diagnostics.ToEquatableArray()
+            );
         }
 
         private static void GenerateAutoSystemSource(
             SourceProductionContext context,
-            AutoSystemClassData data,
-            Compilation compilation
+            AutoSystemModel model,
+            string globalNamespaceName
         )
         {
-            var location = data.ClassDecl.GetLocation();
-            var className = data.ClassDecl.Identifier.Text;
-            var fileName = SymbolAnalyzer.GetSafeFileName(data.ClassSymbol, "AutoSystem");
+            foreach (var diag in model.Diagnostics)
+                context.ReportDiagnostic(diag.ToDiagnostic());
+
+            if (!model.IsValid)
+                return;
 
             try
             {
                 using var _timer_ = SourceGenTimer.Time("AutoSystemGenerator.Total");
-                SourceGenLogger.Log($"[AutoSystemGenerator] Processing {className}");
-
-                AutoSystemInfo? autoSystemInfo = null;
-                var isValid =
-                    ErrorRecovery.TryExecuteBool(
-                        () =>
-                            ValidateAndCollect(
-                                data.ClassDecl,
-                                data.ClassSymbol,
-                                context,
-                                compilation,
-                                out autoSystemInfo
-                            ),
-                        context,
-                        location,
-                        "AutoSystem validation"
-                    ) ?? false;
-
-                if (!isValid || autoSystemInfo == null)
-                {
-                    return;
-                }
+                SourceGenLogger.Log($"[AutoSystemGenerator] Processing {model.ClassName}");
 
                 var source = ErrorRecovery.TryExecute(
-                    () => GenerateSourceCode(data.ClassDecl, autoSystemInfo, compilation),
+                    () => GenerateSourceCode(model, globalNamespaceName),
                     context,
-                    location,
+                    Location.None,
                     "AutoSystem code generation"
                 );
 
                 if (source != null)
                 {
-                    context.AddSource(fileName, source);
-                    SourceGenLogger.WriteGeneratedFile(fileName, source);
+                    context.AddSource(model.HintFileName, source);
+                    SourceGenLogger.WriteGeneratedFile(model.HintFileName, source);
                 }
                 else
                 {
                     context.ReportDiagnostic(
                         Diagnostic.Create(
                             DiagnosticDescriptors.CouldNotResolveSymbol,
-                            location,
-                            className
+                            Location.None,
+                            model.ClassName
                         )
                     );
                 }
             }
             catch (Exception ex)
             {
-                ErrorRecovery.ReportError(context, location, $"AutoSystem {className}", ex);
+                ErrorRecovery.ReportError(
+                    context,
+                    Location.None,
+                    $"AutoSystem {model.ClassName}",
+                    ex
+                );
             }
         }
 
         private static bool ValidateAndCollect(
             ClassDeclarationSyntax classDec,
             INamedTypeSymbol classSymbol,
-            SourceProductionContext context,
-            Compilation compilation,
+            List<DiagnosticInfo> diagnostics,
+            SemanticModel semanticModel,
             out AutoSystemInfo? autoSystemInfo
         )
         {
@@ -159,8 +193,8 @@ namespace Trecs.SourceGen
             // Check if the class is partial
             if (!classDec.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword)))
             {
-                context.ReportDiagnostic(
-                    Diagnostic.Create(
+                diagnostics.Add(
+                    DiagnosticInfo.Create(
                         DiagnosticDescriptors.AutoSystemMustBePartial,
                         classDec.Identifier.GetLocation(),
                         className
@@ -172,7 +206,6 @@ namespace Trecs.SourceGen
             // Find all iteration methods in the class
             var hasWrapAsJobMethodNamedExecute = false;
             var iterationMethods = new List<IterationMethodInfo>();
-            var semanticModel = compilation.GetSemanticModel(classDec.SyntaxTree);
 
             foreach (var methodDecl in classDec.Members.OfType<MethodDeclarationSyntax>())
             {
@@ -193,13 +226,12 @@ namespace Trecs.SourceGen
                 }
 
                 var methodName = methodDecl.Identifier.Text;
-                var methodLocation = methodDecl.Identifier.GetLocation();
+                var methodLocation = LocationInfo.From(methodDecl.Identifier.GetLocation());
 
-                // Validate iteration method modifiers
                 if (methodSymbol.IsStatic)
                 {
-                    context.ReportDiagnostic(
-                        Diagnostic.Create(
+                    diagnostics.Add(
+                        DiagnosticInfo.Create(
                             DiagnosticDescriptors.IterationMethodCannotBeStatic,
                             methodLocation,
                             methodName
@@ -210,8 +242,8 @@ namespace Trecs.SourceGen
 
                 if (methodSymbol.IsAbstract)
                 {
-                    context.ReportDiagnostic(
-                        Diagnostic.Create(
+                    diagnostics.Add(
+                        DiagnosticInfo.Create(
                             DiagnosticDescriptors.IterationMethodCannotBeAbstract,
                             methodLocation,
                             methodName
@@ -220,285 +252,20 @@ namespace Trecs.SourceGen
                     isValid = false;
                 }
 
-                // Check for multiple iteration attributes on the same method
-                var attrCount = 0;
-                if (
-                    PerformanceCache.HasAttributeByName(
-                        methodSymbol,
-                        TrecsAttributeNames.EntityFilter,
-                        TrecsNamespaces.Trecs
-                    )
-                )
-                    attrCount++;
-                if (
-                    PerformanceCache.HasAttributeByName(
-                        methodSymbol,
-                        TrecsAttributeNames.SingleEntity,
-                        TrecsNamespaces.Trecs
-                    )
-                )
-                    attrCount++;
-                if (attrCount > 1)
-                {
-                    context.ReportDiagnostic(
-                        Diagnostic.Create(
-                            DiagnosticDescriptors.IterationMethodMultipleAttributes,
-                            methodLocation,
-                            methodName
-                        )
-                    );
-                    isValid = false;
-                }
-
-                var customParams = new List<CustomParamInfo>();
+                var customParams = CollectCustomParams(
+                    methodDecl,
+                    semanticModel,
+                    iterationType.Value
+                );
                 bool hasAnyAttributeCriteria = HasAnyAttributeCriteria(methodSymbol);
-
-                if (
-                    iterationType == IterationType.EntityFilterComponents
-                    || iterationType == IterationType.SingleEntityComponents
-                )
-                {
-                    bool readingComponents = true;
-                    var methodReadTypes = new List<ITypeSymbol>();
-                    var methodWriteTypes = new List<ITypeSymbol>();
-
-                    foreach (var param in methodDecl.ParameterList.Parameters)
-                    {
-                        var paramType =
-                            param.Type != null ? semanticModel.GetTypeInfo(param.Type).Type : null;
-                        if (paramType == null)
-                            continue;
-
-                        // Skip loop-managed types (WorldAccessor, EntityIndex, SetAccessor<T>)
-                        if (SymbolAnalyzer.IsLoopManagedType(paramType))
-                        {
-                            readingComponents = false;
-                            continue;
-                        }
-
-                        bool isComponent = paramType.AllInterfaces.Any(i =>
-                            i.Name == "IEntityComponent"
-                        );
-                        if (readingComponents && !isComponent)
-                            readingComponents = false;
-
-                        if (readingComponents && isComponent)
-                        {
-                            var isRef = param.Modifiers.Any(m => m.IsKind(SyntaxKind.RefKeyword));
-                            var isIn = param.Modifiers.Any(m => m.IsKind(SyntaxKind.InKeyword));
-
-                            if (isRef)
-                                methodWriteTypes.Add(paramType);
-                            else if (isIn)
-                                methodReadTypes.Add(paramType);
-                        }
-                        else if (!readingComponents)
-                        {
-                            // Only include params explicitly marked [PassThroughArgument]
-                            var paramSymbol = semanticModel.GetDeclaredSymbol(param);
-                            if (
-                                paramSymbol != null
-                                && PerformanceCache.HasAttributeByName(
-                                    paramSymbol,
-                                    TrecsAttributeNames.PassThroughArgument,
-                                    TrecsNamespaces.Trecs
-                                )
-                            )
-                            {
-                                var paramIsRef = param.Modifiers.Any(m =>
-                                    m.IsKind(SyntaxKind.RefKeyword)
-                                );
-                                var paramIsIn = param.Modifiers.Any(m =>
-                                    m.IsKind(SyntaxKind.InKeyword)
-                                );
-                                customParams.Add(
-                                    new CustomParamInfo(
-                                        PerformanceCache.GetDisplayString(paramType),
-                                        paramType,
-                                        param.Identifier.ToString(),
-                                        paramIsRef,
-                                        paramIsIn
-                                    )
-                                );
-                            }
-                        }
-                    }
-
-                    // Extract tag types from [ForEachEntity(typeof(Tag))] / [SingleEntity(typeof(Tag))]
-                    var entityTagTypeNames = new List<string>();
-                    if (methodSymbol != null)
-                    {
-                        foreach (var attr in PerformanceCache.GetAttributes(methodSymbol))
-                        {
-                            var attrName = attr.AttributeClass?.Name;
-                            if (
-                                attrName == TrecsAttributeNames.EntityFilter
-                                || attrName == TrecsAttributeNames.SingleEntity
-                            )
-                            {
-                                foreach (var constructorArg in attr.ConstructorArguments)
-                                {
-                                    if (constructorArg.Kind == TypedConstantKind.Array)
-                                    {
-                                        foreach (var element in constructorArg.Values)
-                                        {
-                                            if (
-                                                element.Kind == TypedConstantKind.Type
-                                                && element.Value is ITypeSymbol tagType
-                                            )
-                                                entityTagTypeNames.Add(
-                                                    PerformanceCache.GetDisplayString(tagType)
-                                                );
-                                        }
-                                    }
-                                    else if (
-                                        constructorArg.Kind == TypedConstantKind.Type
-                                        && constructorArg.Value is ITypeSymbol singleTagType
-                                    )
-                                    {
-                                        entityTagTypeNames.Add(
-                                            PerformanceCache.GetDisplayString(singleTagType)
-                                        );
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-                else if (
-                    iterationType == IterationType.EntityFilterAspect
-                    || iterationType == IterationType.SingleEntityAspect
-                )
-                {
-                    var parameters = methodDecl.ParameterList.Parameters;
-                    if (parameters.Count > 0)
-                    {
-                        var firstParam = parameters[0];
-                        var firstParamType =
-                            firstParam.Type != null
-                                ? semanticModel.GetTypeInfo(firstParam.Type).Type
-                                : null;
-
-                        if (firstParamType is INamedTypeSymbol aspectType)
-                        {
-                            var attributeData = AspectAttributeParser.ParseAspectData(
-                                aspectType,
-                                context.ReportDiagnostic,
-                                methodDecl.GetLocation()
-                            );
-
-                            if (attributeData != null)
-                            {
-                                var aspectTypeName = firstParam.Type?.ToString() ?? "UnknownType";
-
-                                // Extract tag types from [ForEachEntity(typeof(Tag))] / [SingleEntity(typeof(Tag))]
-                                var tagTypeNames = new List<string>();
-                                if (methodSymbol != null)
-                                {
-                                    foreach (
-                                        var attr in PerformanceCache.GetAttributes(methodSymbol)
-                                    )
-                                    {
-                                        var aspectAttrName = attr.AttributeClass?.Name;
-                                        if (
-                                            aspectAttrName == TrecsAttributeNames.EntityFilter
-                                            || aspectAttrName == TrecsAttributeNames.SingleEntity
-                                        )
-                                        {
-                                            foreach (
-                                                var constructorArg in attr.ConstructorArguments
-                                            )
-                                            {
-                                                if (constructorArg.Kind == TypedConstantKind.Array)
-                                                {
-                                                    foreach (var element in constructorArg.Values)
-                                                    {
-                                                        if (
-                                                            element.Kind == TypedConstantKind.Type
-                                                            && element.Value is ITypeSymbol tagType
-                                                        )
-                                                            tagTypeNames.Add(
-                                                                PerformanceCache.GetDisplayString(
-                                                                    tagType
-                                                                )
-                                                            );
-                                                    }
-                                                }
-                                                else if (
-                                                    constructorArg.Kind == TypedConstantKind.Type
-                                                    && constructorArg.Value
-                                                        is ITypeSymbol singleTagType
-                                                )
-                                                {
-                                                    tagTypeNames.Add(
-                                                        PerformanceCache.GetDisplayString(
-                                                            singleTagType
-                                                        )
-                                                    );
-                                                }
-                                            }
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Collect only explicit [PassThroughArgument] params as custom,
-                        // skipping the aspect (index 0) and loop-managed types.
-                        for (int i = 1; i < parameters.Count; i++)
-                        {
-                            var param = parameters[i];
-                            var paramType =
-                                param.Type != null
-                                    ? semanticModel.GetTypeInfo(param.Type).Type
-                                    : null;
-                            if (paramType == null)
-                                continue;
-
-                            // Skip loop-managed types
-                            if (SymbolAnalyzer.IsLoopManagedType(paramType))
-                                continue;
-
-                            // Only include params explicitly marked [PassThroughArgument]
-                            var paramSymbol = semanticModel.GetDeclaredSymbol(param);
-                            if (
-                                paramSymbol != null
-                                && PerformanceCache.HasAttributeByName(
-                                    paramSymbol,
-                                    TrecsAttributeNames.PassThroughArgument,
-                                    TrecsNamespaces.Trecs
-                                )
-                            )
-                            {
-                                var paramIsRef = param.Modifiers.Any(m =>
-                                    m.IsKind(SyntaxKind.RefKeyword)
-                                );
-                                var paramIsIn = param.Modifiers.Any(m =>
-                                    m.IsKind(SyntaxKind.InKeyword)
-                                );
-                                customParams.Add(
-                                    new CustomParamInfo(
-                                        PerformanceCache.GetDisplayString(paramType),
-                                        paramType,
-                                        param.Identifier.ToString(),
-                                        paramIsRef,
-                                        paramIsIn
-                                    )
-                                );
-                            }
-                        }
-                    }
-                }
 
                 // Custom params not allowed on methods named Execute
                 if (customParams.Count > 0 && methodName == "Execute")
                 {
-                    context.ReportDiagnostic(
-                        Diagnostic.Create(
+                    diagnostics.Add(
+                        DiagnosticInfo.Create(
                             DiagnosticDescriptors.AutoSystemMethodHasCustomParams,
-                            methodDecl.Identifier.GetLocation(),
+                            LocationInfo.From(methodDecl.Identifier.GetLocation()),
                             methodName
                         )
                     );
@@ -507,85 +274,27 @@ namespace Trecs.SourceGen
 
                 iterationMethods.Add(
                     new IterationMethodInfo(
-                        methodName,
-                        iterationType.Value,
-                        customParams,
-                        hasAnyAttributeCriteria
+                        MethodName: methodName,
+                        Type: iterationType.Value,
+                        CustomParams: customParams.ToEquatableArray(),
+                        HasAnyAttributeCriteria: hasAnyAttributeCriteria
                     )
                 );
             }
 
             // Single pass over all method members for hook detection, Execute detection,
-            // and conflict signature collection
+            // and conflict signature collection.
             var hasUserDefinedExecute = false;
-            var userDefinedMethodSignatures = new HashSet<string>();
+            var userDefinedMethodSignatures = new List<string>();
             foreach (var member in classSymbol.GetMembers().OfType<IMethodSymbol>())
             {
                 userDefinedMethodSignatures.Add($"{member.Name}/{member.Parameters.Length}");
 
-                // Detect user-defined Execute
                 if (member.Name == "Execute" && member.Parameters.Length == 0)
-                {
                     hasUserDefinedExecute = true;
-                }
-
-                if (member.ExplicitInterfaceImplementations.Length > 0)
-                    continue;
-
-                var location = member.Locations.FirstOrDefault() ?? Location.None;
-
-                // Old-style Ready() — not partial
-                if (
-                    member.Name == "Ready"
-                    && member.Parameters.Length == 0
-                    && !member.IsPartialDefinition
-                    && member.PartialDefinitionPart == null
-                )
-                {
-                    context.ReportDiagnostic(
-                        Diagnostic.Create(DiagnosticDescriptors.OldStyleInitializeHook, location)
-                    );
-                    isValid = false;
-                }
-
-                // Partial method with wrong name (user wrote "partial void Ready()" instead of "partial void OnReady()")
-                if (
-                    member.Name == "Ready"
-                    && member.Parameters.Length == 0
-                    && (member.IsPartialDefinition || member.PartialDefinitionPart != null)
-                )
-                {
-                    context.ReportDiagnostic(
-                        Diagnostic.Create(
-                            DiagnosticDescriptors.PartialMethodWrongName,
-                            location,
-                            "Ready",
-                            "OnReady"
-                        )
-                    );
-                    isValid = false;
-                }
-
-                if (
-                    member.Name == "DeclareDependencies"
-                    && member.Parameters.Length == 1
-                    && member.Parameters[0].Type.Name == "IAccessDeclarations"
-                    && (member.IsPartialDefinition || member.PartialDefinitionPart != null)
-                )
-                {
-                    context.ReportDiagnostic(
-                        Diagnostic.Create(
-                            DiagnosticDescriptors.PartialMethodWrongName,
-                            location,
-                            "DeclareDependencies",
-                            "OnDeclareDependencies"
-                        )
-                    );
-                    isValid = false;
-                }
             }
 
-            // Check for TRECS044: user-defined Execute() AND iteration method named Execute
+            // TRECS044: user-defined Execute() AND iteration method named Execute
             var hasIterationMethodNamedExecute = iterationMethods.Any(m =>
                 m.MethodName == "Execute"
             );
@@ -594,17 +303,17 @@ namespace Trecs.SourceGen
                 && (hasIterationMethodNamedExecute || hasWrapAsJobMethodNamedExecute)
             )
             {
-                context.ReportDiagnostic(
-                    Diagnostic.Create(
+                diagnostics.Add(
+                    DiagnosticInfo.Create(
                         DiagnosticDescriptors.AutoSystemExecuteConflict,
-                        classDec.Identifier.GetLocation(),
+                        LocationInfo.From(classDec.Identifier.GetLocation()),
                         className
                     )
                 );
                 isValid = false;
             }
 
-            // Check for TRECS047: system has iteration methods but no Execute entry point
+            // TRECS047: system has iteration methods but no Execute entry point
             if (
                 iterationMethods.Count > 0
                 && !hasUserDefinedExecute
@@ -612,10 +321,10 @@ namespace Trecs.SourceGen
                 && !hasWrapAsJobMethodNamedExecute
             )
             {
-                context.ReportDiagnostic(
-                    Diagnostic.Create(
+                diagnostics.Add(
+                    DiagnosticInfo.Create(
                         DiagnosticDescriptors.AutoSystemMissingExecute,
-                        classDec.Identifier.GetLocation(),
+                        LocationInfo.From(classDec.Identifier.GetLocation()),
                         className
                     )
                 );
@@ -625,21 +334,132 @@ namespace Trecs.SourceGen
             if (isValid)
             {
                 autoSystemInfo = new AutoSystemInfo(
-                    iterationMethods,
-                    hasUserDefinedExecute,
-                    hasIterationMethodNamedExecute,
-                    userDefinedMethodSignatures
+                    IterationMethods: iterationMethods.ToEquatableArray(),
+                    HasUserDefinedExecute: hasUserDefinedExecute,
+                    HasIterationMethodNamedExecute: hasIterationMethodNamedExecute,
+                    UserDefinedMethodSignatures: userDefinedMethodSignatures.ToEquatableArray()
                 );
             }
 
             return isValid;
         }
 
-        // IterationType distinguishes EntityFilter/SingleEntity x Aspect/Components
-        // four-way internally — those are the four code paths AutoSystemGenerator's
-        // emission switches on. The PUBLIC user-facing API is just [ForEachEntity] and
-        // [SingleEntity]; this method maps each marker to the right internal kind by
-        // inspecting the method's parameter shape.
+        /// <summary>
+        /// Walks the method's parameter list and collects only those that need to be
+        /// forwarded by the auto-system wrapper as user-visible parameters — i.e. those
+        /// explicitly marked <c>[PassThroughArgument]</c>. Loop-managed and component
+        /// parameters are bound by the iteration generators themselves; the wrapper just
+        /// forwards customs.
+        /// </summary>
+        private static List<CustomParamInfo> CollectCustomParams(
+            MethodDeclarationSyntax methodDecl,
+            SemanticModel semanticModel,
+            IterationType iterationType
+        )
+        {
+            var customParams = new List<CustomParamInfo>();
+
+            if (iterationType == IterationType.EntityFilterComponents)
+            {
+                bool readingComponents = true;
+                foreach (var param in methodDecl.ParameterList.Parameters)
+                {
+                    var paramType =
+                        param.Type != null ? semanticModel.GetTypeInfo(param.Type).Type : null;
+                    if (paramType == null)
+                        continue;
+
+                    if (SymbolAnalyzer.IsLoopManagedType(paramType))
+                    {
+                        readingComponents = false;
+                        continue;
+                    }
+
+                    bool isComponent = paramType.AllInterfaces.Any(i =>
+                        i.Name == "IEntityComponent"
+                    );
+                    if (readingComponents && !isComponent)
+                        readingComponents = false;
+                    if (readingComponents && isComponent)
+                        continue;
+
+                    AddCustomParamIfMarked(param, paramType, semanticModel, customParams);
+                }
+            }
+            else if (iterationType == IterationType.EntityFilterAspect)
+            {
+                var parameters = methodDecl.ParameterList.Parameters;
+                // Skip the aspect (index 0) and loop-managed types; collect only explicit
+                // [PassThroughArgument] params as custom.
+                for (int i = 1; i < parameters.Count; i++)
+                {
+                    var param = parameters[i];
+                    var paramType =
+                        param.Type != null ? semanticModel.GetTypeInfo(param.Type).Type : null;
+                    if (paramType == null)
+                        continue;
+                    if (SymbolAnalyzer.IsLoopManagedType(paramType))
+                        continue;
+                    AddCustomParamIfMarked(param, paramType, semanticModel, customParams);
+                }
+            }
+            else if (iterationType == IterationType.RunOnce)
+            {
+                // RunOnce methods consume [SingleEntity] params via RunOnceGenerator's
+                // (WorldAccessor) overload. The auto-system wrapper just forwards
+                // [PassThroughArgument] params (typically none for Execute, since Execute
+                // can't have customs by design).
+                foreach (var param in methodDecl.ParameterList.Parameters)
+                {
+                    var paramType =
+                        param.Type != null ? semanticModel.GetTypeInfo(param.Type).Type : null;
+                    if (paramType == null)
+                        continue;
+                    AddCustomParamIfMarked(param, paramType, semanticModel, customParams);
+                }
+            }
+
+            return customParams;
+        }
+
+        private static void AddCustomParamIfMarked(
+            ParameterSyntax param,
+            ITypeSymbol paramType,
+            SemanticModel semanticModel,
+            List<CustomParamInfo> customParams
+        )
+        {
+            var paramSymbol = semanticModel.GetDeclaredSymbol(param);
+            if (paramSymbol == null)
+                return;
+            if (
+                !PerformanceCache.HasAttributeByName(
+                    paramSymbol,
+                    TrecsAttributeNames.PassThroughArgument,
+                    TrecsNamespaces.Trecs
+                )
+            )
+                return;
+
+            var paramIsRef = param.Modifiers.Any(m => m.IsKind(SyntaxKind.RefKeyword));
+            var paramIsIn = param.Modifiers.Any(m => m.IsKind(SyntaxKind.InKeyword));
+
+            customParams.Add(
+                new CustomParamInfo(
+                    TypeName: PerformanceCache.GetDisplayString(paramType),
+                    TypeNamespace: PerformanceCache.GetDisplayString(paramType.ContainingNamespace),
+                    ParamName: param.Identifier.ToString(),
+                    IsRef: paramIsRef,
+                    IsIn: paramIsIn
+                )
+            );
+        }
+
+        // IterationType distinguishes the three code paths AutoSystemGenerator's emission
+        // switches on: [ForEachEntity] aspect/components iteration, and RunOnce (methods
+        // with [SingleEntity] parameters and no [ForEachEntity] / [WrapAsJob]). The
+        // aspect-vs-components split for [ForEachEntity] is determined by the method's
+        // parameter shape.
         private static IterationType? GetIterationType(IMethodSymbol methodSymbol)
         {
             if (IterationAttributeRouting.HasEntityFilter(methodSymbol))
@@ -648,11 +468,9 @@ namespace Trecs.SourceGen
                     ? IterationType.EntityFilterAspect
                     : IterationType.EntityFilterComponents;
             }
-            if (IterationAttributeRouting.HasSingleEntity(methodSymbol))
+            if (IterationAttributeRouting.IsRunOnceMethod(methodSymbol))
             {
-                return IterationAttributeRouting.RoutesToAspectGenerator(methodSymbol)
-                    ? IterationType.SingleEntityAspect
-                    : IterationType.SingleEntityComponents;
+                return IterationType.RunOnce;
             }
             return null;
         }
@@ -660,19 +478,41 @@ namespace Trecs.SourceGen
         /// <summary>
         /// Returns true when the iteration attribute has at least one criterion property
         /// (Tags/Tag/Set/MatchByComponents). Used to decide whether to generate the
-        /// auto-wrapper that calls Method(_world): without any criteria there is no
+        /// auto-wrapper that calls Method(__world): without any criteria there is no
         /// (WorldAccessor) overload to call.
+        /// <para>
+        /// RunOnce methods always have criteria (the per-parameter <c>[SingleEntity]</c>
+        /// inline tags), so we shortcut to <c>true</c> for them.
+        /// </para>
         /// </summary>
         private static bool HasAnyAttributeCriteria(IMethodSymbol methodSymbol)
         {
+            if (IterationAttributeRouting.IsRunOnceMethod(methodSymbol))
+                return true;
+
             foreach (var attr in PerformanceCache.GetAttributes(methodSymbol))
             {
                 var name = attr.AttributeClass?.Name;
-                if (
-                    name != TrecsAttributeNames.EntityFilter
-                    && name != TrecsAttributeNames.SingleEntity
-                )
+                if (name != TrecsAttributeNames.ForEachEntity)
                     continue;
+
+                // C# 11 generic-attribute form: [ForEachEntity<A>] etc. Roslyn's Name
+                // strips arity, so the same name-check matches generic and non-generic.
+                if (
+                    attr.AttributeClass is INamedTypeSymbol namedClass
+                    && namedClass.TypeArguments.Length > 0
+                )
+                    return true;
+
+                // Positional ctor: [ForEachEntity(typeof(A))] / [ForEachEntity(typeof(A), typeof(B))].
+                foreach (var ctorArg in attr.ConstructorArguments)
+                {
+                    if (
+                        ctorArg.Kind == TypedConstantKind.Type
+                        || ctorArg.Kind == TypedConstantKind.Array
+                    )
+                        return true;
+                }
 
                 foreach (var namedArg in attr.NamedArguments)
                 {
@@ -690,75 +530,51 @@ namespace Trecs.SourceGen
         }
 
         private static HashSet<string> GetRequiredNamespaces(
-            Compilation compilation,
+            string globalNamespaceName,
             AutoSystemInfo autoSystemInfo
         )
         {
-            var namespaces = new HashSet<string>() { "Trecs", "Trecs.Internal", "System" };
-
-            void AddNamespaceIfNeeded(ITypeSymbol typeSymbol)
-            {
-                var ns = PerformanceCache.GetDisplayString(typeSymbol.ContainingNamespace);
-                if (
-                    !string.IsNullOrEmpty(ns)
-                    && ns != "System"
-                    && ns != null
-                    && !ns.StartsWith("System.")
-                    && ns != (PerformanceCache.GetDisplayString(compilation.GlobalNamespace) ?? "")
-                )
-                {
-                    namespaces.Add(ns);
-                }
-            }
+            var namespaces = new HashSet<string>(CommonUsings.Namespaces) { "System" };
 
             foreach (var method in autoSystemInfo.IterationMethods)
             {
                 foreach (var param in method.CustomParams)
                 {
-                    if (param.TypeSymbol != null)
-                        AddNamespaceIfNeeded(param.TypeSymbol);
+                    var ns = param.TypeNamespace;
+                    if (
+                        !string.IsNullOrEmpty(ns)
+                        && ns != "System"
+                        && !ns.StartsWith("System.")
+                        && ns != globalNamespaceName
+                    )
+                    {
+                        namespaces.Add(ns);
+                    }
                 }
             }
 
             return namespaces;
         }
 
-        private static string GenerateSourceCode(
-            ClassDeclarationSyntax classDec,
-            AutoSystemInfo autoSystemInfo,
-            Compilation compilation
-        )
+        private static string GenerateSourceCode(AutoSystemModel model, string globalNamespaceName)
         {
-            var namespaceName = SymbolAnalyzer.GetNamespace(classDec);
-            var className = classDec.Identifier.Text;
-            var typeParams = classDec.TypeParameterList?.ToString() ?? "";
-            var constraints =
-                classDec.ConstraintClauses.Count > 0
-                    ? " " + string.Join(" ", classDec.ConstraintClauses.Select(c => c.ToString()))
-                    : "";
-
             var sb = OptimizedStringBuilder.ForAspect(0);
 
-            var requiredNamespaces = GetRequiredNamespaces(compilation, autoSystemInfo);
+            var requiredNamespaces = GetRequiredNamespaces(globalNamespaceName, model.Info);
             sb.AppendUsings(requiredNamespaces.ToArray());
 
             return sb.WrapInNamespace(
-                    namespaceName,
+                    model.Namespace,
                     (builder) =>
                     {
                         builder.AppendLine(
                             1,
-                            $"partial class {className}{typeParams} : Trecs.Internal.ISystemInternal{constraints}"
+                            $"partial class {model.ClassName}{model.TypeParameterList} : Trecs.Internal.ISystemInternal{model.ConstraintClauses}"
                         );
                         builder.AppendLine(1, "{");
 
-                        // Generate partial method + explicit interface impl for Initialize
                         GenerateInitialize(builder);
-
-                        // DeclareDependencies removed — runtime job scheduler handles deps implicitly
-
-                        // Generate iteration method wrappers
-                        GenerateWrappers(builder, autoSystemInfo);
+                        GenerateWrappers(builder, model.Info);
 
                         // GenerateExecute intentionally removed — systems must define their own Execute
 
@@ -770,39 +586,52 @@ namespace Trecs.SourceGen
 
         private static void GenerateInitialize(OptimizedStringBuilder sb)
         {
-            sb.AppendLine(2, "WorldAccessor _world;");
+            sb.AppendLine(2, GeneratedCodeAttributes.Line);
+            sb.AppendLine(2, "WorldAccessor __world;");
             sb.AppendLine();
-            sb.AppendLine(2, "public WorldAccessor World => _world;");
+            sb.AppendLine(2, GeneratedCodeAttributes.Line);
+            sb.AppendLine(2, "public WorldAccessor World => __world;");
             sb.AppendLine();
+            sb.AppendLine(2, GeneratedCodeAttributes.Line);
             sb.AppendLine(2, "WorldAccessor Trecs.Internal.ISystemInternal.World");
             sb.AppendLine(2, "{");
-            sb.AppendLine(3, "get => _world;");
+            sb.AppendLine(3, "get => __world;");
             sb.AppendLine(
                 3,
-                "set { Trecs.Internal.Assert.That(_world == null, \"World has already been set\"); _world = value; }"
+                "set { TrecsDebugAssert.That(__world == null, \"World has already been set\"); __world = value; }"
             );
             sb.AppendLine(2, "}");
             sb.AppendLine();
             sb.AppendLine(2, "partial void OnReady();");
             sb.AppendLine();
+            sb.AppendLine(2, GeneratedCodeAttributes.Line);
             sb.AppendLine(2, "void Trecs.Internal.ISystemInternal.Ready()");
             sb.AppendLine(2, "{");
             sb.AppendLine(3, "OnReady();");
             sb.AppendLine(2, "}");
             sb.AppendLine();
+            sb.AppendLine(2, "partial void OnShutdown();");
+            sb.AppendLine();
+            sb.AppendLine(2, GeneratedCodeAttributes.Line);
+            sb.AppendLine(2, "void Trecs.Internal.ISystemInternal.Shutdown()");
+            sb.AppendLine(2, "{");
+            sb.AppendLine(3, "OnShutdown();");
+            sb.AppendLine(2, "}");
+            sb.AppendLine();
         }
 
-        private static void GenerateWrappers(
-            OptimizedStringBuilder sb,
-            AutoSystemInfo autoSystemInfo
-        )
+        private static void GenerateWrappers(OptimizedStringBuilder sb, AutoSystemInfo info)
         {
-            foreach (var method in autoSystemInfo.IterationMethods)
+            // Rebuild the signature lookup as a HashSet for O(1) Contains checks during the
+            // wrapper-skip decision. The model carries it as a flat EquatableArray so the
+            // upstream comparison is structural; the HashSet is a terminal-stage convenience.
+            var signatureSet = new HashSet<string>(info.UserDefinedMethodSignatures);
+
+            foreach (var method in info.IterationMethods)
             {
-                // Skip if user already defined a method with the wrapper's signature
-                var wrapperParamCount = method.HasCustomParams ? method.CustomParams.Count : 0;
+                var wrapperParamCount = method.HasCustomParams ? method.CustomParams.Length : 0;
                 var wrapperKey = $"{method.MethodName}/{wrapperParamCount}";
-                if (autoSystemInfo.UserDefinedMethodSignatures.Contains(wrapperKey))
+                if (signatureSet.Contains(wrapperKey))
                     continue;
 
                 // No criteria on the iteration attribute → no (WorldAccessor) convenience
@@ -816,19 +645,21 @@ namespace Trecs.SourceGen
 
                 if (method.HasCustomParams)
                 {
+                    sb.AppendLine(2, GeneratedCodeAttributes.Line);
                     sb.AppendLine(
                         2,
                         $"{visibility}void {method.MethodName}({method.CustomParamsDeclaration})"
                     );
                     sb.AppendLine(2, "{");
-                    sb.AppendLine(3, $"{method.MethodName}(_world, {method.CustomParamsCall});");
+                    sb.AppendLine(3, $"{method.MethodName}(__world, {method.CustomParamsCall});");
                     sb.AppendLine(2, "}");
                 }
                 else
                 {
+                    sb.AppendLine(2, GeneratedCodeAttributes.Line);
                     sb.AppendLine(2, $"{visibility}void {method.MethodName}()");
                     sb.AppendLine(2, "{");
-                    sb.AppendLine(3, $"{method.MethodName}(_world);");
+                    sb.AppendLine(3, $"{method.MethodName}(__world);");
                     sb.AppendLine(2, "}");
                 }
                 sb.AppendLine();
@@ -836,53 +667,44 @@ namespace Trecs.SourceGen
         }
     }
 
-    internal class AutoSystemClassData
-    {
-        public ClassDeclarationSyntax ClassDecl { get; }
-        public INamedTypeSymbol ClassSymbol { get; }
-
-        public AutoSystemClassData(ClassDeclarationSyntax classDecl, INamedTypeSymbol classSymbol)
-        {
-            ClassDecl = classDecl;
-            ClassSymbol = classSymbol;
-        }
-    }
+    /// <summary>
+    /// Pipeline-boundary model for an auto-system class. Equatable through and through —
+    /// strings, bools, and <see cref="EquatableArray{T}"/> only. Symbol-walking happens
+    /// in <c>BuildModel</c>; nothing past that point sees Roslyn types.
+    /// </summary>
+    internal sealed record AutoSystemModel(
+        string ClassName,
+        string Namespace,
+        string HintFileName,
+        string TypeParameterList,
+        string ConstraintClauses,
+        bool IsValid,
+        AutoSystemInfo Info,
+        EquatableArray<DiagnosticInfo> Diagnostics
+    );
 
     internal enum IterationType
     {
         EntityFilterComponents,
         EntityFilterAspect,
-        SingleEntityComponents,
-        SingleEntityAspect,
-    }
-
-    internal class IterationMethodInfo
-    {
-        public string MethodName { get; }
-        public IterationType Type { get; }
-        public List<CustomParamInfo> CustomParams { get; }
-        public bool HasCustomParams => CustomParams.Count > 0;
 
         /// <summary>
-        /// True when the iteration attribute supplied at least one criterion (Tags/Tag/Set/
-        /// Sets/MatchByComponents). When false, the source generator does not emit a
-        /// (WorldAccessor) convenience overload, so AutoSystemGenerator must skip its
-        /// auto-wrapper or the generated code will reference a non-existent method.
+        /// Method has one or more <c>[SingleEntity]</c> parameters and no other
+        /// iteration attribute. <see cref="RunOnceGenerator"/> emits the
+        /// <c>(WorldAccessor)</c> overload that resolves each singleton then calls
+        /// the user method exactly once.
         /// </summary>
-        public bool HasAnyAttributeCriteria { get; }
+        RunOnce,
+    }
 
-        public IterationMethodInfo(
-            string methodName,
-            IterationType type,
-            List<CustomParamInfo> customParams,
-            bool hasAnyAttributeCriteria
-        )
-        {
-            MethodName = methodName;
-            Type = type;
-            CustomParams = customParams;
-            HasAnyAttributeCriteria = hasAnyAttributeCriteria;
-        }
+    internal sealed record IterationMethodInfo(
+        string MethodName,
+        IterationType Type,
+        EquatableArray<CustomParamInfo> CustomParams,
+        bool HasAnyAttributeCriteria
+    )
+    {
+        public bool HasCustomParams => CustomParams.Length > 0;
 
         public string CustomParamsDeclaration =>
             string.Join(
@@ -899,48 +721,26 @@ namespace Trecs.SourceGen
             );
     }
 
-    internal class CustomParamInfo
+    internal readonly record struct CustomParamInfo(
+        string TypeName,
+        string TypeNamespace,
+        string ParamName,
+        bool IsRef,
+        bool IsIn
+    );
+
+    internal sealed record AutoSystemInfo(
+        EquatableArray<IterationMethodInfo> IterationMethods,
+        bool HasUserDefinedExecute,
+        bool HasIterationMethodNamedExecute,
+        EquatableArray<string> UserDefinedMethodSignatures
+    )
     {
-        public string TypeName { get; }
-        public ITypeSymbol? TypeSymbol { get; }
-        public string ParamName { get; }
-        public bool IsRef { get; }
-        public bool IsIn { get; }
-
-        public CustomParamInfo(
-            string typeName,
-            ITypeSymbol? typeSymbol,
-            string paramName,
-            bool isRef,
-            bool isIn
-        )
-        {
-            TypeName = typeName;
-            TypeSymbol = typeSymbol;
-            ParamName = paramName;
-            IsRef = isRef;
-            IsIn = isIn;
-        }
-    }
-
-    internal class AutoSystemInfo
-    {
-        public List<IterationMethodInfo> IterationMethods { get; }
-        public bool HasUserDefinedExecute { get; }
-        public bool HasIterationMethodNamedExecute { get; }
-        public HashSet<string> UserDefinedMethodSignatures { get; }
-
-        public AutoSystemInfo(
-            List<IterationMethodInfo> iterationMethods,
-            bool hasUserDefinedExecute,
-            bool hasIterationMethodNamedExecute,
-            HashSet<string> userDefinedMethodSignatures
-        )
-        {
-            IterationMethods = iterationMethods;
-            HasUserDefinedExecute = hasUserDefinedExecute;
-            HasIterationMethodNamedExecute = hasIterationMethodNamedExecute;
-            UserDefinedMethodSignatures = userDefinedMethodSignatures;
-        }
+        public static readonly AutoSystemInfo Empty = new(
+            EquatableArray<IterationMethodInfo>.Empty,
+            HasUserDefinedExecute: false,
+            HasIterationMethodNamedExecute: false,
+            UserDefinedMethodSignatures: EquatableArray<string>.Empty
+        );
     }
 }

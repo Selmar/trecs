@@ -7,13 +7,24 @@ namespace Trecs
 {
     /// <summary>
     /// A transient entity identifier composed of a buffer index within a specific group.
-    /// Unlike <see cref="EntityHandle"/>, this value may change when entities are added or removed.
+    /// Secondary to <see cref="EntityHandle"/>: prefer handles in user code, since they
+    /// remain stable across structural changes. An <see cref="EntityIndex"/> is only
+    /// guaranteed valid until the next entity submission — any add, remove, or tag-change
+    /// that touches the entity's group may shift buffer positions, and switching the
+    /// entity's partition moves it to a different group entirely.
+    /// <para>
+    /// Use this overload set in hot loops where a handle has already been resolved and
+    /// you want to perform multiple operations on the same entity without paying the
+    /// handle-to-index lookup each time. Round-trip via
+    /// <see cref="EntityHandle.ToIndex(WorldAccessor)"/> /
+    /// <see cref="ToHandle(WorldAccessor)"/> when you need to cross a submission
+    /// boundary.
+    /// </para>
     /// </summary>
     public readonly struct EntityIndex
         : IEquatable<EntityIndex>,
             IComparable<EntityIndex>,
-            IComparable,
-            IStableHashProvider
+            IComparable
     {
         /// <summary>
         /// The index of the entity within its group's component buffers.
@@ -23,10 +34,11 @@ namespace Trecs
         /// <summary>
         /// The group this entity belongs to.
         /// </summary>
-        public readonly Group Group;
+        public readonly GroupIndex GroupIndex;
 
         /// <summary>
-        /// A sentinel value representing no entity.
+        /// A sentinel value representing no entity. Equals <c>default(EntityIndex)</c>
+        /// because <c>default(GroupIndex)</c> is <see cref="GroupIndex.Null"/>.
         /// </summary>
         public static EntityIndex Null => default;
 
@@ -35,26 +47,27 @@ namespace Trecs
         /// </summary>
         public bool IsNull
         {
-            get { return Group.IsNull; }
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get { return GroupIndex.IsNull; }
         }
 
         /// <inheritdoc/>
         public static bool operator ==(EntityIndex obj1, EntityIndex obj2)
         {
-            return obj1.Index == obj2.Index && obj1.Group == obj2.Group;
+            return obj1.Index == obj2.Index && obj1.GroupIndex == obj2.GroupIndex;
         }
 
         /// <inheritdoc/>
         public static bool operator !=(EntityIndex obj1, EntityIndex obj2)
         {
-            return obj1.Index != obj2.Index || obj1.Group != obj2.Group;
+            return obj1.Index != obj2.Index || obj1.GroupIndex != obj2.GroupIndex;
         }
 
-        public EntityIndex(int index, Group groupId)
+        public EntityIndex(int index, GroupIndex groupIndex)
             : this()
         {
             this.Index = index;
-            this.Group = groupId;
+            this.GroupIndex = groupIndex;
         }
 
         /// <inheritdoc/>
@@ -66,36 +79,31 @@ namespace Trecs
         /// <inheritdoc/>
         public bool Equals(EntityIndex other)
         {
-            return other.Index == Index && other.Group == Group;
-        }
-
-        public readonly int GetStableHashCode()
-        {
-            // we don't want to use HashCode.Combine or GetHashCode because
-            // it's not deterministic across restarts
-            return unchecked((int)math.hash(new int2(Index, Group.GetStableHashCode())));
+            return other.Index == Index && other.GroupIndex == GroupIndex;
         }
 
         /// <inheritdoc/>
         public override int GetHashCode()
         {
-            return GetStableHashCode();
+            // Deterministic across restarts (HashCode.Combine is not).
+            // Uses GroupIndex.GetHashCode() (raw value) so null GroupIndex
+            // hashes correctly without throwing.
+            return unchecked((int)math.hash(new int2(Index, GroupIndex.GetHashCode())));
         }
 
         /// <inheritdoc/>
         public int CompareTo(EntityIndex other)
         {
-            return Group.Id != other.Group.Id
-                ? Group.Id.CompareTo(other.Group.Id)
+            // Compare on raw (1-based) values — null sorts before all real groups.
+            return GroupIndex.CompareTo(other.GroupIndex) != 0
+                ? GroupIndex.CompareTo(other.GroupIndex)
                 : Index.CompareTo(other.Index);
         }
 
         /// <inheritdoc/>
         public override string ToString()
         {
-            var value = Group.ToString();
-
-            return $"index {Index} group {value}";
+            return $"index {Index} group {GroupIndex}";
         }
 
         /// <summary>
@@ -104,7 +112,7 @@ namespace Trecs
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public EntityIndex WithIndex(int index)
         {
-            return new EntityIndex(index, Group);
+            return new EntityIndex(index, GroupIndex);
         }
 
         /// <summary>
@@ -134,15 +142,6 @@ namespace Trecs
             return accessor.GetEntityHandle(this);
         }
 
-        /// <summary>
-        /// Creates a live <see cref="EntityAccessor"/> bound to the given <see cref="WorldAccessor"/>.
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public EntityAccessor ToEntity(WorldAccessor accessor)
-        {
-            return new EntityAccessor(accessor, this);
-        }
-
         /// <inheritdoc/>
         public int CompareTo(object obj)
         {
@@ -156,5 +155,75 @@ namespace Trecs
                 nameof(obj)
             );
         }
+
+        // ── Entity-targeted operations ──────────────────────────────
+        // No handle-to-index lookup cost — call these from hot loops after
+        // converting via handle.ToIndex(world) once.
+
+        /// <summary>
+        /// Schedules removal of this entity. Deferred until the next entity submission.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Remove(WorldAccessor world) => world.RemoveEntity(this);
+
+        /// <summary>
+        /// Burst-safe variant of <see cref="Remove(WorldAccessor)"/>.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Remove(in NativeWorldAccessor world) => world.RemoveEntity(this);
+
+        /// <summary>
+        /// Sets <typeparamref name="T"/> as the active tag on this entity's
+        /// <see cref="IPartitionedBy{T1}"/> / <see cref="IPartitionedBy{T1, T2}"/> dimension.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void SetTag<T>(WorldAccessor world)
+            where T : struct, ITag => world.SetTag<T>(this);
+
+        /// <summary>
+        /// Burst-safe variant of <see cref="SetTag{T}(WorldAccessor)"/>.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void SetTag<T>(in NativeWorldAccessor world)
+            where T : struct, ITag => world.SetTag<T>(this);
+
+        /// <summary>
+        /// Clears <typeparamref name="T"/> from this entity, moving it to the absent
+        /// partition of <typeparamref name="T"/>'s presence/absence dimension.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void UnsetTag<T>(WorldAccessor world)
+            where T : struct, ITag => world.UnsetTag<T>(this);
+
+        /// <summary>
+        /// Burst-safe variant of <see cref="UnsetTag{T}(WorldAccessor)"/>.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void UnsetTag<T>(in NativeWorldAccessor world)
+            where T : struct, ITag => world.UnsetTag<T>(this);
+
+        /// <summary>
+        /// Enqueues an input component value for this entity for the next fixed-update frame.
+        /// Only callable from <see cref="SystemPhase.Input"/> systems.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void AddInput<T>(WorldAccessor world, in T value)
+            where T : unmanaged, IEntityComponent => world.AddInput(this, value);
+
+        /// <summary>
+        /// Returns a <see cref="ComponentAccessor{T}"/> for lazy read/write access to this
+        /// entity's component of type <typeparamref name="T"/>.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public ComponentAccessor<T> Component<T>(WorldAccessor world)
+            where T : unmanaged, IEntityComponent => world.Component<T>(this);
+
+        /// <summary>
+        /// Attempts to access this entity's component of type <typeparamref name="T"/>,
+        /// returning false if the entity no longer exists or lacks the component.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool TryComponent<T>(WorldAccessor world, out ComponentAccessor<T> componentRef)
+            where T : unmanaged, IEntityComponent => world.TryComponent(this, out componentRef);
     }
 }

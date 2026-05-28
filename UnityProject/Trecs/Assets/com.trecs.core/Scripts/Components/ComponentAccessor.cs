@@ -30,6 +30,6 @@ namespace Trecs
             get => ref _world.GetComponentWrite<T>(_entityIndex).Value;
         }
 
-        public EntityIndex EntityIndex => _entityIndex;
+        internal EntityIndex EntityIndex => _entityIndex;
     }
 }

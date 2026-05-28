@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using Trecs.Collections;
 using Trecs.Internal;
 using Unity.Collections;
 
@@ -6,31 +7,31 @@ namespace Trecs
 {
     /// <summary>
     /// Tracks a set of entity indices for a single group within an entity set.
-    /// Used by <see cref="EntitySet"/>.
+    /// Used by <see cref="EntitySetStorage"/>.
     /// </summary>
     public struct SetGroupEntry
     {
-        internal NativeDenseDictionary<int, int> _entityIdToDenseIndex;
-        readonly Group _group;
+        internal NativeIterableDictionary<int, int> _entityIdToDenseIndex;
+        readonly GroupIndex _group;
 
-        internal SetGroupEntry(Group group)
+        internal SetGroupEntry(GroupIndex group)
             : this()
         {
-            _entityIdToDenseIndex = new NativeDenseDictionary<int, int>(1, Allocator.Persistent);
+            _entityIdToDenseIndex = new NativeIterableDictionary<int, int>(1, Allocator.Persistent);
             _group = group;
         }
 
-        public readonly Group Group => _group;
+        public readonly GroupIndex GroupIndex => _group;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Add(int index)
         {
-            //cannot write in parallel
+            // Not parallel-safe
             return _entityIdToDenseIndex.TryAdd(index, index, out _);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public readonly bool Exists(int index) => _entityIdToDenseIndex.ContainsKey(index);
+        public readonly bool Contains(int index) => _entityIdToDenseIndex.ContainsKey(index);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Remove(int index) => _entityIdToDenseIndex.Remove(index);
@@ -40,8 +41,12 @@ namespace Trecs
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get
             {
-                var values = _entityIdToDenseIndex.GetValuesRead(out var count);
-                return new EntitySetIndices(values, count);
+                var values = _entityIdToDenseIndex.UnsafeValues;
+                return new EntitySetIndices(
+                    values,
+                    _entityIdToDenseIndex.Count,
+                    _entityIdToDenseIndex
+                );
             }
         }
 

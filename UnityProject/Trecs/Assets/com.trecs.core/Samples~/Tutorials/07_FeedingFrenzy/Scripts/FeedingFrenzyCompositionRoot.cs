@@ -21,6 +21,8 @@ namespace Trecs.Samples.FeedingFrenzy101
         public Color MealColor;
         public StarvationSystem.Settings StarvationSystemSettings;
 
+        // All we do here is call constructors and set up dependencies
+        // between classes.  No initialization logic otherwise
         public override void Construct(
             out List<Action> initializables,
             out List<Action> tickables,
@@ -28,8 +30,12 @@ namespace Trecs.Samples.FeedingFrenzy101
             out List<Action> disposables
         )
         {
+            // Benchmark-style sample: uncap frame rate so our systems, not vsync,
+            // determine throughput with many thousands of entities.
+            Application.targetFrameRate = 2000;
+
             // ─── GPU instanced rendering ────────────────────────────
-            var renderer = new RendererSystem();
+            var renderer = new IndirectRenderer();
 
             // Fish color is driven per-entity by StarvationSystem via ColorComponent
             // (cyan = healthy, red-orange = starving). Material base color is
@@ -51,7 +57,7 @@ namespace Trecs.Samples.FeedingFrenzy101
             // ─── World setup ────────────────────────────────────────
             var world = new WorldBuilder()
                 .SetSettings(new WorldSettings { RandomSeed = 42 })
-                .AddEntityTypes(
+                .AddTemplates(
                     new[]
                     {
                         SampleTemplates.Globals.Template,
@@ -63,10 +69,13 @@ namespace Trecs.Samples.FeedingFrenzy101
 
             var cleanupHandler = new RemoveCleanupHandler(world);
 
+            var inputSystem = new InputSystem();
+
             world.AddSystems(
                 new ISystem[]
                 {
-                    new InputSystem(MinFishCount, MaxFishCount),
+                    inputSystem,
+                    new ApplyControlInputSystem(MinFishCount, MaxFishCount),
                     new FishAdderAndRemover(MealCountRatio, SpawnSpread, MaxFishChangePerFrame),
                     new MealAdderAndRemover(SpawnSpread, MaxMealChangePerFrame),
                     new LookingForMealSystem(),
@@ -81,9 +90,9 @@ namespace Trecs.Samples.FeedingFrenzy101
             );
 
             initializables = new() { world.Initialize };
-            tickables = new() { world.Tick };
+            tickables = new() { inputSystem.Tick, world.Tick };
             lateTickables = new() { world.LateTick };
-            disposables = new() { cleanupHandler.Dispose, renderer.Dispose, world.Dispose };
+            disposables = new() { cleanupHandler.Dispose, world.Dispose };
         }
     }
 }

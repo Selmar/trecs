@@ -7,9 +7,9 @@ namespace Trecs
     /// The system scheduler topologically sorts systems using these constraints; cycles cause an assertion failure.
     /// </summary>
     [AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
-    public class ExecutesAfterAttribute : Attribute
+    public sealed class ExecuteAfterAttribute : Attribute
     {
-        public ExecutesAfterAttribute(params Type[] systems)
+        public ExecuteAfterAttribute(params Type[] systems)
         {
             Systems = systems;
         }
@@ -22,9 +22,9 @@ namespace Trecs
     /// The system scheduler topologically sorts systems using these constraints; cycles cause an assertion failure.
     /// </summary>
     [AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
-    public class ExecutesBeforeAttribute : Attribute
+    public sealed class ExecuteBeforeAttribute : Attribute
     {
-        public ExecutesBeforeAttribute(params Type[] systems)
+        public ExecuteBeforeAttribute(params Type[] systems)
         {
             Systems = systems;
         }
@@ -33,40 +33,26 @@ namespace Trecs
     }
 
     /// <summary>
-    /// Assigns a system to the variable-update phase, which runs once per rendered frame
-    /// with a variable time step. Without this attribute, systems default to fixed-update.
+    /// Assigns a system to a specific <see cref="SystemPhase"/>. Without this attribute, systems
+    /// default to <see cref="SystemPhase.Fixed"/>.
     /// </summary>
     [AttributeUsage(AttributeTargets.Class, AllowMultiple = false)]
-    public class VariableUpdateAttribute : Attribute { }
+    public sealed class ExecuteInAttribute : Attribute
+    {
+        public ExecuteInAttribute(SystemPhase phase)
+        {
+            Phase = phase;
+        }
 
-    /// <summary>
-    /// Assigns a system to the late-variable-update phase, which runs after all
-    /// variable-update systems each rendered frame. Useful for post-render corrections.
-    /// </summary>
-    [AttributeUsage(AttributeTargets.Class, AllowMultiple = false)]
-    public class LateVariableUpdateAttribute : Attribute { }
-
-    /// <summary>
-    /// Marks a system as an input system, which runs once per rendered frame before
-    /// fixed-update. Input systems can call <see cref="WorldAccessor.AddInput{T}"/> to
-    /// enqueue input that the fixed-update simulation will consume deterministically.
-    /// </summary>
-    [AttributeUsage(AttributeTargets.Class, AllowMultiple = false)]
-    public class InputSystemAttribute : Attribute { }
-
-    /// <summary>
-    /// Suppresses the "no reference found" build warning for a component struct that is
-    /// only referenced indirectly (e.g. via source generation or generic template definitions).
-    /// </summary>
-    [AttributeUsage(AttributeTargets.Struct, AllowMultiple = false)]
-    public class SuppressNoReferenceWarningAttribute : Attribute { }
+        public SystemPhase Phase { get; }
+    }
 
     /// <summary>
     /// Sets a numeric priority for tie-breaking when topological ordering is ambiguous.
     /// Higher values execute later within the same update phase. Default priority is 0.
     /// </summary>
     [AttributeUsage(AttributeTargets.Class, AllowMultiple = false)]
-    public class ExecutePriorityAttribute : Attribute
+    public sealed class ExecutePriorityAttribute : Attribute
     {
         public ExecutePriorityAttribute(int priority)
         {
@@ -81,31 +67,31 @@ namespace Trecs
     /// Without this attribute, adding a duplicate system type causes an error.
     /// </summary>
     [AttributeUsage(AttributeTargets.Class, AllowMultiple = false)]
-    public class AllowMultipleAttribute : Attribute { }
+    public sealed class AllowMultipleAttribute : Attribute { }
 
     /// <summary>
     /// Controls what happens to an <see cref="InputAttribute"/> component when no input
     /// is provided for a fixed-update frame.
     /// </summary>
-    public enum MissingInputFrameBehaviour
+    public enum MissingInputBehavior
     {
         /// <summary>
         /// Resets the component to its <c>default</c> value when no input arrives.
         /// </summary>
-        ResetToDefault,
+        Reset,
 
         /// <summary>
         /// Keeps the component's value from the previous frame when no input arrives.
         /// </summary>
-        RetainCurrent,
+        Retain,
     }
 
     /// <summary>
-    /// Placed on a static interpolation method to source-generate a variable-update system
+    /// Placed on a static interpolation method to source-generate a presentation-phase system
     /// that interpolates a component between fixed-update snapshots each rendered frame.
     /// </summary>
     [AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
-    public class GenerateInterpolatorSystemAttribute : Attribute
+    public sealed class GenerateInterpolatorSystemAttribute : Attribute
     {
         public GenerateInterpolatorSystemAttribute(string systemName, string groupName)
         {

@@ -1,67 +1,75 @@
 # 07 — Feeding Frenzy
 
-A complex simulation with multiple interacting systems and job-based processing. Fish hunt meals, grow when they eat, and shrink from starvation.
+A multi-system simulation with job-based processing. Fish hunt meals, grow when they eat, and shrink from starvation.
 
-**Source:** `Samples/07_FeedingFrenzy/`
+**Source:** `com.trecs.core/Samples~/Tutorials/07_FeedingFrenzy/`
 
-## What It Does
+## What it does
 
-Fish swim toward meals. When a fish reaches a meal, it consumes it, grows slightly, and looks for the next one. Fish slowly shrink from starvation — if they get too small, they die. Up/down arrows adjust the fish population.
+Fish swim toward meals. On contact a fish consumes the meal, grows, and looks for the next one. Fish shrink from starvation — too small and they die. Up/down arrows adjust population.
 
 ## Schema
 
 ### Components
 
 ```csharp
-public struct SimPosition : IEntityComponent { public float3 Value; }
-public struct SimRotation : IEntityComponent { public quaternion Value; }
-public struct TargetMeal : IEntityComponent { public EntityHandle Value; }
-public struct ApproachingFish : IEntityComponent { public EntityHandle Value; }
-public struct DestinationPosition : IEntityComponent { public float3 Value; }
-public struct MealNutrition : IEntityComponent { public float Value; }
+[Unwrap] public partial struct SimPosition : IEntityComponent { public float3 Value; }
+[Unwrap] public partial struct SimRotation : IEntityComponent { public quaternion Value; }
+[Unwrap] public partial struct TargetMeal : IEntityComponent { public EntityHandle Value; }
+[Unwrap] public partial struct ApproachingFish : IEntityComponent { public EntityHandle Value; }
+[Unwrap] public partial struct DestinationPosition : IEntityComponent { public float3 Value; }
+[Unwrap] public partial struct MealNutrition : IEntityComponent { public float Value; }
 ```
 
-Plus `Position`, `Rotation`, `Velocity`, `Speed`, `UniformScale`, `ColorComponent` from Common.
+Plus `Velocity` and `Speed` defined locally, and `Position`, `Rotation`, `UniformScale`, `ColorComponent` from Common.
 
-### Templates with Partitions
+### Templates with partitions
 
 ```csharp
-public partial class FishEntity : ITemplate,
-    IExtends<CommonTemplates.Renderable>,
-    IHasTags<FrenzyTags.Fish>,
-    IHasPartition<FrenzyTags.NotEating>,
-    IHasPartition<FrenzyTags.Eating>
+public partial class FishEntity
+    : ITemplate,
+        IExtends<CommonTemplates.IndirectRenderable>,
+        ITagged<FrenzyTags.Fish>,
+        IPartitionedBy<FrenzyTags.NotEating, FrenzyTags.Eating>
 {
-    public Velocity Velocity;
-    public Speed Speed;
-    public SimPosition SimPosition;
-    public SimRotation SimRotation;
-    public TargetMeal TargetMeal;
-    public DestinationPosition DestinationPosition;
+    // Position/Rotation are render-only — VisualSmoothingSystem chases
+    // SimPosition/SimRotation each variable frame.
+    [VariableUpdateOnly]
+    Position Position;
+
+    [VariableUpdateOnly]
+    Rotation Rotation = new(quaternion.identity);
+
+    SimPosition SimPosition = default;
+    SimRotation SimRotation = new() { Value = quaternion.identity };
+    Velocity Velocity = default;
+    Speed Speed;
+    TargetMeal TargetMeal = default;
+    DestinationPosition DestinationPosition = default;
 }
 ```
 
-Fish have two partitions: **NotEating** (idle, bobbing) and **Eating** (moving toward a meal).
+Fish have two partitions: **NotEating** (idle, bobbing) and **Eating** (moving toward a meal). `IndirectRenderable` is the GPU-instanced base (no per-entity GameObject); `[VariableUpdateOnly]` keeps the fixed phase from touching the smoothed display values — see [Accessor Roles](../advanced/accessor-roles.md).
 
-## Key Systems
+## Key systems
 
 ### LookingForMealSystem
 
-Pairs idle fish with available meals using nested aspect queries. Sets velocity toward the target and transitions both fish and meal to the Eating partition.
+Pairs idle fish with available meals via nested aspect queries. Sets velocity toward the target and moves both fish and meal into the Eating partition.
 
 ### ConsumingMealSystem (`[WrapAsJob]`)
 
-Checks if eating fish have reached their meal. On contact: removes the meal, grows the fish, transitions the fish back to the NotEating partition.
+Checks whether eating fish have reached their meal. On contact: removes the meal, grows the fish, moves the fish back to NotEating.
 
-Demonstrates accessing entities from a *different* group inside a `[WrapAsJob]` method — the `[FromWorld]` attribute on the `mealFactory` parameter lets the job look up meal data by `EntityHandle`:
+Shows accessing a *different* entity type inside a `[WrapAsJob]` method — `[FromWorld]` on `mealFactory` lets the job look up meal data by `EntityHandle`:
 
 ```csharp
-[ForEachEntity(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.Eating) })]
+[ForEachEntity(typeof(FrenzyTags.Fish), typeof(FrenzyTags.Eating))]
 [WrapAsJob]
 static void Execute(
     in ConsumingFish fish,
     in NativeWorldAccessor world,
-    [FromWorld(Tag = typeof(FrenzyTags.Meal))]
+    [FromWorld(typeof(FrenzyTags.Meal))]
         in MealNutritionView.NativeFactory mealFactory
 )
 {
@@ -71,9 +79,10 @@ static void Execute(
     var meal = mealFactory.Create(fish.TargetMeal.ToIndex(world));
     fish.UniformScale = fish.UniformScale + 0.05f * meal.MealNutrition;
 
+    meal.ApproachingFish = EntityHandle.Null;
     meal.Remove(world);
     fish.TargetMeal = EntityHandle.Null;
-    fish.MoveTo<FrenzyTags.Fish, FrenzyTags.NotEating>(world);
+    fish.SetTag<FrenzyTags.NotEating>(world);
 }
 ```
 
@@ -83,14 +92,14 @@ Moves eating fish toward their destination position.
 
 ### IdleBobSystem (`[WrapAsJob]`)
 
-Applies sinusoidal bobbing to idle (NotEating) fish. Uses `EntityIndex` as a phase offset so fish bob at different times:
+Applies sinusoidal bobbing to idle fish. The per-iteration `EntityHandle` gives each fish a stable phase offset so they bob out of sync — `Id` survives recycling, unlike a buffer index:
 
 ```csharp
-[ForEachEntity(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+[ForEachEntity(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
 [WrapAsJob]
-static void Execute(in Fish fish, EntityIndex entityIndex, in NativeWorldAccessor world)
+static void Execute(in Fish fish, EntityHandle handle, in NativeWorldAccessor world)
 {
-    float phaseOffset = entityIndex.Index * GoldenRatio;
+    float phaseOffset = handle.Id * GoldenRatio;
     float y = 0.3f * fish.UniformScale * math.sin(3f * world.ElapsedTime + phaseOffset);
     var pos = fish.SimPosition;
     pos.y = y;
@@ -100,17 +109,17 @@ static void Execute(in Fish fish, EntityIndex entityIndex, in NativeWorldAccesso
 
 ### StarvationSystem (`[WrapAsJob]`)
 
-Shrinks all fish over time. Removes fish that are too small. Colors fish based on their current size.
+Shrinks all fish over time, removes those too small, and colors them by current size.
 
-Demonstrates `[PassThroughArgument]` to pass configuration into a job, and entity removal inside a parallel job via `NativeWorldAccessor`:
+Shows `[PassThroughArgument]` for passing configuration into a job, and entity removal from a parallel job via `NativeWorldAccessor`:
 
 ```csharp
-[ForEachEntity(Tag = typeof(FrenzyTags.Fish))]
+[ForEachEntity(typeof(FrenzyTags.Fish))]
 [WrapAsJob]
 static void ExecuteImpl(
     ref UniformScale scale,
     ref ColorComponent color,
-    EntityIndex entityIndex,
+    EntityHandle handle,
     in NativeWorldAccessor world,
     [PassThroughArgument] Settings settings
 )
@@ -119,7 +128,7 @@ static void ExecuteImpl(
 
     if (scale.Value <= settings.MinScale)
     {
-        world.RemoveEntity(entityIndex);
+        handle.Remove(world);
         return;
     }
 
@@ -130,15 +139,15 @@ static void ExecuteImpl(
 }
 ```
 
-### VisualSmoothingSystem (`[VariableUpdate]`)
+### VisualSmoothingSystem (`[ExecuteIn(SystemPhase.Presentation)]`)
 
-Lerps `Position`/`Rotation` toward `SimPosition`/`SimRotation` each visual frame. This creates smooth movement at the display frame rate even though the simulation runs at a lower fixed timestep:
+Each visual frame, lerps `Position`/`Rotation` toward `SimPosition`/`SimRotation`. Movement stays smooth at the display rate even though the simulation runs at a lower fixed timestep:
 
 ```csharp
-[VariableUpdate]
+[ExecuteIn(SystemPhase.Presentation)]
 public partial class VisualSmoothingSystem : ISystem
 {
-    [ForEachEntity(Tag = typeof(FrenzyTags.Fish))]
+    [ForEachEntity(typeof(FrenzyTags.Fish))]
     [WrapAsJob]
     static void Execute(in Fish fish, in NativeWorldAccessor world)
     {
@@ -153,16 +162,16 @@ public partial class VisualSmoothingSystem : ISystem
 
 ### RemoveCleanupHandler
 
-Bidirectional cleanup — when a fish is removed, its target meal is also removed (and vice versa), preventing orphaned entities:
+Bidirectional cleanup — removing a fish also removes its target meal, and vice versa, preventing orphans:
 
 ```csharp
 public partial class RemoveCleanupHandler : IDisposable
 {
-    readonly DisposeCollection _disposables = new();
+    readonly DisposeCollection _disposables = new(); // sample helper — supply your own IDisposable container
 
     public RemoveCleanupHandler(World world)
     {
-        World = world.CreateAccessor();
+        World = world.CreateAccessor(AccessorRole.Fixed);
 
         World.Events.EntitiesWithTags<FrenzyTags.Fish>()
             .OnRemoved(OnFishRemoved)
@@ -179,23 +188,23 @@ public partial class RemoveCleanupHandler : IDisposable
     void OnFishRemoved(in TargetMeal targetMeal)
     {
         if (targetMeal.Value.Exists(World))
-            World.RemoveEntity(targetMeal.Value);
+            targetMeal.Value.Remove(World);
     }
 
     [ForEachEntity]
     void OnMealRemoved(in ApproachingFish fish)
     {
         if (fish.Value.Exists(World))
-            World.RemoveEntity(fish.Value);
+            fish.Value.Remove(World);
     }
 
     public void Dispose() => _disposables.Dispose();
 }
 ```
 
-## Architecture Pattern: SimPosition vs Position
+## Architecture pattern: SimPosition vs Position
 
-The simulation writes to `SimPosition` (the "true" position at fixed rate). A variable-update system smoothly interpolates `Position` toward `SimPosition` at the display frame rate:
+The simulation writes to `SimPosition` (the "true" position at fixed rate). A variable-update system lerps `Position` toward `SimPosition` each display frame:
 
 ```
 Fixed Update:  SimPosition jumps to new position
@@ -203,14 +212,15 @@ Variable Update:  Position = lerp(Position, SimPosition, smoothFactor)
 Rendering:  Reads Position for smooth visual movement
 ```
 
-This is an alternative to the formal [interpolation](09-interpolation.md) system.  This approach is nice because it interpolates over longer time intervals so fish rotate smoothly to new directions.
+An alternative to the formal [interpolation](09-interpolation.md) system. The longer interpolation interval lets fish rotate smoothly to new directions.
 
-## Concepts Introduced
+## Concepts introduced
 
-- **Native Aspect Factories** for data bundling within jobs via a dynamic entity handle
-- **Complex multi-system simulation** with many interacting systems
-- **Entity population management** — dynamically adjusting fish/meal counts
-- **Bidirectional entity references** with cleanup handlers
-- **Partition transitions** between NotEating and Eating
-- **Generic Tags** NotEating and Eating tags represent dynamic states unrelated to specific entity types
-- **Visual smoothing** — separating simulation position from render position
+- **Native aspect factories** — `MealNutritionView.NativeFactory` lets a job look up another entity's components by handle inside Burst. See [Advanced Job Features](../advanced/advanced-jobs.md) and [Aspects](../data-access/aspects.md).
+- **Multi-system simulation** with many interacting systems.
+- **Entity population management** — dynamically adjusting fish/meal counts via `[WrapAsJob]` and `MaxFishChangePerFrame` throttling.
+- **Bidirectional references** with cleanup handlers — see [Entity Events](../entity-management/entity-events.md).
+- **Partition transitions** between NotEating and Eating — see [Partitions](06-partitions.md).
+- **Generic tags** — `NotEating` and `Eating` represent dynamic states reused across templates.
+- **Visual smoothing** — separating simulation position (`SimPosition`, fixed) from render position (`Position`, variable). For the formal alternative, see [Interpolation](../advanced/interpolation.md) and [Sample 09](09-interpolation.md).
+- **`[VariableUpdateOnly]`** components — see [Accessor Roles](../advanced/accessor-roles.md).

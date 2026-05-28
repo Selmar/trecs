@@ -8,50 +8,39 @@ using Unity.Mathematics;
 namespace Trecs.Internal
 {
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public class EntityInputQueue : IEntityInputQueue
+    public sealed class EntityInputQueue : IEntityInputQueue
     {
-        static readonly TrecsLog _log = new(nameof(EntityInputQueue));
+        readonly TrecsLog _log;
 
-        readonly List<ResetToDefaultGroupInfo> _resetToDefaultGroups;
-        readonly SystemRunner _systemRunner;
-        readonly DisposeGroup _subscriptions = new();
+        readonly List<ResetGroupInfo> _resetGroups;
         readonly List<IInputHistoryLocker> _historyLockers = new();
-        readonly FrameScopedSharedHeap _frameScopedSharedHeap;
-        readonly FrameScopedUniqueHeap _frameScopedUniqueHeap;
-        readonly FrameScopedNativeSharedHeap _nativeFrameScopedSharedHeap;
-        readonly FrameScopedNativeUniqueHeap _frameScopedNativeUniqueHeap;
-        readonly DenseDictionary<int, ComponentTypeInfo> _componentTypeHelpers = new();
+        readonly InputSharedHeap _inputSharedHeap;
+        readonly InputUniqueHeap _inputUniqueHeap;
+        readonly InputNativeSharedHeap _inputNativeSharedHeap;
+        readonly InputNativeUniqueHeap _inputNativeUniqueHeap;
+        readonly IterableDictionary<TypeId, ComponentTypeInfo> _componentTypeHelpersMap = new();
         readonly List<int> _frameTempRemoveBuffer = new();
         readonly List<EntityHandle> _removeQueueBuffer = new();
 
-#if DEBUG
-        readonly List<GroupComponentTypePair> _warnOnMissingInfos;
-        readonly HashSet<GroupComponentTypePair> _warnOnMissingTempBuffer = new();
-#endif
-
-        SimpleSubject _systemRegistryPostApplyInputsEvent;
+        SimpleSubject _systemRegistryInputsAppliedEvent;
         WorldAccessor _accessor;
         int _maxClearFrame = -1;
 
         public EntityInputQueue(
-            FrameScopedSharedHeap frameScopedSharedHeap,
-            FrameScopedNativeSharedHeap nativeFrameScopedSharedHeap,
-            FrameScopedUniqueHeap frameScopedUniqueHeap,
-            FrameScopedNativeUniqueHeap frameScopedNativeUniqueHeap,
-            SystemRunner systemRunner,
+            TrecsLog log,
+            InputSharedHeap inputSharedHeap,
+            InputNativeSharedHeap inputNativeSharedHeap,
+            InputUniqueHeap inputUniqueHeap,
+            InputNativeUniqueHeap inputNativeUniqueHeap,
             WorldInfo worldDef
         )
         {
-            _frameScopedSharedHeap = frameScopedSharedHeap;
-            _nativeFrameScopedSharedHeap = nativeFrameScopedSharedHeap;
-            _frameScopedUniqueHeap = frameScopedUniqueHeap;
-            _frameScopedNativeUniqueHeap = frameScopedNativeUniqueHeap;
-            _resetToDefaultGroups = new();
-            _systemRunner = systemRunner;
-
-#if DEBUG
-            _warnOnMissingInfos = new();
-#endif
+            _log = log;
+            _inputSharedHeap = inputSharedHeap;
+            _inputNativeSharedHeap = inputNativeSharedHeap;
+            _inputUniqueHeap = inputUniqueHeap;
+            _inputNativeUniqueHeap = inputNativeUniqueHeap;
+            _resetGroups = new();
 
             foreach (var group in worldDef.AllGroups)
             {
@@ -61,61 +50,43 @@ namespace Trecs.Internal
                 {
                     if (componentDec.IsInput)
                     {
-                        if (
-                            componentDec.MissingInputFrameBehaviour.Value
-                            == MissingInputFrameBehaviour.ResetToDefault
-                        )
+                        if (componentDec.MissingInputBehavior.Value == MissingInputBehavior.Reset)
                         {
-                            _resetToDefaultGroups.Add(
-                                new ResetToDefaultGroupInfo
+                            _resetGroups.Add(
+                                new ResetGroupInfo
                                 {
-                                    Group = group,
+                                    GroupIndex = group,
                                     ComponentBuilder = componentDec.Builder,
                                 }
                             );
                         }
-
-#if DEBUG
-                        if (componentDec.WarnOnMissingInput)
-                        {
-                            _warnOnMissingInfos.Add(
-                                new GroupComponentTypePair
-                                {
-                                    Group = group,
-                                    ComponentType = componentDec.ComponentType,
-                                }
-                            );
-                        }
-#endif
                     }
                 }
             }
-
-            systemRunner.ReadyToApplyInputs.Subscribe(OnReadyForInputs).AddTo(_subscriptions);
         }
 
         public WorldAccessor Accessor
         {
             set
             {
-                Assert.IsNull(_accessor);
-                Assert.IsNotNull(value);
+                TrecsDebugAssert.IsNull(_accessor);
+                TrecsDebugAssert.IsNotNull(value);
                 _accessor = value;
             }
         }
 
-        internal void SetPostApplyInputsSubject(SimpleSubject systemRegistrySubject)
+        internal void SetInputsAppliedSubject(SimpleSubject systemRegistrySubject)
         {
-            Assert.IsNull(_systemRegistryPostApplyInputsEvent);
-            _systemRegistryPostApplyInputsEvent = systemRegistrySubject;
+            TrecsDebugAssert.IsNull(_systemRegistryInputsAppliedEvent);
+            _systemRegistryInputsAppliedEvent = systemRegistrySubject;
         }
 
         public bool HasInputFrame<T>(int frame, EntityHandle entityHandle)
             where T : unmanaged, IEntityComponent
         {
-            var typeHash = TypeIdProvider.GetTypeId<T>();
+            var typeId = TypeId<T>.Value;
 
-            if (!_componentTypeHelpers.TryGetValue(typeHash, out var componentInfo))
+            if (!_componentTypeHelpersMap.TryGetValue(typeId, out var componentInfo))
             {
                 return false;
             }
@@ -131,9 +102,9 @@ namespace Trecs.Internal
         public ref T GetInputRefUnsafe<T>(int frame, EntityHandle entityHandle)
             where T : unmanaged, IEntityComponent
         {
-            var typeHash = TypeIdProvider.GetTypeId<T>();
+            var typeHash = TypeId<T>.Value;
 
-            if (_componentTypeHelpers.TryGetValue(typeHash, out var componentInfo))
+            if (_componentTypeHelpersMap.TryGetValue(typeHash, out var componentInfo))
             {
                 var helper = (ComponentTypeHelper<T>)componentInfo.Helper;
 
@@ -144,8 +115,8 @@ namespace Trecs.Internal
                 }
             }
 
-            throw Assert.CreateException(
-                "Input not found for frame {} and entity {}",
+            throw TrecsDebugAssert.CreateException(
+                "Input not found for frame {0} and entity {1}",
                 frame,
                 entityHandle
             );
@@ -154,9 +125,9 @@ namespace Trecs.Internal
         public bool TryGetInput<T>(int frame, EntityHandle entityHandle, out T value)
             where T : unmanaged, IEntityComponent
         {
-            var typeHash = TypeIdProvider.GetTypeId<T>();
+            var typeHash = TypeId<T>.Value;
 
-            if (_componentTypeHelpers.TryGetValue(typeHash, out var componentInfo))
+            if (_componentTypeHelpersMap.TryGetValue(typeHash, out var componentInfo))
             {
                 var helper = (ComponentTypeHelper<T>)componentInfo.Helper;
 
@@ -175,13 +146,13 @@ namespace Trecs.Internal
         void SetOrAddInput<T>(int frame, EntityHandle entityHandle, in T value, bool existsOk)
             where T : unmanaged, IEntityComponent
         {
-            var typeHash = TypeIdProvider.GetTypeId<T>();
+            var typeHash = TypeId<T>.Value;
 
-            if (!_componentTypeHelpers.TryGetValue(typeHash, out var componentInfo))
+            if (!_componentTypeHelpersMap.TryGetValue(typeHash, out var componentInfo))
             {
                 componentInfo = new() { Helper = new ComponentTypeHelper<T>() };
 
-                _componentTypeHelpers.Add(typeHash, componentInfo);
+                _componentTypeHelpersMap.Add(typeHash, componentInfo);
             }
 
             var key = new FrameEntityHandlePair(frame, entityHandle);
@@ -189,9 +160,9 @@ namespace Trecs.Internal
 
             if (!existsOk)
             {
-                Assert.That(
+                TrecsDebugAssert.That(
                     !values.ContainsKey(key),
-                    "Input already exists for frame {} and entity {}",
+                    "Input already exists for frame {0} and entity {1}",
                     frame,
                     entityHandle
                 );
@@ -222,8 +193,9 @@ namespace Trecs.Internal
 
         public void ClearFutureInputsAfterOrAt(int frame)
         {
-            foreach (var (_, info) in _componentTypeHelpers)
+            foreach (var pair in _componentTypeHelpersMap)
             {
+                var info = pair.Value;
                 _frameTempRemoveBuffer.Clear();
 
                 foreach (var (candidateFrame, _) in info.FrameEntries)
@@ -237,7 +209,7 @@ namespace Trecs.Internal
                 foreach (var key in _frameTempRemoveBuffer)
                 {
                     var wasRemoved = info.FrameEntries.TryRemove(key, out var entityHandleSet);
-                    Assert.That(wasRemoved);
+                    TrecsDebugAssert.That(wasRemoved);
 
                     foreach (var entityHandle in entityHandleSet)
                     {
@@ -249,18 +221,19 @@ namespace Trecs.Internal
                 }
             }
 
-            _frameScopedUniqueHeap.ClearAtOrAfterFrame(frame);
-            _frameScopedSharedHeap.ClearAtOrAfterFrame(frame);
-            _nativeFrameScopedSharedHeap.ClearAtOrAfterFrame(frame);
-            _frameScopedNativeUniqueHeap.ClearAtOrAfterFrame(frame);
+            _inputUniqueHeap.ClearAtOrAfterFrame(frame);
+            _inputSharedHeap.ClearAtOrAfterFrame(frame);
+            _inputNativeSharedHeap.ClearAtOrAfterFrame(frame);
+            _inputNativeUniqueHeap.ClearAtOrAfterFrame(frame);
         }
 
         public void ClearAllInputs()
         {
             _log.Trace("Clearing all inputs");
 
-            foreach (var (_, info) in _componentTypeHelpers)
+            foreach (var pair in _componentTypeHelpersMap)
             {
+                var info = pair.Value;
                 foreach (var (frame, entityHandleSet) in info.FrameEntries)
                 {
                     foreach (var entityHandle in entityHandleSet)
@@ -275,42 +248,43 @@ namespace Trecs.Internal
                 info.FrameEntries.Clear();
             }
 
-            _frameScopedUniqueHeap.ClearAll();
-            _frameScopedSharedHeap.ClearAll();
-            _nativeFrameScopedSharedHeap.ClearAll();
-            _frameScopedNativeUniqueHeap.ClearAll();
+            _inputUniqueHeap.ClearAll();
+            _inputSharedHeap.ClearAll();
+            _inputNativeSharedHeap.ClearAll();
+            _inputNativeUniqueHeap.ClearAll();
         }
 
-        DenseHashSet<EntityHandle> SpawnEntityHandleValueIdSet(ComponentTypeInfo info)
+        IterableHashSet<EntityHandle> SpawnEntityHandleValueIdSet(ComponentTypeInfo info)
         {
             if (info.EntityHandleSetPool.Count > 0)
             {
                 var result = info.EntityHandleSetPool.Pop();
-                Assert.That(result.IsEmpty());
+                TrecsDebugAssert.That(result.IsEmpty);
                 return result;
             }
 
-            using (TrecsProfiling.Start("Allocating new DenseHashSet<EntityHandle>"))
+            using (TrecsProfiling.Start("Allocating new IterableHashSet<EntityHandle>"))
             {
-                return new DenseHashSet<EntityHandle>(8);
+                return new IterableHashSet<EntityHandle>(8);
             }
         }
 
         void DespawnEntityHandleSet(
             ComponentTypeInfo info,
-            DenseHashSet<EntityHandle> entityHandleSet
+            IterableHashSet<EntityHandle> entityHandleSet
         )
         {
-            Assert.That(entityHandleSet.IsEmpty());
+            TrecsDebugAssert.That(entityHandleSet.IsEmpty);
             info.EntityHandleSetPool.Push(entityHandleSet);
         }
 
         public void ClearInputsBeforeOrAt(int frame)
         {
-            _log.Trace("ClearInputsBeforeOrAt frame {}", frame);
+            _log.Trace("ClearInputsBeforeOrAt frame {0}", frame);
 
-            foreach (var (_, info) in _componentTypeHelpers)
+            foreach (var pair in _componentTypeHelpersMap)
             {
+                var info = pair.Value;
                 _frameTempRemoveBuffer.Clear();
 
                 foreach (var (candidateFrame, _) in info.FrameEntries)
@@ -324,7 +298,7 @@ namespace Trecs.Internal
                 foreach (var key in _frameTempRemoveBuffer)
                 {
                     var wasRemoved = info.FrameEntries.TryRemove(key, out var entityHandleSet);
-                    Assert.That(wasRemoved);
+                    TrecsDebugAssert.That(wasRemoved);
 
                     foreach (var entityHandle in entityHandleSet)
                     {
@@ -336,27 +310,28 @@ namespace Trecs.Internal
                 }
             }
 
-            _frameScopedUniqueHeap.ClearAtOrBeforeFrame(frame);
-            _frameScopedSharedHeap.ClearAtOrBeforeFrame(frame);
-            _nativeFrameScopedSharedHeap.ClearAtOrBeforeFrame(frame);
-            _frameScopedNativeUniqueHeap.ClearAtOrBeforeFrame(frame);
+            _inputUniqueHeap.ClearAtOrBeforeFrame(frame);
+            _inputSharedHeap.ClearAtOrBeforeFrame(frame);
+            _inputNativeSharedHeap.ClearAtOrBeforeFrame(frame);
+            _inputNativeUniqueHeap.ClearAtOrBeforeFrame(frame);
         }
 
         // Note: these Serialize/Deserialize methods are used by the recording system
-        // for deterministic replay, not by bookmark serialization. Bookmarks don't need
+        // for deterministic replay, not by snapshot serialization. Snapshots don't need
         // input queue state because the component values themselves (which include the
-        // last-applied input for RetainCurrent components) are already captured in the
+        // last-applied input for Retain components) are already captured in the
         // WorldStateSerializer snapshot.
-        public void Serialize(ITrecsSerializationWriter writer)
+        public void Serialize(ISerializationWriter writer)
         {
-            writer.Write("NumHelpers", _componentTypeHelpers.Count);
+            writer.Write("NumHelpers", _componentTypeHelpersMap.Count);
             long bytesStart;
 
-            foreach (var (typeHash, info) in _componentTypeHelpers)
+            foreach (var pair in _componentTypeHelpersMap)
             {
+                var info = pair.Value;
                 bytesStart = writer.NumBytesWritten;
                 writer.Write("ComponentType", info.Helper.ComponentType);
-                Assert.IsNotNull(info.Helper);
+                TrecsDebugAssert.IsNotNull(info.Helper);
                 info.Helper.SerializeValues(writer);
 
                 writer.Write("NumFrameEntries", info.FrameEntries.Count);
@@ -364,11 +339,11 @@ namespace Trecs.Internal
                 foreach (var (frame, entityHandleSet) in info.FrameEntries)
                 {
                     writer.Write("Frame", frame);
-                    writer.Write<DenseHashSet<EntityHandle>>("Erefs", entityHandleSet);
+                    writer.Write<IterableHashSet<EntityHandle>>("Erefs", entityHandleSet);
                 }
 
                 _log.Debug(
-                    "Serialized {0.00} kb for type {} ({} frames)",
+                    "Serialized {0:0.00} kb for type {1} ({2} frames)",
                     (writer.NumBytesWritten - bytesStart) / 1024f,
                     info.Helper.ComponentType,
                     info.FrameEntries.Count
@@ -376,46 +351,48 @@ namespace Trecs.Internal
             }
 
             bytesStart = writer.NumBytesWritten;
-            _frameScopedUniqueHeap.Serialize(writer);
+            _inputUniqueHeap.Serialize(writer);
             _log.Debug(
-                "Serialized {0.00} kb for FrameScopedUniqueHeap",
+                "Serialized {0:0.00} kb for InputUniqueHeap",
                 (writer.NumBytesWritten - bytesStart) / 1024f
             );
 
             bytesStart = writer.NumBytesWritten;
-            _frameScopedSharedHeap.Serialize(writer);
+            _inputSharedHeap.Serialize(writer);
             _log.Debug(
-                "Serialized {0.00} kb for FrameScopedSharedHeap",
+                "Serialized {0:0.00} kb for InputSharedHeap",
                 (writer.NumBytesWritten - bytesStart) / 1024f
             );
 
             bytesStart = writer.NumBytesWritten;
-            _nativeFrameScopedSharedHeap.Serialize(writer);
+            _inputNativeSharedHeap.Serialize(writer);
             _log.Debug(
-                "Serialized {0.00} kb for FrameScopedNativeSharedHeap",
+                "Serialized {0:0.00} kb for InputNativeSharedHeap",
                 (writer.NumBytesWritten - bytesStart) / 1024f
             );
 
             bytesStart = writer.NumBytesWritten;
-            _frameScopedNativeUniqueHeap.Serialize(writer);
+            _inputNativeUniqueHeap.Serialize(writer);
             _log.Debug(
-                "Serialized {0.00} kb for FrameScopedNativeUniqueHeap",
+                "Serialized {0:0.00} kb for InputNativeUniqueHeap",
                 (writer.NumBytesWritten - bytesStart) / 1024f
             );
         }
 
-        public void Deserialize(ITrecsSerializationReader reader)
+        public void Deserialize(ISerializationReader reader)
         {
             _log.Trace("Deserializing EntityInputQueue");
 
-            foreach (var (_, info) in _componentTypeHelpers)
+            foreach (var pair in _componentTypeHelpersMap)
             {
-                foreach (var entityHandleSet in info.FrameEntries)
+                var existingInfo = pair.Value;
+                foreach (var entityHandleSet in existingInfo.FrameEntries)
                 {
-                    info.EntityHandleSetPool.Push(entityHandleSet.Value);
+                    entityHandleSet.Value.Clear();
+                    existingInfo.EntityHandleSetPool.Push(entityHandleSet.Value);
                 }
-                info.FrameEntries.Clear();
-                info.Helper.Clear();
+                existingInfo.FrameEntries.Clear();
+                existingInfo.Helper.Clear();
             }
 
             var numHelpers = reader.Read<int>("NumHelpers");
@@ -423,12 +400,12 @@ namespace Trecs.Internal
             for (int i = 0; i < numHelpers; i++)
             {
                 var componentType = reader.Read<Type>("ComponentType");
-                var typeHash = TypeIdProvider.GetTypeId(componentType);
+                var typeHash = TypeId.FromType(componentType);
 
-                if (!_componentTypeHelpers.TryGetValue(typeHash, out var info))
+                if (!_componentTypeHelpersMap.TryGetValue(typeHash, out var info))
                 {
                     info = new ComponentTypeInfo();
-                    _componentTypeHelpers.Add(typeHash, info);
+                    _componentTypeHelpersMap.Add(typeHash, info);
                 }
 
                 if (info.Helper == null)
@@ -436,7 +413,7 @@ namespace Trecs.Internal
                     info.Helper = CreateHelperForType(componentType);
                 }
                 info.Helper.DeserializeValues(reader);
-                Assert.IsNotNull(info.Helper);
+                TrecsDebugAssert.IsNotNull(info.Helper);
 
                 var numFrameEntries = reader.Read<int>("NumFrameEntries");
 
@@ -444,76 +421,28 @@ namespace Trecs.Internal
                 {
                     var frame = reader.Read<int>("Frame");
                     var entityHandleSet = SpawnEntityHandleValueIdSet(info);
-                    reader.ReadInPlace<DenseHashSet<EntityHandle>>("Erefs", entityHandleSet);
+                    reader.ReadInPlace<IterableHashSet<EntityHandle>>("Erefs", entityHandleSet);
 
                     info.FrameEntries.Add(frame, entityHandleSet);
                 }
             }
 
-            _frameScopedUniqueHeap.Deserialize(reader);
-            _frameScopedSharedHeap.Deserialize(reader);
-            _nativeFrameScopedSharedHeap.Deserialize(reader);
-            _frameScopedNativeUniqueHeap.Deserialize(reader);
+            _inputUniqueHeap.Deserialize(reader);
+            _inputSharedHeap.Deserialize(reader);
+            _inputNativeSharedHeap.Deserialize(reader);
+            _inputNativeUniqueHeap.Deserialize(reader);
         }
 
-        /// <summary>
-        /// Remaps all stored input frame numbers by adding the given offset.
-        /// Used for InputsOnly playback mode where inputs need to be applied
-        /// relative to the current frame rather than the original recording frame.
-        /// </summary>
-        public void RemapFrameOffsets(int frameOffset)
-        {
-            if (frameOffset == 0)
-            {
-                return;
-            }
-
-            _log.Debug("Remapping input frame offsets by {}", frameOffset);
-
-            foreach (var (_, info) in _componentTypeHelpers)
-            {
-                // Collect all frame entries to remap
-                var framesToRemap =
-                    new List<(int oldFrame, DenseHashSet<EntityHandle> entityHandles)>();
-                foreach (var (frame, entityHandleSet) in info.FrameEntries)
-                {
-                    framesToRemap.Add((frame, entityHandleSet));
-                }
-
-                // Clear and rebuild with new frame numbers
-                info.FrameEntries.Clear();
-                foreach (var (oldFrame, entityHandleSet) in framesToRemap)
-                {
-                    var newFrame = oldFrame + frameOffset;
-                    info.FrameEntries.Add(newFrame, entityHandleSet);
-                }
-
-                // Remap the helper's internal storage
-                info.Helper.RemapFrameOffsets(frameOffset);
-            }
-
-            _frameScopedUniqueHeap.RemapFrameOffsets(frameOffset);
-            _frameScopedSharedHeap.RemapFrameOffsets(frameOffset);
-            _nativeFrameScopedSharedHeap.RemapFrameOffsets(frameOffset);
-            _frameScopedNativeUniqueHeap.RemapFrameOffsets(frameOffset);
-        }
-
-        internal void ResetInputs<T>(Group group)
+        internal void ResetInputs<T>(GroupIndex group)
             where T : unmanaged, IEntityComponent
         {
-            var values = _accessor.ComponentBuffer<T>(group).Write;
-            var count = _accessor.CountEntitiesInGroup(group);
-
-            for (int i = 0; i < count; i++)
-            {
-                values[i] = default;
-            }
+            _accessor.ComponentBuffer<T>(group).Write.Clear();
         }
 
         internal void ApplyInputs<T>(
-            DenseHashSet<EntityHandle> entityHandles,
+            IterableHashSet<EntityHandle> entityHandles,
             int frame,
-            NativeDenseDictionary<FrameEntityHandlePair, T> values
+            NativeIterableDictionary<FrameEntityHandlePair, T> values
         )
             where T : unmanaged, IEntityComponent
         {
@@ -529,7 +458,7 @@ namespace Trecs.Internal
                 if (!entityHandle.Exists(world))
                 {
                     _log.Warning(
-                        "Attempted to apply input for non-existing entity {}",
+                        "Attempted to apply input for non-existing entity {0}",
                         entityHandle
                     );
                     continue;
@@ -540,27 +469,17 @@ namespace Trecs.Internal
 
                 var entityIndex = entityHandle.ToIndex(world);
 
-                if (!world.TryComponent<T>(entityIndex, out var component))
+                if (!entityIndex.TryComponent<T>(world, out var component))
                 {
                     _removeQueueBuffer.Add(entityHandle);
                     values.Remove(valuesKey);
 
                     _log.Warning(
-                        "Found input with type {} for entity but entity doesn't exist. Discarding input",
+                        "Found input with type {0} for entity but entity doesn't exist. Discarding input",
                         typeof(T)
                     );
                     continue;
                 }
-
-#if DEBUG
-                _warnOnMissingTempBuffer.Remove(
-                    new GroupComponentTypePair()
-                    {
-                        Group = entityIndex.Group,
-                        ComponentType = typeof(T),
-                    }
-                );
-#endif
 
                 ref var value = ref component.Write;
 
@@ -586,26 +505,26 @@ namespace Trecs.Internal
 
         public void AddHistoryLocker(IInputHistoryLocker locker)
         {
-            Assert.That(!_historyLockers.Contains(locker));
+            TrecsDebugAssert.That(!_historyLockers.Contains(locker));
             _historyLockers.Add(locker);
         }
 
         public void RemoveHistoryLocker(IInputHistoryLocker locker)
         {
             var wasRemoved = _historyLockers.Remove(locker);
-            Assert.That(wasRemoved);
+            TrecsDebugAssert.That(wasRemoved);
         }
 
-        public int GetMaxClearFrame()
+        public int GetMaxClearFrame(int currentFixedFrame)
         {
-            return CalculateMaxClearFrame();
+            return CalculateMaxClearFrame(currentFixedFrame);
         }
 
-        int CalculateMaxClearFrame()
+        int CalculateMaxClearFrame(int currentFixedFrame)
         {
             // We need to do -1 for the heap allocated inputs
             // since we don't want to dispose those until next frame, since they could be used this frame
-            int maxClearFrame = _systemRunner.FixedFrame - 1;
+            int maxClearFrame = currentFixedFrame - 1;
 
             foreach (var locker in _historyLockers)
             {
@@ -620,85 +539,57 @@ namespace Trecs.Internal
             return maxClearFrame;
         }
 
-        void OnReadyForInputs()
+        internal void ApplyInputs(int currentFixedFrame)
         {
             using (TrecsProfiling.Start("Resetting Input Values"))
             {
-                foreach (var info in _resetToDefaultGroups)
+                foreach (var info in _resetGroups)
                 {
-                    info.ComponentBuilder.ResetInputs(this, info.Group);
+                    info.ComponentBuilder.ResetInputs(this, info.GroupIndex);
                 }
             }
-
-#if DEBUG
-            _warnOnMissingTempBuffer.Clear();
-
-            foreach (var info in _warnOnMissingInfos)
-            {
-                _warnOnMissingTempBuffer.Add(info);
-            }
-#endif
-
-            var frame = _systemRunner.FixedFrame;
 
 #if TRECS_IS_PROFILING
             using (TrecsProfiling.Start("Applying Inputs"))
 #endif
             {
-                foreach (var (_, info) in _componentTypeHelpers)
+                foreach (var pair in _componentTypeHelpersMap)
                 {
-                    if (info.FrameEntries.TryGetValue(frame, out var entityHandles))
+                    var info = pair.Value;
+                    if (info.FrameEntries.TryGetValue(currentFixedFrame, out var entityHandles))
                     {
-                        info.Helper.ApplyInputs(this, entityHandles, frame);
+                        info.Helper.ApplyInputs(this, entityHandles, currentFixedFrame);
 
-                        if (entityHandles.IsEmpty())
+                        if (entityHandles.IsEmpty)
                         {
-                            info.FrameEntries.RemoveMustExist(frame);
+                            info.FrameEntries.RemoveMustExist(currentFixedFrame);
                             DespawnEntityHandleSet(info, entityHandles);
                         }
                     }
                 }
             }
 
-#if DEBUG
-            foreach (var info in _warnOnMissingTempBuffer)
-            {
-                if (_accessor.CountEntitiesInGroup(info.Group) > 0)
-                {
-                    _log.Warning(
-                        "No frame data found for input component {} on frame {}",
-                        info.ComponentType,
-                        frame
-                    );
-                }
-            }
-            _warnOnMissingTempBuffer.Clear();
-#endif
-
 #if TRECS_IS_PROFILING
             using (TrecsProfiling.Start("Clearing old input"))
 #endif
             {
-                _maxClearFrame = CalculateMaxClearFrame();
-                // _dbg.Text("MaxClearFrame: {}", _maxClearFrame);
+                _maxClearFrame = CalculateMaxClearFrame(currentFixedFrame);
 
                 ClearInputsBeforeOrAt(_maxClearFrame);
             }
 
-            _systemRegistryPostApplyInputsEvent?.Invoke();
+            _systemRegistryInputsAppliedEvent?.Invoke();
         }
 
         public void Dispose()
         {
-            _subscriptions.Dispose();
-
-            foreach (var (_, info) in _componentTypeHelpers)
+            foreach (var pair in _componentTypeHelpersMap)
             {
-                info.Helper.Dispose();
+                pair.Value.Helper.Dispose();
             }
-            _componentTypeHelpers.Clear();
+            _componentTypeHelpersMap.Clear();
 
-            // Note: post-apply-inputs event is owned by EventsManager, not EntityInputQueue
+            // Note: inputs-applied event is owned by EventsManager, not EntityInputQueue
         }
 
         internal readonly struct FrameEntityHandlePair : IEquatable<FrameEntityHandlePair>
@@ -726,7 +617,7 @@ namespace Trecs.Internal
             {
                 // we don't want to use HashCode.Combine because
                 // it's not deterministic across restarts
-                return unchecked((int)math.hash(new int2(Frame, EntityHandle.GetStableHashCode())));
+                return unchecked((int)math.hash(new int2(Frame, EntityHandle.GetHashCode())));
             }
 
             public static bool operator ==(FrameEntityHandlePair left, FrameEntityHandlePair right)
@@ -740,49 +631,10 @@ namespace Trecs.Internal
             }
         }
 
-        class ResetToDefaultGroupInfo
+        class ResetGroupInfo
         {
-            public Group Group;
+            public GroupIndex GroupIndex;
             public IComponentBuilder ComponentBuilder;
-        }
-
-        struct GroupComponentTypePair : IEquatable<GroupComponentTypePair>
-        {
-            public Group Group;
-            public Type ComponentType;
-
-            public readonly bool Equals(GroupComponentTypePair other)
-            {
-                return Group == other.Group && ComponentType == other.ComponentType;
-            }
-
-            public override readonly bool Equals(object obj)
-            {
-                return obj is GroupComponentTypePair other && Equals(other);
-            }
-
-            public override readonly int GetHashCode()
-            {
-                return unchecked(
-                    (int)math.hash(new int2(Group.GetStableHashCode(), ComponentType.GetHashCode()))
-                );
-            }
-
-            public static bool operator ==(
-                GroupComponentTypePair left,
-                GroupComponentTypePair right
-            )
-            {
-                return left.Equals(right);
-            }
-
-            public static bool operator !=(
-                GroupComponentTypePair left,
-                GroupComponentTypePair right
-            )
-            {
-                return !(left == right);
-            }
         }
 
         internal interface IComponentTypeHelper : IDisposable
@@ -797,20 +649,18 @@ namespace Trecs.Internal
 
             void ApplyInputs(
                 EntityInputQueue entityInputQueue,
-                DenseHashSet<EntityHandle> entityHandles,
+                IterableHashSet<EntityHandle> entityHandles,
                 int frame
             );
 
-            void RemapFrameOffsets(int frameOffset);
-
-            void SerializeValues(ITrecsSerializationWriter writer);
-            void DeserializeValues(ITrecsSerializationReader reader);
+            void SerializeValues(ISerializationWriter writer);
+            void DeserializeValues(ISerializationReader reader);
         }
 
         internal class ComponentTypeHelper<T> : IComponentTypeHelper
             where T : unmanaged, IEntityComponent
         {
-            public NativeDenseDictionary<FrameEntityHandlePair, T> Values = new(
+            public NativeIterableDictionary<FrameEntityHandlePair, T> Values = new(
                 10,
                 Allocator.Persistent
             );
@@ -833,12 +683,12 @@ namespace Trecs.Internal
             public void Remove(FrameEntityHandlePair key)
             {
                 var wasRemoved = Values.Remove(key);
-                Assert.That(wasRemoved);
+                TrecsDebugAssert.That(wasRemoved);
             }
 
             public void ApplyInputs(
                 EntityInputQueue entityInputQueue,
-                DenseHashSet<EntityHandle> entityHandles,
+                IterableHashSet<EntityHandle> entityHandles,
                 int frame
             )
             {
@@ -850,33 +700,12 @@ namespace Trecs.Internal
                 Values.Clear();
             }
 
-            public void RemapFrameOffsets(int frameOffset)
-            {
-                // We need to rebuild the dictionary with remapped frame keys
-                var oldValues = new List<(FrameEntityHandlePair key, T value)>();
-                foreach (var (key, value) in Values)
-                {
-                    oldValues.Add((key, value));
-                }
-
-                Values.Clear();
-
-                foreach (var (oldKey, value) in oldValues)
-                {
-                    var newKey = new FrameEntityHandlePair(
-                        oldKey.Frame + frameOffset,
-                        oldKey.EntityHandle
-                    );
-                    Values.Add(newKey, value);
-                }
-            }
-
-            public void SerializeValues(ITrecsSerializationWriter writer)
+            public void SerializeValues(ISerializationWriter writer)
             {
                 Values.SerializeValues(writer);
             }
 
-            public void DeserializeValues(ITrecsSerializationReader reader)
+            public void DeserializeValues(ISerializationReader reader)
             {
                 Values.DeserializeValues(reader);
             }
@@ -891,8 +720,9 @@ namespace Trecs.Internal
         class ComponentTypeInfo
         {
             public IComponentTypeHelper Helper;
-            public readonly DenseDictionary<int, DenseHashSet<EntityHandle>> FrameEntries = new();
-            public readonly Stack<DenseHashSet<EntityHandle>> EntityHandleSetPool = new();
+            public readonly IterableDictionary<int, IterableHashSet<EntityHandle>> FrameEntries =
+                new();
+            public readonly Stack<IterableHashSet<EntityHandle>> EntityHandleSetPool = new();
         }
     }
 }

@@ -15,8 +15,8 @@ namespace Trecs.Tests
 
     public partial class TestGlobalsTemplate : ITemplate, IExtends<TrecsTemplates.Globals>
     {
-        public TestGlobalInt GlobalInt = new TestGlobalInt { Value = 0 };
-        public TestGlobalFloat GlobalFloat = new TestGlobalFloat { Value = 0f };
+        TestGlobalInt GlobalInt = new TestGlobalInt { Value = 0 };
+        TestGlobalFloat GlobalFloat = new TestGlobalFloat { Value = 0f };
     }
 
     [TestFixture]
@@ -124,7 +124,7 @@ namespace Trecs.Tests
             using var env = CreateEnv();
             var a = env.Accessor;
 
-            NAssert.IsTrue(a.EntityExists(a.GlobalEntityHandle));
+            NAssert.IsTrue(a.GlobalEntityHandle.Exists(a));
         }
 
         [Test]
@@ -141,10 +141,10 @@ namespace Trecs.Tests
             {
                 a.AddEntity(TestTags.Alpha).AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             a.RemoveEntitiesWithTags(TestTags.Alpha);
-            a.SubmitEntities();
+            a.Submit();
 
             // Global component should be unchanged
             NAssert.AreEqual(100, a.GlobalComponent<TestGlobalInt>().Read.Value);

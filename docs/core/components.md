@@ -1,25 +1,34 @@
 # Components
 
-Components are plain data containers attached to entities. In Trecs, components are **unmanaged structs** — no classes, no managed references, no garbage collection.
+Components are plain data attached to entities — **unmanaged structs**, no classes, no managed references, no garbage collection.
 
-## Defining Components
+## Defining components
 
 ```csharp
-public struct Health : IEntityComponent
+public partial struct Health : IEntityComponent
 {
     public float Current;
     public float Max;
 }
 ```
 
-Every component must:
+A component must:
 
-1. Be an **unmanaged struct** (no reference types, strings, or arrays)
-2. Implement **`IEntityComponent`**
+1. Be a `partial struct` (so the source generator can extend it)
+2. Be unmanaged (no reference types, strings, or managed arrays)
+3. Implement `IEntityComponent`
 
-### The `[Unwrap]` Shorthand
+The source generator extends each component with:
 
-For single-field components, use `[Unwrap]` to expose the inner value directly in [aspects](../data-access/aspects.md):
+- `Equals` and `==` / `!=` overloads that compare the struct as raw bytes — equivalent to `memcmp`, so equality is fast and fixed-cost regardless of field count.
+- `[System.Serializable]` so Unity's `SerializedObject` machinery can navigate the type's fields. This is what lets the [Trecs entity inspector](../editor-windows/hierarchy.md) render component values when an entity is selected in the Hierarchy.
+- A constructor for `[Unwrap]` components that takes the inner value directly (so you can write `new Speed(5f)` instead of `new Speed { Value = 5f }`).
+
+These are the reasons components must be `partial`.
+
+## The `[Unwrap]` shorthand
+
+For single-field components, `[Unwrap]` exposes the inner value directly through [aspects](../data-access/aspects.md):
 
 ```csharp
 [Unwrap]
@@ -27,84 +36,73 @@ public partial struct Position : IEntityComponent
 {
     public float3 Value;
 }
+```
 
-[Unwrap]
-public partial struct Speed : IEntityComponent
+Inside an aspect that reads `Position`, `aspect.Position` returns a `float3` rather than the wrapping struct.
+
+## Reading and writing components
+
+Most access goes through [aspects](../data-access/aspects.md) and `[ForEachEntity]` parameters. For ad-hoc access by `EntityHandle`:
+
+```csharp
+ref readonly Health hp = ref handle.Component<Health>(World).Read;
+
+ref Health hpW = ref handle.Component<Health>(World).Write;
+hpW.Current -= damage;
+```
+
+The `.Read` / `.Write` split lets Trecs lazily complete any in-flight jobs with conflicting access before handing back the reference. See [Dependency Tracking](../performance/dependency-tracking.md).
+
+For optional components, use the matching `TryComponent` overload — it returns `false` if the entity no longer exists or lacks that component:
+
+```csharp
+if (handle.TryComponent<Velocity>(World, out var velAccessor))
 {
-    public float Value;
+    ref readonly Velocity vel = ref velAccessor.Read;
 }
 ```
 
-With `[Unwrap]`, aspect properties return `float3` and `float` directly instead of the wrapper struct.
+## Component field attributes
 
-## Reading and Writing Components
-
-### Single Entity Access
+When components are declared in a [template](templates.md), fields can be annotated to control update behavior:
 
 ```csharp
-// Read
-ref readonly Position pos = ref world.Component<Position>(entityIndex).Read;
-
-// Write
-ref Position pos = ref world.Component<Position>(entityIndex).Write;
-pos.Current -= damage;
-
-// Via EntityAccessor
-var entity = entityIndex.ToEntity(world);
-ref Health hp = ref entity.Get<Health>().Write;
-
-// Safe access (check if component exists)
-if (world.TryComponent<Health>(entityIndex, out var healthAccessor))
-{
-    ref readonly Health hp = ref healthAccessor.Read;
-}
-```
-
-Accessing via Read/Write properties allows Trecs to lazily complete any jobs with conflicting access before providing the reference. See [Dependency Tracking](../performance/dependency-tracking.md) for details on how this works.
-
-## Component Field Attributes
-
-When declaring components in a [template](templates.md), fields can be annotated with attributes that control their update behavior:
-
-```csharp
-public partial class PlayerEntity : ITemplate, IHasTags<PlayerTag>
+public partial class PlayerEntity : ITemplate, ITagged<PlayerTag>
 {
     [Interpolated]
-    public Position Position = default;               // Smoothed between fixed frames
+    Position Position = default;               // Smoothed between fixed frames
 
-    [FixedUpdateOnly]
-    public Velocity Velocity;                          // Only writable in fixed update
+    Velocity Velocity;                          // Plain simulation state — Fixed-only writes
 
     [VariableUpdateOnly]
-    public RenderState RenderState;                    // Only writable in variable update
+    RenderState RenderState;                    // Render-only state
 
     [Constant]
-    public PlayerId PlayerId;                          // Immutable after creation
+    PlayerId PlayerId;                          // Immutable after creation
 
-    [Input(MissingInputFrameBehaviour.RetainCurrent)]
-    public MoveInput MoveInput;                        // Player input, retains last value
+    [Input(MissingInputBehavior.Retain)]
+    MoveInput MoveInput;                        // Player input
 }
 ```
 
 | Attribute | Effect |
 |-----------|--------|
-| `[Interpolated]` | Generates interpolation components for smooth rendering. See [Interpolation](../advanced/interpolation.md). |
-| `[FixedUpdateOnly]` | Component is only writable during fixed update phase |
-| `[VariableUpdateOnly]` | Component is only writable during variable update phase |
-| `[Constant]` | Component is immutable after entity creation |
-| `[Input(...)]` | Marks component as input data. See [Input System](../advanced/input-system.md). |
+| `[Interpolated]` | Generates interpolation companion components for smooth rendering. See [Interpolation](../advanced/interpolation.md). |
+| `[VariableUpdateOnly]` | Variable, Input, and Unrestricted accessors may read and write it freely. Fixed-update systems cannot touch it. Asserted at the access site — see [Accessor Roles](../advanced/accessor-roles.md#capability-matrix). |
+| `[Constant]` | Immutable after entity creation. Asserted at the write site. |
+| `[Input(...)]` | Marks the component as input data. See [Input System](input-system.md). |
 
-## Global Entity
+A component with no attribute is **simulation state**: any phase may read it; only `Fixed` and `Unrestricted` accessors may write it.
 
-Every world has a single **global entity** for storing world-wide state. Access it via `GlobalComponent<T>()`:
+## Global entity
+
+Every world has a single **global entity** for world-wide state. Access it with `GlobalComponent<T>()`:
 
 ```csharp
-// Read global component
-ref readonly Score score = ref world.GlobalComponent<Score>().Read;
+ref readonly Score score = ref World.GlobalComponent<Score>().Read;
 
-// Write global component
-ref Score score = ref world.GlobalComponent<Score>().Write;
-score.Value += 10;
+ref Score scoreW = ref World.GlobalComponent<Score>().Write;
+scoreW.Value += 10;
 ```
 
-To define which components the global entity has, see [Global Entity Template](templates.md#global-entity-template).
+To declare which components the global entity has, see [Global Entity Template](templates.md#global-entity-template).

@@ -1,14 +1,14 @@
 # 09 — Interpolation
 
-Smooth rendering at variable frame rates despite a low fixed timestep. Side-by-side comparison of interpolated vs raw entity movement.
+Smooth rendering at variable frame rates despite a low fixed timestep. Side-by-side comparison of interpolated vs raw movement.
 
-**Source:** `Samples/09_Interpolation/`
+**Source:** `com.trecs.core/Samples~/Tutorials/09_Interpolation/`
 
-## What It Does
+## What it does
 
-Two sets of entities orbit in circles. "Smooth" entities use interpolation and appear silky smooth. "Raw" entities read the fixed-update position directly and visibly stutter at high frame rates.
+Two sets of entities orbit in circles. "Smooth" entities use interpolation; "Raw" entities read the fixed-update position directly and visibly stutter at high frame rates.
 
-The fixed timestep is intentionally set low (10 Hz) to make the difference obvious. An alternative approach to see this effect would be to keep default timestep but adjust Unity Time.scale to slow down the simulation. In a real game the latter approach is more useful to debug this effect.
+The fixed timestep is set low (10 Hz) to make the difference obvious. An alternative is keeping the default timestep but lowering Unity's `Time.timeScale` — more useful for debugging in a real game.
 
 ## Schema
 
@@ -28,32 +28,38 @@ public partial struct OrbitParams : IEntityComponent
 
 ```csharp
 // Interpolated — smooth
-public partial class SmoothOrbitEntity : ITemplate, IHasTags<OrbitTags.Smooth>
+public partial class SmoothOrbitEntity
+    : ITemplate,
+        IExtends<CommonTemplates.RenderableGameObject>,
+        ITagged<OrbitTags.Smooth>
 {
     [Interpolated]
-    public Position Position = default;
+    Position Position = default;
 
     [Interpolated]
-    public Rotation Rotation = default;
-    public OrbitParams OrbitParams;
-    public GameObjectId GameObjectId;
+    Rotation Rotation = default;
+    OrbitParams OrbitParams;
+    PrefabId PrefabId = new(InterpolationPrefabs.SmoothCube);
 }
 
 // Not interpolated — jittery
-public partial class RawOrbitEntity : ITemplate, IHasTags<OrbitTags.Raw>
+public partial class RawOrbitEntity
+    : ITemplate,
+        IExtends<CommonTemplates.RenderableGameObject>,
+        ITagged<OrbitTags.Raw>
 {
-    public Position Position = default;
-    public Rotation Rotation = default;
-    public OrbitParams OrbitParams;
-    public GameObjectId GameObjectId;
+    Position Position = default;
+    Rotation Rotation = default;
+    OrbitParams OrbitParams;
+    PrefabId PrefabId = new(InterpolationPrefabs.RawCube);
 }
 ```
 
-The `[Interpolated]` attribute on `Position` and `Rotation` automatically generates `Interpolated<T>` and `InterpolatedPrevious<T>` wrapper components.
+`[Interpolated]` on `Position` and `Rotation` generates `Interpolated<T>` and `InterpolatedPrevious<T>` wrapper components.
 
-## Interpolation Functions
+## Interpolation functions
 
-Define static methods with `[GenerateInterpolatorSystem]` that specify how each component type should be blended. The source generator creates a Burst-compiled job system for each:
+Static methods marked `[GenerateInterpolatorSystem]` specify how each component type blends. The source generator emits a Burst-compiled job system for each:
 
 ```csharp
 public static class SampleInterpolators
@@ -80,15 +86,15 @@ public static class SampleInterpolators
 }
 ```
 
-The `GroupName` groups related interpolators so they can be registered with a single call.
+`GroupName` lets related interpolators be registered with a single call.
 
 ## Setup
 
-The generated extension method `AddInterpolationSampleInterpolators()` registers both the previous-frame savers and the blending systems:
+The generated `AddInterpolationSampleInterpolators()` extension registers both the previous-frame savers and the blending systems:
 
 ```csharp
 var world = new WorldBuilder()
-    .AddEntityTypes(new[]
+    .AddTemplates(new[]
     {
         SampleTemplates.SmoothOrbitEntity.Template,
         SampleTemplates.RawOrbitEntity.Template,
@@ -97,45 +103,62 @@ var world = new WorldBuilder()
     .Build();
 ```
 
-### Entity Creation
+### Entity creation
 
-Smooth entities use `SetInterpolated` to initialize all three components at once:
+`SetInterpolated` initializes the current, previous, and interpolated copies in one call:
 
 ```csharp
-world.AddEntity<OrbitTags.Smooth>()
-    .SetInterpolated(new Position(startPos))
-    .SetInterpolated(new Rotation(startRot))
-    .Set(new OrbitParams { ... });
+entity.SetInterpolated(new Position(position));
+entity.SetInterpolated(new Rotation(quaternion.identity));
 ```
+
+Raw entities use plain `Set` — they only have the fixed-update component.
 
 ## Rendering
 
-The renderer reads `Interpolated<Position>` and `Interpolated<Rotation>` for smooth entities, and the raw components directly for comparison:
+Two aspects — one for the interpolated wrappers, one for the raw components — dispatched per partition:
 
 ```csharp
-// Smooth: reads blended values — silky smooth
-[ForEachEntity(Tag = typeof(OrbitTags.Smooth))]
-void RenderSmooth(in Interpolated<Position> pos, in Interpolated<Rotation> rot, in GameObjectId id)
+[ExecuteIn(SystemPhase.Presentation)]
+public partial class OrbitPresenter : ISystem
 {
-    var go = _registry.Resolve(id);
-    go.transform.SetPositionAndRotation((Vector3)pos.Value.Value, rot.Value.Value);
-}
+    public void Execute()
+    {
+        RenderSmooth();
+        RenderRaw();
+    }
 
-// Raw: reads fixed-update values directly — visibly jittery
-[ForEachEntity(Tag = typeof(OrbitTags.Raw))]
-void RenderRaw(in Position pos, in Rotation rot, in GameObjectId id)
-{
-    var go = _registry.Resolve(id);
-    go.transform.SetPositionAndRotation((Vector3)pos.Value, rot.Value);
+    [ForEachEntity(typeof(OrbitTags.Smooth))]
+    void RenderSmooth(in SmoothOrbitView view)
+    {
+        var go = _goManager.Resolve(view.GameObjectId);
+        go.transform.position = (Vector3)view.InterpolatedPosition;
+        go.transform.rotation = view.InterpolatedRotation;
+    }
+
+    [ForEachEntity(typeof(OrbitTags.Raw))]
+    void RenderRaw(in RawOrbitView view)
+    {
+        var go = _goManager.Resolve(view.GameObjectId);
+        go.transform.position = (Vector3)view.Position;
+        go.transform.rotation = view.Rotation;
+    }
+
+    partial struct SmoothOrbitView
+        : IAspect, IRead<Interpolated<Position>, Interpolated<Rotation>, GameObjectId> { }
+
+    partial struct RawOrbitView : IAspect, IRead<Position, Rotation, GameObjectId> { }
 }
 ```
 
-## Concepts Introduced
+Because `Position` and `Rotation` are `[Unwrap]`, the aspect exposes `view.InterpolatedPosition` (`float3`) and `view.InterpolatedRotation` (`quaternion`) directly — no double-`.Value`.
 
-- **`[Interpolated]`** attribute on template fields generates wrapper components
-- **`[GenerateInterpolatorSystem]`** source-generates Burst-compiled blending systems from simple static methods
-- **`GroupName`** groups related interpolators for single-call registration
-- **`SetInterpolated()`** initializes all three components (current, interpolated, previous)
-- **`Interpolated<T>`** — the blended value, read by renderers for smooth visuals
+## Concepts introduced
 
-See [Interpolation](../advanced/interpolation.md) for the full reference.
+- **`[Interpolated]`** on template fields generates `Interpolated<T>` and `InterpolatedPrevious<T>` wrapper components.
+- **`[GenerateInterpolatorSystem]`** — source-generates Burst-compiled blending systems from static methods.
+- **`GroupName`** — registers a group of interpolators via a single generated extension method.
+- **`SetInterpolated()`** — initializes all three component copies (current, interpolated, previous).
+- **Reading via an aspect** — `IRead<Interpolated<Position>>` plus `[Unwrap]` gives clean `view.InterpolatedPosition` access.
+
+See [Interpolation](../advanced/interpolation.md) for the full reference. For a manual `SimPosition` + lerp alternative, see [Feeding Frenzy](07-feeding-frenzy.md).

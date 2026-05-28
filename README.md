@@ -1,75 +1,71 @@
+
 # Trecs
+
+<img src="docs/assets/logo.png" alt="Trecs" width="300" align="right" />
 
 [![Source Generator](https://github.com/svermeulen/trecs/actions/workflows/sourcegen.yml/badge.svg)](https://github.com/svermeulen/trecs/actions/workflows/sourcegen.yml)
 [![Unity](https://github.com/svermeulen/trecs/actions/workflows/unity.yml/badge.svg)](https://github.com/svermeulen/trecs/actions/workflows/unity.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Unity 6000.3+](https://img.shields.io/badge/Unity-6000.3%2B-black)
 
-A high-performance Entity Component System framework for Unity, designed for deterministic simulation, recording/playback, and Burst/Jobs integration.
+A high-performance Entity Component System framework for Unity, designed for **deterministic simulation, recording/playback, and Burst/Jobs**.
+
+**Full docs: [svermeulen.github.io/trecs](https://svermeulen.github.io/trecs)** 
+
+[Getting Started](https://svermeulen.github.io/trecs/getting-started/) · [Glossary](https://svermeulen.github.io/trecs/glossary/) · [Samples](https://svermeulen.github.io/trecs/samples/) · [FAQ](https://svermeulen.github.io/trecs/faq/) · [Trecs vs Unity ECS](https://svermeulen.github.io/trecs/guides/trecs-vs-unity-ecs/)
+<br />
+<br />
+<br />
 
 > **Status:** Trecs is a `0.x` release. While it is functional and reasonably well-tested, the API is still evolving and future updates are likely to include many breaking changes.
 
 ## Features
 
-- **High-performance storage** — Components are stored in contiguous arrays (structure-of-arrays), grouped by explicit tags for cache-friendly iteration
-- **Serialization** — Full world state serialization out of the box, including all entities, components, and heap data
-- **Bookmarks, Recording & Playback** — Save and load snapshots of full game state, record and replay inputs deterministically with checksum-based desync detection, or use for network rollbacks
-- **Burst & Jobs** — First-class support for Unity's job system and Burst compiler with automatic dependency tracking based on component access
-- **Source generation** — Roslyn-powered code generation eliminates boilerplate for systems, aspects, and templates
-- **Aspects** — Bundled component access that groups related read/write operations into a single reusable struct
-- **Sets** — Dynamic entity subsets without group changes, for efficient sparse iteration and overlapping membership
-- **Interpolation** — Built-in fixed-to-variable timestep interpolation for smooth rendering
-- **Heap & Pointers** — `SharedPtr`, `UniquePtr`, and native variants for storing managed or large data outside of components
-- **Deterministic simulation** — Fixed-timestep loop with deterministic RNG and isolated input handling, designed for networking and replay
-- **Template system** — Composable entity type blueprints with tag-based grouping and inheritance
+- **Cache-friendly storage.** Components live in contiguous structure-of-arrays buffers grouped by tag set.
+- **Composable building blocks.** Aspects bundle component access; sets give sparse subsets without restructuring storage; templates declare entity blueprints with inheritance and partitions; `SharedPtr` / `UniquePtr` let components reference heap data.
+- **Burst and Jobs out of the box.** A source generator emits job structs and chains `JobHandle` dependencies from the components you read and write — no manual wiring.
+- **Deterministic by construction.** Fixed-timestep simulation, seeded RNG, isolated input, and built-in snapshot / record / replay with desync detection.
+- **Editor tooling.** A live entity inspector and a record / scrub / fork timeline window for diagnosing transient bugs.
 
 ## Quick Start
 
 ```csharp
-// Step 1: Define components
-[Unwrap]
-public partial struct Position : IEntityComponent
-{
-    public float3 Value;
-}
+// 1. Components — unmanaged structs holding per-entity data
+public partial struct Position : IEntityComponent { public float3 Value; }
+public partial struct Velocity : IEntityComponent { public float3 Value; }
 
-// Step 2: Define entity tags
+// 2. A tag — a zero-cost marker
 public struct PlayerTag : ITag { }
 
-// Step 3: Define entity types
-public partial class PlayerEntity : ITemplate, IHasTags<PlayerTag>
+// 3. A template — the entity blueprint
+public partial class PlayerEntity : ITemplate, ITagged<PlayerTag>
 {
-    public Position Position;
-    public Velocity Velocity;
+    Position Position;
+    Velocity Velocity;
 }
 
-// Step 4: Define systems to operate on entities
+// 4. A system — logic that runs over matching entities
 public partial class MovementSystem : ISystem
 {
-    [ForEachEntity(Tag = typeof(PlayerTag))]
-    void Execute(in Player player)
+    [ForEachEntity(typeof(PlayerTag))]
+    void Execute(ref Position position, in Velocity velocity)
     {
-        player.Position += player.Velocity * World.DeltaTime;
+        position.Value += velocity.Value * World.DeltaTime;
     }
-
-    partial struct Player : IAspect, IRead<Velocity>, IWrite<Position> { }
 }
 
-// Step 5: Define, initialize, and run the world
+// 5. Build and run
 var world = new WorldBuilder()
-    .AddEntityType(PlayerEntity.Template)
-    .Build();
+    .AddTemplate(PlayerEntity.Template)
+    .AddSystem(new MovementSystem())
+    .BuildAndInitialize();
 
-world.AddSystem(new MovementSystem());
-    
-world.Initialize();
-
-// Call this from a MonoBehaviour Update
-world.Tick();
-
-// Call this on MonoBehaviour OnDestroy or when complete
-world.Dispose();
+// In a MonoBehaviour:
+void Update()    => world.Tick();
+void OnDestroy() => world.Dispose();
 ```
+
+`World` inside a system body is a source-generated property — your access into the running world for that phase. See [Getting Started](https://svermeulen.github.io/trecs/getting-started/) for the full walkthrough, or the [Glossary](https://svermeulen.github.io/trecs/glossary/) for a one-stop reference of the terminology.
 
 ## Installation
 
@@ -81,11 +77,9 @@ With the [openupm-cli](https://openupm.com/):
 
 ```bash
 openupm add com.trecs.core
-# Optional: serialization features (bookmarks, recording/playback, save/load)
-openupm add com.trecs.serialization
 ```
 
-Or add manually to `Packages/manifest.json`:
+Or add the scoped registry to `Packages/manifest.json` manually:
 
 ```json
 {
@@ -97,35 +91,24 @@ Or add manually to `Packages/manifest.json`:
     }
   ],
   "dependencies": {
-    "com.trecs.core": "0.1.0",
-    "com.trecs.serialization": "0.1.0"
+    "com.trecs.core": "0.2.0"
   }
 }
 ```
 
+`com.trecs.core` includes the ECS runtime, deterministic binary serialization, snapshot / recording / playback, and the Trecs Player editor window — no separate serialization package is required.
+
 ### Via Git URL
 
-Open **Window > Package Manager**, click **+ > Add package from git URL**, and enter:
+In **Window → Package Manager**, click **+ → Add package from git URL** and enter:
 
 ```
 https://github.com/svermeulen/trecs.git?path=UnityProject/Trecs/Assets/com.trecs.core
 ```
 
-For the optional serialization package:
-
-```
-https://github.com/svermeulen/trecs.git?path=UnityProject/Trecs/Assets/com.trecs.serialization
-```
-
-When using git URLs, add `com.trecs.core` before `com.trecs.serialization` (Unity can't resolve versioned dependencies from git URLs).
-
-## Documentation
-
-See full documentation at **[svermeulen.github.io/trecs](https://svermeulen.github.io/trecs)**.
-
 ## Samples
 
-The project includes 13 samples covering everything from basic entity creation to complex simulations with Burst jobs. To try them, clone the repo, open `UnityProject/Trecs` in Unity 6000.3+, and run `Assets/Samples/Main.unity`.
+The project includes 17 samples covering everything from basic entity creation to complex simulations with Burst jobs. To try them, clone the repo, open `UnityProject/Trecs` in Unity 6000.3+, and run `Assets/Samples/Main.unity`.
 
 | Sample | Concepts |
 |--------|----------|
@@ -141,11 +124,15 @@ The project includes 13 samples covering everything from basic entity creation t
 | 10 Pointers | Storing memory outside of components |
 | 11 Snake | Complete game with recording/playback |
 | 12 Feeding Frenzy Benchmark | Exhaustive examples of the many Trecs patterns available |
-| 13 Save Game | Bookmark-based save/load slots with the serialization package |
+| 13 Native Pointers | `NativeSharedPtr` and `NativeUniquePtr` read and mutated inside a Burst job |
+| 14 Aspect Interfaces | Reusing aspect logic across templates via interface composition |
+| 15 Blob Storage | `BlobStore` for sharing immutable data across many entities |
+| 16 Reactive Events | Subscribing to entity add / remove / move events |
+| 17 Multiple Worlds | Running multiple `World` instances side by side in one scene |
 
 ## Acknowledgments
 
-Trecs was originally based on [Svelto.ECS](https://github.com/sebas77/Svelto.ECS) by Sebastiano Mandalà
+Trecs was originally based on [Svelto.ECS](https://github.com/sebas77/Svelto.ECS) by Sebastiano Mandalà.
 
 ## License
 

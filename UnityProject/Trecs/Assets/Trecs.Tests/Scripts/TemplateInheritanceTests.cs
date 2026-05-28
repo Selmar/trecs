@@ -21,11 +21,11 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 10 })
                 .Set(new TestFloat { Value = 2.5f })
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             // Verify both parent (TestInt) and child (TestFloat) components are accessible
-            var intComp = a.Query().WithTags(tags).Single().Get<TestInt>();
-            var floatComp = a.Query().WithTags(tags).Single().Get<TestFloat>();
+            var intComp = a.Query().WithTags(tags).SingleHandle().Component<TestInt>(a);
+            var floatComp = a.Query().WithTags(tags).SingleHandle().Component<TestFloat>(a);
 
             NAssert.AreEqual(10, intComp.Read.Value);
             NAssert.AreEqual(2.5f, floatComp.Read.Value, 0.001f);
@@ -39,7 +39,7 @@ namespace Trecs.Tests
 
             var tags = TagSet.FromTags(TestTags.Alpha, TestTags.Beta);
             a.AddEntity(tags).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             // Entity should be queryable via parent tag (Alpha)
             NAssert.AreEqual(
@@ -77,12 +77,12 @@ namespace Trecs.Tests
 
             var tags = TagSet.FromTags(TestTags.Delta, TestTags.Epsilon);
             a.AddEntity(tags).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             // Parent defaults should propagate to child entities
-            var intComp = a.Query().WithTags(tags).Single().Get<TestInt>();
-            var floatComp = a.Query().WithTags(tags).Single().Get<TestFloat>();
-            var vecComp = a.Query().WithTags(tags).Single().Get<TestVec>();
+            var intComp = a.Query().WithTags(tags).SingleHandle().Component<TestInt>(a);
+            var floatComp = a.Query().WithTags(tags).SingleHandle().Component<TestFloat>(a);
+            var vecComp = a.Query().WithTags(tags).SingleHandle().Component<TestVec>(a);
 
             NAssert.AreEqual(
                 42,

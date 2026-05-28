@@ -6,7 +6,9 @@ namespace Trecs.SourceGen
     {
         public const string TrecsCategory = "Trecs";
 
-        // ForEach diagnostics (TRECS001-008)
+        // ForEach diagnostics (TRECS001-008; TRECS006 deleted as duplicate).
+        // NOTE: descriptor declarations below are not strictly sorted by ID; the
+        // file order has not been re-shuffled to preserve git blame.
 
         public static readonly DiagnosticDescriptor InvalidParameterModifiers = new(
             id: "TRECS001",
@@ -20,7 +22,7 @@ namespace Trecs.SourceGen
         public static readonly DiagnosticDescriptor EmptyParameters = new(
             id: "TRECS002",
             title: "No parameters defined",
-            messageFormat: "[ForEachEntity] / [SingleEntity] iteration method must have at least one per-entity parameter (a component, aspect, or EntityIndex)",
+            messageFormat: "[ForEachEntity] iteration method must have at least one per-entity parameter (a component, aspect, or EntityIndex)",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -29,7 +31,7 @@ namespace Trecs.SourceGen
         public static readonly DiagnosticDescriptor InvalidReturnType = new(
             id: "TRECS003",
             title: "Invalid return type",
-            messageFormat: "[ForEachEntity] / [SingleEntity] iteration method must return void",
+            messageFormat: "[ForEachEntity] iteration method must return void",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -38,7 +40,7 @@ namespace Trecs.SourceGen
         public static readonly DiagnosticDescriptor NotPartialClass = new(
             id: "TRECS004",
             title: "Class must be partial",
-            messageFormat: "Class '{0}' must be marked as partial since it contains a source-generated [ForEachEntity] / [SingleEntity] iteration method",
+            messageFormat: "Class '{0}' must be marked as partial since it contains a source-generated [ForEachEntity] iteration method, [SingleEntity] parameters, or a [WrapAsJob] method",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -47,7 +49,7 @@ namespace Trecs.SourceGen
         public static readonly DiagnosticDescriptor InvalidParameterList = new(
             id: "TRECS005",
             title: "Invalid parameter list",
-            messageFormat: "Invalid [ForEachEntity] / [SingleEntity] parameter list: {0}. Parameters may appear in any order. Component parameters must use 'in' or 'ref'. Use [PassThroughArgument] on a parameter whose type is IEntityComponent / EntityIndex / WorldAccessor when you want it forwarded as a user-supplied value rather than auto-detected.",
+            messageFormat: "Invalid [ForEachEntity] parameter list: {0}. Parameters may appear in any order. Component parameters must use 'in' or 'ref'. Use [PassThroughArgument] on a parameter whose type is IEntityComponent / EntityIndex / WorldAccessor when you want it forwarded as a user-supplied value rather than auto-detected.",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -71,15 +73,6 @@ namespace Trecs.SourceGen
             isEnabledByDefault: true
         );
 
-        public static readonly DiagnosticDescriptor EntityJobGroupMissingExecuteMethod = new(
-            id: "TRECS006",
-            title: "Missing execute method on EntityJobGroup",
-            messageFormat: "Entity group job '{0}' must define an Execute method with parameters",
-            category: TrecsCategory,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true
-        );
-
         public static readonly DiagnosticDescriptor EntityJobGroupMultipleExecuteMethods = new(
             id: "TRECS007",
             title: "Multiple execute methods on EntityJobGroup",
@@ -92,36 +85,18 @@ namespace Trecs.SourceGen
         public static readonly DiagnosticDescriptor InvalidJobParameterList = new(
             id: "TRECS008",
             title: "Invalid job parameter list",
-            messageFormat: "Parameter list must first be the component parameters (all with either 'in' or 'ref' modifiers) then an optional EntityIndex parameter",
+            messageFormat: "{0}",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
         );
 
-        // Aspect diagnostics (TRECS009-023)
+        // Aspect diagnostics (TRECS009, 012, 013, 015, 016, 020, 022, 023; TRECS010/011/014/017/018/019/021 retired)
 
         public static readonly DiagnosticDescriptor AspectMustBePartial = new(
             id: "TRECS009",
             title: "Aspect must be partial",
-            messageFormat: "Aspect '{0}' must be marked as partial since it uses [Aspect]",
-            category: TrecsCategory,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true
-        );
-
-        public static readonly DiagnosticDescriptor AspectMustBeStruct = new(
-            id: "TRECS010",
-            title: "Aspect must be a struct",
-            messageFormat: "Aspect '{0}' must be a struct, not a class",
-            category: TrecsCategory,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true
-        );
-
-        public static readonly DiagnosticDescriptor UnwrapComponentMustBeStruct = new(
-            id: "TRECS011",
-            title: "Single value component must be a struct",
-            messageFormat: "Single value component '{0}' must be a struct, not a class",
+            messageFormat: "Aspect '{0}' must be marked as partial since it implements IAspect",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -146,16 +121,6 @@ namespace Trecs.SourceGen
             isEnabledByDefault: true
         );
 
-        public static readonly DiagnosticDescriptor AspectMustSpecifyTagsOrMatchByComponents = new(
-            id: "TRECS014",
-            title: "Aspect must specify Tags or MatchByComponents",
-            messageFormat: "Aspect '{0}' must specify either Tags property or set MatchByComponents to true",
-            category: TrecsCategory,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true
-        );
-
-#pragma warning disable RS2000 // Add analyzer diagnostic IDs to analyzer release
         public static readonly DiagnosticDescriptor CouldNotResolveSymbol = new(
             id: "TRECS015",
             title: "Could not resolve symbol",
@@ -176,28 +141,17 @@ namespace Trecs.SourceGen
 
         // TRECS017 and TRECS018 removed - duplicates of TRECS012 and TRECS013
 
-        public static readonly DiagnosticDescriptor AspectInterfaceNotFound = new(
-            id: "TRECS019",
-            title: "Aspect interface not found",
-            messageFormat: "Aspect interface '{0}' could not be found or does not have AspectInterfaceAttribute",
-            category: TrecsCategory,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true
-        );
+        // TRECS019 and TRECS021 are retired. TRECS019 (AspectInterfaceNotFound) diagnosed a
+        // reference to a non-aspect-interface in a struct aspect's base list — no longer
+        // reachable: the new detection filters aspect interfaces by IAspect membership
+        // upstream. TRECS021 (CircularAspectInterfaceReference) diagnosed cycles in the
+        // aspect-interface hierarchy — C# itself rejects these with CS0529 before the
+        // generator runs.
 
-        public static readonly DiagnosticDescriptor AspectInterfaceMustBeInterface = new(
+        public static readonly DiagnosticDescriptor AspectInterfaceMustBePartial = new(
             id: "TRECS020",
-            title: "Aspect interface must be an interface type",
-            messageFormat: "Aspect interface '{0}' must be an interface type, not a {1}",
-            category: TrecsCategory,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true
-        );
-
-        public static readonly DiagnosticDescriptor CircularAspectInterfaceReference = new(
-            id: "TRECS021",
-            title: "Circular Aspect interface reference detected",
-            messageFormat: "Circular reference detected in Aspect interface hierarchy: {0}",
+            title: "Aspect interface must be partial",
+            messageFormat: "Aspect interface '{0}' must be marked as partial — the source generator attaches a partial interface declaring the ref-returning property contract for each IRead<>/IWrite<> component",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -267,10 +221,10 @@ namespace Trecs.SourceGen
             isEnabledByDefault: true
         );
 
-        public static readonly DiagnosticDescriptor TemplateFieldMustBePublic = new(
+        public static readonly DiagnosticDescriptor TemplateFieldMustHaveNoAccessModifier = new(
             id: "TRECS034",
-            title: "Template field must be public",
-            messageFormat: "Field '{0}' in template '{1}' must be declared as public",
+            title: "Template field must not have an access modifier",
+            messageFormat: "Field '{0}' in template '{1}' must not declare an access modifier (omit 'public', 'private', etc.) — template fields are config, not API",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -312,7 +266,34 @@ namespace Trecs.SourceGen
             isEnabledByDefault: true
         );
 
-        // AutoSystem diagnostics (TRECS040-049)
+        public static readonly DiagnosticDescriptor VariableUpdateOnlyOnInvalidTarget = new(
+            id: "TRECS035",
+            title: "[VariableUpdateOnly] applied to a non-template class",
+            messageFormat: "[VariableUpdateOnly] on type '{0}' is silently ignored — the attribute is only meaningful on a class implementing ITemplate or on a template's component field. Remove it or apply it to one of those targets.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Warning,
+            isEnabledByDefault: true
+        );
+
+        public static readonly DiagnosticDescriptor TemplatePartitionCountHigh = new(
+            id: "TRECS038",
+            title: "Template generates many partitions",
+            messageFormat: "Template '{0}' generates {1} partitions across {2} dimensions ({3}). Each partition is a distinct group with its own per-component buffer. Past ~16 partitions consider sets — they don't multiply. See docs/guides/entity-subset-patterns.md.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Warning,
+            isEnabledByDefault: true
+        );
+
+        public static readonly DiagnosticDescriptor AddAbstractTemplate = new(
+            id: "TRECS039",
+            title: "Cannot register an abstract template",
+            messageFormat: "Template '{0}' is declared abstract and cannot be passed to WorldBuilder.AddTemplate / AddTemplates. Abstract templates may only be used as IExtends<> bases. Remove the 'abstract' keyword from '{0}', or register a concrete derived template instead.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true
+        );
+
+        // AutoSystem diagnostics (TRECS040, 043, 044, 047)
 
         public static readonly DiagnosticDescriptor AutoSystemMustBePartial = new(
             id: "TRECS040",
@@ -341,24 +322,6 @@ namespace Trecs.SourceGen
             isEnabledByDefault: true
         );
 
-        public static readonly DiagnosticDescriptor AutoSystemWorldPropertyConflict = new(
-            id: "TRECS045",
-            title: "System already defines World property",
-            messageFormat: "Class '{0}' already defines a 'World' property which conflicts with the generated implementation. Remove the user-defined property.",
-            category: TrecsCategory,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true
-        );
-
-        public static readonly DiagnosticDescriptor AutoSystemWorldFieldConflict = new(
-            id: "TRECS046",
-            title: "System already defines _world field",
-            messageFormat: "Class '{0}' already defines a '_world' field which conflicts with the generated backing field. Remove the user-defined field.",
-            category: TrecsCategory,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true
-        );
-
         public static readonly DiagnosticDescriptor AutoSystemMissingExecute = new(
             id: "TRECS047",
             title: "System has no Execute method",
@@ -368,12 +331,12 @@ namespace Trecs.SourceGen
             isEnabledByDefault: true
         );
 
-        // Iteration method diagnostics (TRECS050-059)
+        // Iteration method diagnostics (TRECS050, 051, 053)
 
         public static readonly DiagnosticDescriptor IterationMethodCannotBeStatic = new(
             id: "TRECS050",
             title: "Iteration method cannot be static",
-            messageFormat: "Method '{0}' cannot be static when marked with [ForEachEntity] or [SingleEntity]",
+            messageFormat: "Method '{0}' cannot be static when marked with [ForEachEntity] or when it carries [SingleEntity] parameters",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -382,16 +345,7 @@ namespace Trecs.SourceGen
         public static readonly DiagnosticDescriptor IterationMethodCannotBeAbstract = new(
             id: "TRECS051",
             title: "Iteration method cannot be abstract",
-            messageFormat: "Method '{0}' cannot be abstract when marked with [ForEachEntity] or [SingleEntity]",
-            category: TrecsCategory,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true
-        );
-
-        public static readonly DiagnosticDescriptor IterationMethodMultipleAttributes = new(
-            id: "TRECS052",
-            title: "Method has multiple iteration attributes",
-            messageFormat: "Method '{0}' has multiple iteration attributes (e.g. both [ForEachEntity] and [SingleEntity]). Only one is allowed.",
+            messageFormat: "Method '{0}' cannot be abstract when marked with [ForEachEntity] or when it carries [SingleEntity] parameters",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -400,42 +354,13 @@ namespace Trecs.SourceGen
         public static readonly DiagnosticDescriptor TagAndTagsBothSpecified = new(
             id: "TRECS053",
             title: "Both Tag and Tags specified",
-            messageFormat: "'{0}' specifies both Tag and Tags on [{1}]. Use one or the other.",
+            messageFormat: "'{0}' on [{1}] specifies both 'Tag' and 'Tags'. Keep one: use 'Tag = typeof(X)' for a single tag, or 'Tags = new[] {{ typeof(X), typeof(Y) }}' for multiple — not both. The positional constructor form '[{1}(typeof(X))]' is also available.",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
         );
 
-        // Hook method migration diagnostics (TRECS060-069)
-
-        public static readonly DiagnosticDescriptor OldStyleDeclareDependenciesHook = new(
-            id: "TRECS060",
-            title: "Old-style DeclareDependencies hook detected",
-            messageFormat: "Replace 'void DeclareDependencies(IAccessDeclarations deps)' with 'partial void OnDeclareDependencies(IAccessDeclarations deps)'. The old hook pattern is no longer supported.",
-            category: TrecsCategory,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true
-        );
-
-        public static readonly DiagnosticDescriptor OldStyleInitializeHook = new(
-            id: "TRECS061",
-            title: "Old-style Ready hook detected",
-            messageFormat: "Replace 'void Ready()' with 'partial void OnReady()'. The old hook pattern is no longer supported.",
-            category: TrecsCategory,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true
-        );
-
-        public static readonly DiagnosticDescriptor PartialMethodWrongName = new(
-            id: "TRECS062",
-            title: "Partial method uses old hook name",
-            messageFormat: "Rename 'partial void {0}(...)' to 'partial void {1}(...)'. The hook method name has changed.",
-            category: TrecsCategory,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true
-        );
-
-        // Job scheduling diagnostics (TRECS070-079)
+        // Job scheduling diagnostics (TRECS070, 071, 073-079; 072 unused)
 
         public static readonly DiagnosticDescriptor JobInsideGenericOuterTypeNotSupported = new(
             id: "TRECS073",
@@ -476,7 +401,7 @@ namespace Trecs.SourceGen
         public static readonly DiagnosticDescriptor CustomJobExecuteMustBePublic = new(
             id: "TRECS078",
             title: "Custom job's Execute method must be public",
-            messageFormat: "Custom job '{0}'.Execute must be declared 'public' so it directly satisfies the IJob/IJobFor interface (the generator no longer emits a visibility shim).",
+            messageFormat: "Custom job '{0}'.Execute must be declared 'public' so it directly satisfies the IJob/IJobFor interface (the generator no longer emits a visibility shim)",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -494,7 +419,7 @@ namespace Trecs.SourceGen
         public static readonly DiagnosticDescriptor UnsupportedFromWorldFieldType = new(
             id: "TRECS071",
             title: "Unsupported [FromWorld] field type",
-            messageFormat: "Field type '{0}' is not supported by [FromWorld]. Expected one of: NativeComponentBufferRead<T>, NativeComponentBufferWrite<T>, NativeComponentRead<T>, NativeComponentWrite<T>, NativeComponentLookupRead<T>, NativeComponentLookupWrite<T>, NativeSetWrite<TSet>, NativeSetRead<TSet>, NativeEntitySetIndices<TSet>, or Aspect.NativeFactory.",
+            messageFormat: "Field type '{0}' is not supported by [FromWorld]. Expected one of: NativeComponentBufferRead<T>, NativeComponentBufferWrite<T>, NativeComponentRead<T>, NativeComponentWrite<T>, NativeComponentLookupRead<T>, NativeComponentLookupWrite<T>, NativeSetCommandBuffer<TSet>, NativeSetRead<TSet>, NativeEntitySetIndices<TSet>, or Aspect.NativeFactory.",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -519,7 +444,7 @@ namespace Trecs.SourceGen
                 isEnabledByDefault: true
             );
 
-        // Field validation diagnostics (TRECS080-089)
+        // [FromWorld] field validation diagnostics (TRECS081-084; 080/085-089 unused)
 
         public static readonly DiagnosticDescriptor MissingFromWorldOnContainerField = new(
             id: "TRECS081",
@@ -559,7 +484,7 @@ namespace Trecs.SourceGen
                 isEnabledByDefault: true
             );
 
-        // AutoJob diagnostics (TRECS090-099)
+        // AutoJob / [WrapAsJob] diagnostics (TRECS090, 091, 093, 094, 096-100; 092/095 unused)
 
         public static readonly DiagnosticDescriptor WrapAsJobNonStatic = new(
             id: "TRECS090",
@@ -574,15 +499,6 @@ namespace Trecs.SourceGen
             id: "TRECS091",
             title: "[WrapAsJob] method cannot take WorldAccessor",
             messageFormat: "[WrapAsJob] method '{0}' has a WorldAccessor parameter. Jobs cannot use WorldAccessor — use NativeWorldAccessor for structural operations.",
-            category: TrecsCategory,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true
-        );
-
-        public static readonly DiagnosticDescriptor WrapAsJobOnStruct = new(
-            id: "TRECS092",
-            title: "[WrapAsJob] cannot be used on struct methods",
-            messageFormat: "[WrapAsJob] method '{0}' is on a struct. [WrapAsJob] is for system class methods; struct jobs already use [ForEachEntity] directly.",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -606,19 +522,10 @@ namespace Trecs.SourceGen
             isEnabledByDefault: true
         );
 
-        public static readonly DiagnosticDescriptor WrapAsJobSetsNotSupported = new(
-            id: "TRECS095",
-            title: "[WrapAsJob] does not support set-based filtering",
-            messageFormat: "[WrapAsJob] method '{0}' uses Set on [ForEachEntity]. Set-based (sparse) filtering is not yet supported for [WrapAsJob] — use Tags or MatchByComponents instead, or write a manual job struct with [ForEachEntity] + [FromWorld] fields.",
-            category: TrecsCategory,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true
-        );
-
         public static readonly DiagnosticDescriptor SetAccessorNotAllowedInJob = new(
             id: "TRECS098",
             title: "SetAccessor/SetRead/SetWrite cannot be used in [WrapAsJob] methods",
-            messageFormat: "Parameter '{0}' uses a main-thread-only set type for set type '{1}'. Use NativeSetRead<{1}> or NativeSetWrite<{1}> for job-compatible set access.",
+            messageFormat: "Parameter '{0}' uses a main-thread-only set type for set type '{1}'. Use NativeSetRead<{1}> or NativeSetCommandBuffer<{1}> for job-compatible set access.",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -626,7 +533,7 @@ namespace Trecs.SourceGen
 
         public static readonly DiagnosticDescriptor NativeSetNotAllowedOnMainThread = new(
             id: "TRECS099",
-            title: "NativeSetRead/NativeSetWrite cannot be used in main-thread [ForEachEntity] methods",
+            title: "NativeSetRead/NativeSetCommandBuffer cannot be used in main-thread [ForEachEntity] methods",
             messageFormat: "Parameter '{0}' uses {1} which is job-only. Use SetAccessor<{2}>, SetRead<{2}>, or SetWrite<{2}> for main-thread set access.",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
@@ -671,7 +578,7 @@ namespace Trecs.SourceGen
             isEnabledByDefault: true
         );
 
-        // [FromWorld] on [WrapAsJob] diagnostics (TRECS101-109)
+        // [FromWorld] on [WrapAsJob] diagnostics (TRECS101-102)
 
         public static readonly DiagnosticDescriptor FromWorldUnsupportedOnWrapAsJob = new(
             id: "TRECS101",
@@ -680,7 +587,7 @@ namespace Trecs.SourceGen
                 + "For NativeWorldAccessor, NativeSetRead/Write use the first-class parameter support instead. "
                 + "For NativeComponentRead/Write use [PassThroughArgument]. "
                 + "Supported [FromWorld] types: Aspect.NativeFactory, NativeComponentLookupRead<T>, NativeComponentLookupWrite<T>, "
-                + "NativeComponentBufferRead<T>, NativeComponentBufferWrite<T>, NativeEntitySetIndices<T>, Group, NativeEntityHandleBuffer.",
+                + "NativeComponentBufferRead<T>, NativeComponentBufferWrite<T>, NativeEntitySetIndices<T>, GroupIndex, NativeEntityHandleBuffer.",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -690,30 +597,231 @@ namespace Trecs.SourceGen
             id: "TRECS102",
             title: "[FromWorld] on [WrapAsJob] requires inline Tag/Tags",
             messageFormat: "[FromWorld] parameter '{0}' on [WrapAsJob] method requires inline Tag or Tags "
-                + "(e.g. [FromWorld(Tag = typeof(MyTag))]). The generated wrapper method has no way "
+                + "(e.g. [FromWorld(typeof(MyTag))]). The generated wrapper method has no way "
                 + "to accept runtime TagSets. Use a manual job struct if runtime-variable tags are needed.",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
         );
 
-        // ── NativeUniquePtr copy prevention ────────────────────────
+        // ── per-parameter / per-field [SingleEntity] (TRECS112-116) ────────
 
-        public static readonly DiagnosticDescriptor NativeUniquePtrByValueLocal = new(
-            id: "TRECS110",
-            title: "NativeUniquePtr must not be copied to a by-value local",
-            messageFormat: "NativeUniquePtr<{0}> must not be copied to a local variable; "
-                + "access the owning field directly to preserve write-access tracking",
+        public static readonly DiagnosticDescriptor SingleEntityWrongType = new(
+            id: "TRECS112",
+            title: "[SingleEntity] parameter or field must be an aspect or component",
+            messageFormat: "[SingleEntity] target '{0}' has type '{1}' which is neither an IAspect nor an IEntityComponent. "
+                + "[SingleEntity] resolves to a single matched entity, so the type must be a Trecs aspect "
+                + "(implementing IAspect) or a component (implementing IEntityComponent).",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
         );
 
-        public static readonly DiagnosticDescriptor NativeUniquePtrByValueParameter = new(
-            id: "TRECS111",
-            title: "NativeUniquePtr must not be passed by value",
-            messageFormat: "Parameter '{0}' of type NativeUniquePtr<{1}> must be declared as ref, in, or out — "
-                + "not by value — to preserve write-access tracking",
+        public static readonly DiagnosticDescriptor SingleEntityWrongModifier = new(
+            id: "TRECS113",
+            title: "[SingleEntity] parameter has wrong modifier",
+            messageFormat: "[SingleEntity] parameter '{0}' must be declared 'in' for an aspect or read-only component, "
+                + "or 'ref' for a writable component. Bare-by-value and 'out' are not supported.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true
+        );
+
+        public static readonly DiagnosticDescriptor SingleEntityRequiresInlineTags = new(
+            id: "TRECS114",
+            title: "[SingleEntity] requires inline Tag or Tags",
+            messageFormat: "[SingleEntity] target '{0}' must specify an inline Tag or Tags "
+                + "(e.g. [SingleEntity(typeof(MyTag))]). [SingleEntity] has no runtime override "
+                + "— the singleton is resolved at the same site every call. "
+                + "If you need a runtime-supplied query, use "
+                + "World.Query().WithTags(...).Single() directly inside the method body.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true
+        );
+
+        public static readonly DiagnosticDescriptor SingleEntityConflictingAttributes = new(
+            id: "TRECS115",
+            title: "[SingleEntity] conflicts with [FromWorld] or [PassThroughArgument]",
+            messageFormat: "[SingleEntity] on '{0}' cannot be combined with [{1}]. [SingleEntity] alone is the carrier "
+                + "for world-sourced single-entity values (it implies [FromWorld] semantics).",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true
+        );
+
+        public static readonly DiagnosticDescriptor SingleEntityWriteAspectMissingNativeDisableParallelForRestriction =
+            new(
+                id: "TRECS116",
+                title: "[SingleEntity] write-aspect field on a parallel job needs [NativeDisableParallelForRestriction]",
+                messageFormat: "Field '{0}' on parallel job '{1}' has [SingleEntity] with aspect '{2}' that contains IWrite components. "
+                    + "Add [NativeDisableParallelForRestriction] to the field — Unity's parallel-job safety walker rejects the materialized aspect's NativeComponentBufferWrite without it.",
+                category: TrecsCategory,
+                DiagnosticSeverity.Warning,
+                isEnabledByDefault: true
+            );
+
+        public static readonly DiagnosticDescriptor GlobalIndexParamMustBeInt = new(
+            id: "TRECS117",
+            title: "[GlobalIndex] parameter must be int",
+            messageFormat: "Parameter '{0}' on '{1}' is marked [GlobalIndex] but its type is '{2}'. The packed query index is always an int — change the parameter type to int.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true
+        );
+
+        // ── [NonCopyable] enforcement (TRECS118-119) ──────────────────────────────
+
+        public static readonly DiagnosticDescriptor NonCopyableByValueLocal = new(
+            id: "TRECS118",
+            title: "[NonCopyable] struct must not be copied to a by-value local",
+            messageFormat: "'{0}' is [NonCopyable]; copying it to a by-value local loses identity with the original. "
+                + "Use 'ref' / 'ref readonly' to alias the source, or access the source variable directly.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true
+        );
+
+        public static readonly DiagnosticDescriptor NonCopyableByValueParameter = new(
+            id: "TRECS119",
+            title: "[NonCopyable] struct must not be passed by value",
+            messageFormat: "Parameter '{0}' of type '{1}' is [NonCopyable] and must be declared 'ref', 'in', or 'out' — "
+                + "not by value — so mutations affect the caller's storage",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true
+        );
+
+        public static readonly DiagnosticDescriptor NonCopyableCopyableConflict = new(
+            id: "TRECS120",
+            title: "[NonCopyable] and [Copyable] cannot both be applied",
+            messageFormat: "Struct '{0}' carries both [NonCopyable] and [Copyable]; remove one — they are contradictory",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true
+        );
+
+        // ── NativeSharedPtr<T> immutability enforcement (TRECS124) ──────────
+
+        public static readonly DiagnosticDescriptor NativeSharedPtrTypeMustBeReadonlyStruct = new(
+            id: "TRECS124",
+            title: "NativeSharedPtr<T> requires T to be defensive-copy-safe",
+            messageFormat: "Type argument '{0}' to NativeSharedPtr<T> must be either a 'readonly struct' or a struct whose every instance "
+                + "method/accessor carries the 'readonly' modifier (or a built-in primitive / allowlisted trecs type). "
+                + "Native shared blobs are immutable by design — the BlobCache does not snapshot blob memory along with game-state snapshots, "
+                + "so any post-Alloc mutation would silently desync determinism, and a defensive copy through 'ref readonly T' would silently "
+                + "break relative-offset BlobArray<T> reads. The readonly-struct form is the simplest fix; the all-readonly-members form lets "
+                + "BlobBuilder users mutate fields directly during construction.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true
+        );
+
+        // ── SharedPtr<T> immutability enforcement (TRECS125-126) ───────────
+
+        public static readonly DiagnosticDescriptor SharedPtrTypeMustBeImmutable = new(
+            id: "TRECS125",
+            title: "SharedPtr<T> requires T to carry [Trecs.Immutable]",
+            messageFormat: "Type argument '{0}' to SharedPtr<T> must be a class or interface marked with [Trecs.Immutable] "
+                + "(or be a built-in immutable type like string). Managed shared blobs live in the BlobCache, which is "
+                + "not snapshotted alongside game-state, so any post-Alloc mutation silently desyncs determinism. Either "
+                + "mark the class [Immutable] (and audit its contents — see TRECS126), or declare an [Immutable] interface "
+                + "exposing the read-only face of '{0}' and route the SharedPtr through that.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true
+        );
+
+        public static readonly DiagnosticDescriptor ImmutableTypeViolatesContract = new(
+            id: "TRECS126",
+            title: "[Immutable] type violates immutability rules",
+            messageFormat: "[Immutable] type '{0}' violates the immutability contract: {1}. "
+                + "Fix or remove the [Immutable] marker. Note: private instance fields are exempt from "
+                + "the type-of-field check — the canonical 'wrap a mutable T[] as private readonly and "
+                + "expose ReadOnlySpan<T>' pattern is allowed.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true
+        );
+
+        public static readonly DiagnosticDescriptor ImmutableInterfaceMethodMutableReturn = new(
+            id: "TRECS127",
+            title: "[Immutable] interface method returns a non-immutable type",
+            messageFormat: "Method '{0}' on [Immutable] interface '{1}' returns type '{2}' which is not provably immutable. "
+                + "Callers holding the read-only face can mutate shared state through this method, defeating the "
+                + "immutability guarantee. Refactor the return type to a safe type (a primitive, enum, readonly "
+                + "struct, [Immutable] class or interface, or BCL/Unity read-only view), or — if the looseness is "
+                + "intentional — annotate the method with [Trecs.AllowMutableReturn] to acknowledge "
+                + "the escape and surface it in review.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Warning,
+            isEnabledByDefault: true
+        );
+
+        // ── Non-deterministic dictionary/hashmap iteration (TRECS128-129) ────
+
+        public static readonly DiagnosticDescriptor DictionaryIteration = new(
+            id: "TRECS128",
+            title: "Iteration over Dictionary/HashSet is non-deterministic",
+            messageFormat: "Iterating over '{0}' produces non-deterministic order — this causes desyncs in Trecs. "
+                + "Use {1} for deterministic iteration, or access elements by key if iteration is not needed.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Warning,
+            isEnabledByDefault: true
+        );
+
+        public static readonly DiagnosticDescriptor NativeHashMapIteration = new(
+            id: "TRECS129",
+            title: "Iteration over NativeHashMap/NativeHashSet is non-deterministic",
+            messageFormat: "Iterating over '{0}' produces non-deterministic order — this causes desyncs in Trecs. "
+                + "Use {1} for deterministic iteration, or access elements by key if iteration is not needed.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Warning,
+            isEnabledByDefault: true
+        );
+
+        public static readonly DiagnosticDescriptor NonDeterministicApiInFixedUpdate = new(
+            id: "TRECS130",
+            title: "Non-deterministic API used in fixed-update system",
+            messageFormat: "'{0}' is non-deterministic and must not be used in a fixed-update system — this causes desyncs; {1}",
+            category: TrecsCategory,
+            DiagnosticSeverity.Warning,
+            isEnabledByDefault: true
+        );
+
+        // ── [Input] component field-type enforcement (TRECS121-123) ──────────
+
+        public static readonly DiagnosticDescriptor InputComponentHasPersistentPtrField = new(
+            id: "TRECS121",
+            title: "[Input] component must not contain persistent-pointer fields",
+            messageFormat: "Field '{0}' of component '{1}' on [Input] template field '{2}' has persistent-pointer type '{3}'. "
+                + "Input components are bulk-released when their target frame is retired, so any persistent allocation "
+                + "made by an input system would leak. Use the input-pointer variant '{4}' instead.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true
+        );
+
+        public static readonly DiagnosticDescriptor InputComponentHasTrecsListField = new(
+            id: "TRECS122",
+            title: "[Input] component must not contain TrecsList fields",
+            messageFormat: "Field '{0}' of component '{1}' on [Input] template field '{2}' has type 'TrecsList<{3}>'. "
+                + "TrecsList is backed by the persistent chunk store and is not supported on input components — input "
+                + "data lives in a per-frame arena and is bulk-released. Use a fixed-size buffer (e.g. an inline "
+                + "fixed-size struct field) for small bounded lists, or model the data as a separate persistent component.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true
+        );
+
+        public static readonly DiagnosticDescriptor InputRetainWithInputPtrField = new(
+            id: "TRECS123",
+            title: "[Input(MissingInputBehavior.Retain)] component cannot contain InputXxxPtr fields",
+            messageFormat: "[Input(MissingInputBehavior.Retain)] component '{0}' on template field '{1}' has Input-pointer field '{2}' of type '{3}'. "
+                + "Retain keeps the previous frame's component value when no input arrives, but the embedded {3} "
+                + "would point into storage that was freed when the previous input frame was retired — a silent "
+                + "use-after-free. Either switch to MissingInputBehavior.Reset, or move the pointed-to data out "
+                + "of the input component.",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -727,7 +835,5 @@ namespace Trecs.SourceGen
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
         );
-
-#pragma warning restore RS2000
     }
 }

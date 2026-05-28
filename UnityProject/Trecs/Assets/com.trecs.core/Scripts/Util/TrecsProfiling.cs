@@ -1,19 +1,12 @@
 using System;
+using System.Collections.Generic;
+using UnityEngine.Profiling;
 
 namespace Trecs.Internal
 {
-    public class NullDisposable : IDisposable
-    {
-        private NullDisposable() { }
-
-        public void Dispose() { }
-
-        public static readonly NullDisposable Instance = new();
-    }
-
     public static class TrecsProfiling
     {
-#if TRECS_PROFILING
+#if ENABLE_PROFILER
         class ProfilerScope : IDisposable
         {
             public void Dispose()
@@ -47,8 +40,38 @@ namespace Trecs.Internal
                 return NullDisposable.Instance;
             }
 
-            Profiler.BeginSample(CustomFormatter.CustomFormat(messageTemplate, propertyValue));
+            Profiler.BeginSample(FormatStringInterner.GetOrCreate(messageTemplate, propertyValue));
             return _sharedScope;
+        }
+
+        static class FormatStringInterner
+        {
+            static readonly Dictionary<int, string> _cache = new();
+
+            // Can't just use params, and have to use generics, because mem allocs
+            static int GetHashCode<T>(string p1, T p2)
+            {
+                unchecked // Overflow is fine, just wrap
+                {
+                    int hash = 17;
+                    hash = hash * 29 + p1.GetHashCode();
+                    hash = hash * 29 + p2.GetHashCode();
+                    return hash;
+                }
+            }
+
+            public static string GetOrCreate<T0>(string messageTemplate, T0 propertyValue0)
+            {
+                var hash = GetHashCode(messageTemplate, propertyValue0);
+
+                if (!_cache.TryGetValue(hash, out var result))
+                {
+                    result = string.Format(messageTemplate, propertyValue0);
+                    _cache.Add(hash, result);
+                }
+
+                return result;
+            }
         }
 #else
         public static bool IsEnabled

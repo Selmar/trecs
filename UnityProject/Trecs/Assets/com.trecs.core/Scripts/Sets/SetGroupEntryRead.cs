@@ -1,5 +1,5 @@
 using System.Runtime.CompilerServices;
-using Trecs.Internal;
+using Trecs.Collections;
 
 namespace Trecs
 {
@@ -9,7 +9,7 @@ namespace Trecs
     /// </summary>
     public readonly struct SetGroupEntryRead
     {
-        readonly NativeDenseDictionary<int, int> _entityIdToDenseIndex;
+        readonly NativeIterableDictionary<int, int> _entityIdToDenseIndex;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal SetGroupEntryRead(SetGroupEntry entry)
@@ -18,15 +18,19 @@ namespace Trecs
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool Exists(int index) => _entityIdToDenseIndex.ContainsKey(index);
+        public bool Contains(int index) => _entityIdToDenseIndex.ContainsKey(index);
 
         public EntitySetIndices Indices
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get
             {
-                var values = _entityIdToDenseIndex.GetValuesRead(out var count);
-                return new EntitySetIndices(values, count);
+                var values = _entityIdToDenseIndex.UnsafeValues;
+                return new EntitySetIndices(
+                    values,
+                    _entityIdToDenseIndex.Count,
+                    _entityIdToDenseIndex
+                );
             }
         }
 

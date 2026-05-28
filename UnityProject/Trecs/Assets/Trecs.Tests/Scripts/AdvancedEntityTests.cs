@@ -36,14 +36,14 @@ namespace Trecs.Tests
                         i
                     );
                 }
-                a.SubmitEntities();
+                a.Submit();
 
                 // Remove all entities
                 for (int i = 0; i < 10; i++)
                 {
                     a.RemoveEntity(roundRefs[i]);
                 }
-                a.SubmitEntities();
+                a.Submit();
             }
         }
 
@@ -65,7 +65,7 @@ namespace Trecs.Tests
                         .AssertComplete();
                     activeRefs.Add(init.Handle);
                 }
-                a.SubmitEntities();
+                a.Submit();
 
                 // Remove half (every other)
                 var toRemove = new List<EntityHandle>();
@@ -78,65 +78,65 @@ namespace Trecs.Tests
                     a.RemoveEntity(r);
                     activeRefs.Remove(r);
                 }
-                a.SubmitEntities();
+                a.Submit();
             }
 
             // Verify all remaining refs are valid and the count matches
             NAssert.AreEqual(activeRefs.Count, a.CountEntitiesWithTags(TestTags.Alpha));
             foreach (var r in activeRefs)
             {
-                NAssert.IsTrue(a.EntityExists(r));
+                NAssert.IsTrue(r.Exists(a));
             }
         }
 
         #endregion
 
-        #region GetSingleEntityIndex
+        #region GetSingleHandle
 
         [Test]
-        public void GetSingleEntityIndex_OneEntity_ReturnsCorrectIndex()
+        public void GetSingleHandle_OneEntity_ReturnsCorrectEntity()
         {
             using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
             var a = env.Accessor;
 
             var init = a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 42 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
-            var entity = a.Query().WithTags(TestTags.Alpha).Single();
-            ref readonly var comp = ref entity.Get<TestInt>().Read;
+            var entity = a.Query().WithTags(TestTags.Alpha).SingleHandle();
+            ref readonly var comp = ref entity.Component<TestInt>(a).Read;
             NAssert.AreEqual(42, comp.Value);
         }
 
         [Test]
-        public void TryGetSingleEntityIndex_NoEntities_ReturnsFalse()
+        public void TryGetSingleHandle_NoEntities_ReturnsFalse()
         {
             using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
             var a = env.Accessor;
 
-            bool found = a.Query().WithTags(TestTags.Alpha).TrySingle(out _);
+            bool found = a.Query().WithTags(TestTags.Alpha).TrySingleHandle(out _);
             NAssert.IsFalse(found);
         }
 
         [Test]
-        public void TryGetSingleEntityIndex_OneEntity_ReturnsTrue()
+        public void TryGetSingleHandle_OneEntity_ReturnsTrue()
         {
             using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
             var a = env.Accessor;
 
             a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 77 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
-            bool found = a.Query().WithTags(TestTags.Alpha).TrySingle(out var entity);
+            bool found = a.Query().WithTags(TestTags.Alpha).TrySingleHandle(out var entity);
             NAssert.IsTrue(found);
-            NAssert.AreEqual(77, entity.Get<TestInt>().Read.Value);
+            NAssert.AreEqual(77, entity.Component<TestInt>(a).Read.Value);
         }
 
         #endregion
 
-        #region QueryEntityIndices
+        #region QueryIndices
 
         [Test]
-        public void QueryEntityIndices_ReturnsAllEntities()
+        public void QueryIndices_ReturnsAllEntities()
         {
             using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
             var a = env.Accessor;
@@ -145,10 +145,10 @@ namespace Trecs.Tests
             {
                 a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = i * 10 }).AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             int count = 0;
-            foreach (var ei in a.Query().WithTags(TestTags.Alpha).EntityIndices())
+            foreach (var ei in a.Query().WithTags(TestTags.Alpha).Indices())
             {
                 count++;
             }
@@ -156,7 +156,7 @@ namespace Trecs.Tests
         }
 
         [Test]
-        public void QueryEntityIndices_AcrossStates_ReturnsAll()
+        public void QueryIndices_AcrossStates_ReturnsAll()
         {
             using var env = EcsTestHelper.CreateEnvironment(TestTemplates.WithPartitions);
             var a = env.Accessor;
@@ -169,10 +169,10 @@ namespace Trecs.Tests
             {
                 a.AddEntity(PartitionB).AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             int count = 0;
-            foreach (var ei in a.Query().WithTags(TestTags.Gamma).EntityIndices())
+            foreach (var ei in a.Query().WithTags(TestTags.Gamma).Indices())
             {
                 count++;
             }
@@ -193,11 +193,11 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 123 })
                 .AssertComplete();
             var originalRef = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             // Ref -> Index -> Ref
             var entityIndex = originalRef.ToIndex(a);
-            var roundTripRef = a.GetEntityHandle(entityIndex);
+            var roundTripRef = entityIndex.ToHandle(a);
             NAssert.AreEqual(originalRef, roundTripRef);
         }
 
@@ -209,15 +209,15 @@ namespace Trecs.Tests
 
             var init = a.AddEntity(PartitionA).Set(new TestInt { Value = 50 }).AssertComplete();
             var entityHandle = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             // Move to PartitionB
-            a.MoveTo(entityHandle.ToIndex(a), PartitionB);
-            a.SubmitEntities();
+            a.SetTag<TestPartitionB>(entityHandle.ToIndex(a));
+            a.Submit();
 
             // Get the new index and convert back to ref
             var newIndex = entityHandle.ToIndex(a);
-            var roundTripRef = a.GetEntityHandle(newIndex);
+            var roundTripRef = newIndex.ToHandle(a);
             NAssert.AreEqual(entityHandle, roundTripRef);
         }
 
@@ -232,14 +232,14 @@ namespace Trecs.Tests
             var a = env.Accessor;
 
             a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 10 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             // Modify via QueryEntity
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
             a.Component<TestInt>(new EntityIndex(0, group)).Write.Value = 99;
 
             // Read via QueryEntitiesSingle
-            var comp = a.Query().WithTags(TestTags.Alpha).Single().Get<TestInt>();
+            var comp = a.Query().WithTags(TestTags.Alpha).SingleHandle().Component<TestInt>(a);
             NAssert.AreEqual(99, comp.Read.Value);
         }
 
@@ -251,7 +251,7 @@ namespace Trecs.Tests
 
             var init = a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 10 }).AssertComplete();
             var entityHandle = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             // Modify via EntityHandle
             a.Component<TestInt>(entityHandle).Write.Value = 77;
@@ -270,7 +270,7 @@ namespace Trecs.Tests
 
             var init = a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 10 }).AssertComplete();
             var entityHandle = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             // Modify via EntityIndex write access
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
@@ -298,13 +298,13 @@ namespace Trecs.Tests
             {
                 a.AddEntity(PartitionB).AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(5, a.Query().WithTags(TestTags.Gamma).Count());
 
             // Remove all entities with Gamma tag (both PartitionA and PartitionB)
             a.RemoveEntitiesWithTags(TestTags.Gamma);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(0, a.CountEntitiesWithTags(PartitionA));
             NAssert.AreEqual(0, a.CountEntitiesWithTags(PartitionB));
@@ -328,18 +328,18 @@ namespace Trecs.Tests
             var sub = a
                 .Events.AllEntities()
                 .OnAdded(
-                    (Group group, EntityRange indices) =>
+                    (GroupIndex group, EntityRange indices) =>
                     {
                         callCount++;
                     }
                 );
 
             a.AddEntity(TestTags.Alpha).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
             NAssert.AreEqual(1, callCount, "Should fire for Alpha group");
 
             a.AddEntity(TestTags.Beta).Set(new TestFloat { Value = 1.0f }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
             NAssert.AreEqual(2, callCount, "Should fire for Beta group too");
 
             sub.Dispose();
@@ -361,16 +361,16 @@ namespace Trecs.Tests
 
             var sub1 = a
                 .Events.EntitiesWithTags(TestTags.Alpha)
-                .OnAdded((Group g, EntityRange i) => count1++);
+                .OnAdded((GroupIndex g, EntityRange i) => count1++);
             var sub2 = a
                 .Events.EntitiesWithTags(TestTags.Alpha)
-                .OnAdded((Group g, EntityRange i) => count2++);
+                .OnAdded((GroupIndex g, EntityRange i) => count2++);
             var sub3 = a
                 .Events.EntitiesWithTags(TestTags.Alpha)
-                .OnAdded((Group g, EntityRange i) => count3++);
+                .OnAdded((GroupIndex g, EntityRange i) => count3++);
 
             a.AddEntity(TestTags.Alpha).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(1, count1);
             NAssert.AreEqual(1, count2);
@@ -392,18 +392,18 @@ namespace Trecs.Tests
 
             var sub1 = a
                 .Events.EntitiesWithTags(TestTags.Alpha)
-                .OnAdded((Group g, EntityRange i) => count1++);
+                .OnAdded((GroupIndex g, EntityRange i) => count1++);
             var sub2 = a
                 .Events.EntitiesWithTags(TestTags.Alpha)
-                .OnAdded((Group g, EntityRange i) => count2++);
+                .OnAdded((GroupIndex g, EntityRange i) => count2++);
 
             a.AddEntity(TestTags.Alpha).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             sub1.Dispose(); // Dispose first sub
 
             a.AddEntity(TestTags.Alpha).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(1, count1, "Disposed sub should not fire again");
             NAssert.AreEqual(2, count2, "Active sub should still fire");
@@ -429,10 +429,10 @@ namespace Trecs.Tests
             {
                 a.AddEntity(PartitionB).AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             int manualCount = 0;
-            foreach (var _ in a.Query().WithTags(TestTags.Gamma).EntityIndices())
+            foreach (var _ in a.Query().WithTags(TestTags.Gamma).Indices())
             {
                 manualCount++;
             }
@@ -460,7 +460,7 @@ namespace Trecs.Tests
             {
                 a.AddEntity(PartitionB).AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             int sliceTotal = 0;
             foreach (var slice in a.Query().WithTags(TestTags.Gamma).GroupSlices())

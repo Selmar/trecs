@@ -3,7 +3,14 @@ using UnityEngine;
 
 namespace Trecs.Samples
 {
+    [Copyable]
     public partial struct GameObjectId : IEntityComponent
+    {
+        public int Value;
+    }
+
+    [Unwrap]
+    public partial struct PrefabId : IEntityComponent
     {
         public int Value;
     }

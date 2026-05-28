@@ -6,42 +6,44 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  logo: assets/logo.png
+  favicon: assets/favicon.png
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
+    scheme: default
+    primary: teal
+    accent: deep orange
   features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
     - navigation.sections
-    - navigation.expand
+    - navigation.indexes
+    - navigation.path
     - navigation.top
+    - navigation.footer
+    - toc.follow
     - search.suggest
     - search.highlight
+    - search.share
     - content.code.copy
+    - content.code.annotate
     - content.action.edit
+    - content.tooltips
   icon:
     repo: fontawesome/brands/github
 
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - Glossary: glossary.md
   - Core:
-      - World Setup: core/world-setup.md
-      - Entities: core/entities.md
       - Components: core/components.md
-      - Templates: core/templates.md
       - Tags: core/tags.md
+      - Templates: core/templates.md
+      - Entities: core/entities.md
       - Systems: core/systems.md
+      - World Setup: core/world-setup.md
+      - Input System: core/input-system.md
   - Data Access:
       - Queries & Iteration: data-access/queries-and-iteration.md
       - Aspects: data-access/aspects.md
@@ -52,16 +54,30 @@ nav:
   - Performance:
       - Jobs & Burst: performance/jobs-and-burst.md
       - Dependency Tracking: performance/dependency-tracking.md
+  - Guides:
+      - Best Practices: guides/best-practices.md
+      - Gotchas: guides/gotchas.md
+      - OOP Integration: guides/oop-integration.md
+      - Entity Subset Patterns: guides/entity-subset-patterns.md
+      - Trecs vs Unity ECS: guides/trecs-vs-unity-ecs.md
   - Advanced:
-      - Advanced Job Features: advanced/advanced-jobs.md
-      - Groups & TagSets: advanced/groups-and-tagsets.md
-      - Heap: advanced/heap.md
-      - Fixed Collections: advanced/fixed-collections.md
-      - Interpolation: advanced/interpolation.md
-      - Serialization: advanced/serialization.md
-      - Recording & Playback: advanced/recording-and-playback.md
-      - Input System: advanced/input-system.md
+      - Accessor Roles: advanced/accessor-roles.md
       - Time & RNG: advanced/time-and-rng.md
+      - Interpolation: advanced/interpolation.md
+      - Heap: advanced/heap.md
+      - Shared Heap Data: advanced/shared-heap-data.md
+      - Fixed Collections: advanced/fixed-collections.md
+      - Trecs Collections: advanced/trecs-collections.md
+      - Aspect Interfaces: advanced/aspect-interfaces.md
+      - Pausing & Disabling Systems: advanced/pausing-and-disabling-systems.md
+      - Groups, GroupIndex & TagSets: advanced/groups-and-tagsets.md
+      - Advanced Job Features: advanced/advanced-jobs.md
+      - Serialization: advanced/serialization.md
+  - Editor Windows:
+      - Overview: editor-windows/index.md
+      - Hierarchy: editor-windows/hierarchy.md
+      - Player: editor-windows/player.md
+      - Saves: editor-windows/saves.md
   - Samples:
       - Overview: samples/index.md
       - 01 - Hello Entity: samples/01-hello-entity.md
@@ -76,12 +92,12 @@ nav:
       - 10 - Pointers: samples/10-pointers.md
       - 11 - Snake: samples/11-snake.md
       - 12 - Feeding Frenzy Benchmark: samples/12-feeding-frenzy-benchmark.md
-      - 13 - Save Game: samples/13-save-game.md
-  - Recipes:
-      - OOP Integration: recipes/oop-integration.md
-      - Entity Subset Patterns: recipes/entity-subset-patterns.md
-      - Design Rules: recipes/design-rules.md
-      - Trecs vs Unity ECS: recipes/trecs-vs-unity-ecs.md
+      - 13 - Native Pointers: samples/13-native-pointers.md
+      - 14 - Aspect Interfaces: samples/14-aspect-interfaces.md
+      - 15 - Blob Storage: samples/15-blob-storage.md
+      - 16 - Reactive Events: samples/16-reactive-events.md
+      - 17 - Multiple Worlds: samples/17-multiple-worlds.md
+  - FAQ: faq.md
   - Changelog: changelog.md
 
 markdown_extensions:
@@ -102,6 +118,18 @@ markdown_extensions:
   - attr_list
   - md_in_html
   - tables
+  - footnotes
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.keys
+  - pymdownx.smartsymbols
+  - pymdownx.caret
+  - pymdownx.mark
+  - pymdownx.tilde
 
 plugins:
   - search
+
+extra_css:
+  - stylesheets/extra.css

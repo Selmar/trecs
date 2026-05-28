@@ -7,24 +7,24 @@ using System.Text;
 namespace Trecs.Internal
 {
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public class EntityInitializationTracker
+    public sealed class EntityInitializationTracker
     {
         struct TrackedEntity
         {
-            public Group Group;
+            public GroupIndex GroupIndex;
             public string DescriptorName;
             public string CallerFile;
             public int CallerLine;
             public IComponentBuilder[] ComponentBuilders;
-            public HashSet<ComponentId> InitializedComponents;
+            public HashSet<TypeId> InitializedComponents;
             public bool Validated;
         }
 
         readonly List<TrackedEntity> _entries = new();
-        readonly Stack<HashSet<ComponentId>> _hashSetPool = new();
+        readonly Stack<HashSet<TypeId>> _hashSetPool = new();
 
         public int Register(
-            Group group,
+            GroupIndex group,
             IComponentBuilder[] builders,
             string descriptorName,
             string callerFile,
@@ -32,14 +32,14 @@ namespace Trecs.Internal
         )
         {
             var initializedSet =
-                _hashSetPool.Count > 0 ? _hashSetPool.Pop() : new HashSet<ComponentId>();
+                _hashSetPool.Count > 0 ? _hashSetPool.Pop() : new HashSet<TypeId>();
             initializedSet.Clear();
 
             var id = _entries.Count;
             _entries.Add(
                 new TrackedEntity
                 {
-                    Group = group,
+                    GroupIndex = group,
                     DescriptorName = descriptorName,
                     CallerFile = callerFile,
                     CallerLine = callerLine,
@@ -51,12 +51,12 @@ namespace Trecs.Internal
             return id;
         }
 
-        public void MarkComponentSet(int id, ComponentId componentId, Group group)
+        public void MarkComponentSet(int id, TypeId componentId, GroupIndex group)
         {
             if (!_entries[id].InitializedComponents.Add(componentId))
             {
                 throw new TrecsException(
-                    $"Component type '{TypeIdProvider.GetTypeFromId(componentId.Value).GetPrettyName()}' "
+                    $"Component type '{TypeId.ToType(componentId).GetPrettyName()}' "
                         + $"has already been initialized for entity initializer, while adding to group {group}"
                 );
             }
@@ -93,7 +93,7 @@ namespace Trecs.Internal
                 {
                     throw new TrecsException(
                         $"Entity created at {entry.CallerFile}:{entry.CallerLine} "
-                            + $"(group {entry.Group}, descriptor: {entry.DescriptorName}) "
+                            + $"(group {entry.GroupIndex}, descriptor: {entry.DescriptorName}) "
                             + "is missing initial values for the following components:\n"
                             + missingComponents
                     );
@@ -112,7 +112,7 @@ namespace Trecs.Internal
                 if (builder.HasUserProvidedPrototype)
                     continue;
 
-                if (entry.InitializedComponents.Contains(builder.ComponentId))
+                if (entry.InitializedComponents.Contains(builder.TypeId))
                     continue;
 
                 missing ??= new StringBuilder();

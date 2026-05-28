@@ -1,8 +1,8 @@
 # Samples
 
-Trecs includes a progressive tutorial series and two full game samples. Each sample builds on concepts from previous ones.
+A progressive tutorial series plus full game samples. Each builds on the previous.
 
-## Tutorial Series (Trecs 101)
+## Tutorial series (Trecs 101)
 
 | # | Sample | Concepts |
 |---|--------|----------|
@@ -11,30 +11,34 @@ Trecs includes a progressive tutorial series and two full game samples. Each sam
 | 03 | [Aspects](03-aspects.md) | Bundled component access for clean iteration |
 | 04 | [Predator Prey](04-predator-prey.md) | Cross-entity references, template inheritance, event cleanup |
 | 05 | [Job System](05-job-system.md) | Burst compilation, parallel jobs, WrapAsJob |
-| 06 | [Partitions](06-partitions.md) | Template partitions, partition transitions, group-based iteration |
+| 06 | [Partitions](06-partitions.md) | Template partitions, partition transitions, partition-filtered iteration |
 | 07 | [Feeding Frenzy](07-feeding-frenzy.md) | Complex simulation, visual smoothing, multiple interacting systems |
 | 08 | [Sets](08-sets.md) | Dynamic entity subsets, overlapping membership |
 | 09 | [Interpolation](09-interpolation.md) | Fixed-to-variable timestep interpolation |
-| 10 | [Pointers](10-pointers.md) | SharedPtr, UniquePtr, managed data on the heap |
+| 10 | [Dynamic Collections](10-pointers.md) | Five trail-storage strategies: UniquePtr Queue, FixedArray, FixedList, TrecsList, TrecsArray |
+| 13 | [Aspect Interfaces](13-aspect-interfaces.md) | Shared aspect contracts via `partial interface` for reusable cross-species helpers |
+| 14 | [Blob Seed Pattern](14-blob-seed-pattern.md) | Content-pipeline-stable `BlobId`s for shared immutable assets on the heap |
+| 15 | [Reactive Events](15-reactive-events.md) | `OnAdded` / `OnRemoved` observers for cleanup and stat tracking |
+| 16 | [Multiple Worlds](16-multiple-worlds.md) | Two independent `World` instances ticking side-by-side |
+| 17 | [Heightmap Blobs](17-heightmap-blobs.md) | Content-derived `BlobId`s via `UniqueHashGenerator`, plus a `NativeSharedPtr` Burst-job variant |
 
-## Game Samples
+## Game samples
 
 | # | Sample | Description |
 |---|--------|-------------|
 | 11 | [Snake](11-snake.md) | Complete grid-based game with input handling and recording/playback |
 | 12 | [Feeding Frenzy Benchmark](12-feeding-frenzy-benchmark.md) | Performance benchmark comparing partition approaches and iteration styles |
-| 13 | [Save Game](13-save-game.md) | Sokoban puzzle demonstrating bookmark-based save/load slots |
 
-## Running the Samples
+## Running the samples
 
-Open `UnityProject/Trecs/Assets/Samples/Main.unity` in Unity 6000.3+ to run all samples. Each sample has its own composition root that builds the world and initializes the scene.
+Open `Assets/Samples/Core/Main.unity` in Unity 6000.3+ and press Play. A `SampleCycler` lets you switch between samples at runtime. Each sample has its own composition root.
 
-## Sample Architecture: Bootstrap & CompositionRoot
+## Sample architecture: Bootstrap & CompositionRoot
 
-Each sample uses a simple two-class pattern to wire everything together:
+Each sample uses a two-class pattern:
 
-- **`Bootstrap`** — a MonoBehaviour that drives the Unity lifecycle. It calls the composition root's `Construct()` in `Awake()`, then forwards `Update()` → tick, `LateUpdate()` → late tick, and `OnDestroy()` → dispose.
-- **`CompositionRootBase`** — an abstract MonoBehaviour that each sample subclasses. The `Construct()` method builds the `WorldBuilder`, creates systems, and returns lists of callbacks for initialization, tick, late tick, and disposal.
+- **`Bootstrap`** — MonoBehaviour driving the Unity lifecycle. `Awake()` calls `CompositionRoot.Construct()` and runs the initializers; `Update()` / `LateUpdate()` invoke tickables and late tickables; `OnDestroy()` runs disposables.
+- **`CompositionRootBase`** — abstract MonoBehaviour each sample subclasses. `Construct()` builds the `WorldBuilder`, creates systems, and returns four `List<Action>` callbacks (init, tick, late tick, dispose).
 
 ```csharp
 // Simplified — each sample's composition root looks roughly like this:
@@ -47,7 +51,7 @@ public class MyCompositionRoot : CompositionRootBase
         out List<Action> disposables)
     {
         var world = new WorldBuilder()
-            .AddEntityType(MyEntity.Template)
+            .AddTemplate(MyEntity.Template)
             .Build();
 
         world.AddSystems(new ISystem[] { new MySystem() });
@@ -61,15 +65,17 @@ public class MyCompositionRoot : CompositionRootBase
 ```
 
 !!! note
-    This pattern is just a lightweight convenience for the samples. Trecs is deliberately unopinionated about how you structure your application — it doesn't register MonoBehaviours, manage singletons, or hook into Unity's update loop automatically. In a real project, you would use whatever approach you prefer for building your object graph: a dependency injection framework (e.g., Reflex, Zenject, VContainer), plain MonoBehaviours, ScriptableObjects, or anything else. All Trecs needs is for your code to call `world.Tick()`, `world.LateTick()`, and `world.Dispose()` at the appropriate times.
+    This pattern is a convenience for the samples. Trecs is unopinionated about application structure — it doesn't register MonoBehaviours, manage singletons, or hook into Unity's update loop. Use a DI framework (Reflex, Zenject, VContainer), plain MonoBehaviours, ScriptableObjects, or anything else. Trecs only requires that your code calls `world.Tick()`, `world.LateTick()`, and `world.Dispose()` at the right times.
 
-## Shared Utilities
+## Shared utilities
 
-The `Common/` directory contains utilities shared across samples:
+`Common/` contains helpers shared across samples (sample code — not part of Trecs itself):
 
-- **GameObjectRegistry** — maps `GameObjectId` components to Unity GameObjects
-- **RendererSystem** — GPU-instanced indirect rendering for high entity counts
-- **RecordAndPlaybackController** — recording/replay with bookmark support
-- Common components, templates, tags
+- **`RenderableGameObjectManager`** — pools and spawns Unity GameObjects for entities carrying `PrefabId` + `GameObjectId`, driven by `OnAdded` / `OnRemoved` observers
+- **`IndirectRenderer`** — GPU-instanced indirect rendering for high entity counts (samples using `IndirectRenderable`)
+- **`Bootstrap`** / **`CompositionRootBase`** — the lifecycle wiring above
+- **`SampleUtil`** — primitive / material helpers
+- **`DisposeCollection`** — `IDisposable` aggregator
+- Common components and templates (`Position`, `Rotation`, `UniformScale`, `ColorComponent`, `PrefabId`, `GameObjectId`, `CommonTemplates.IndirectRenderable`, `CommonTemplates.RenderableGameObject`, etc.)
 
-Note that the samples use some of this helper code in Common/ and that this code is not part of the Trecs library itself. So if you copy code from the samples, be sure to also copy any dependencies from Common
+If you copy code from a sample, also copy its `Common/` dependencies.

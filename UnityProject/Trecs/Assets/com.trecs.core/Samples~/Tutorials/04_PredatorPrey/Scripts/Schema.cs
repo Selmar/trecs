@@ -38,25 +38,29 @@ namespace Trecs.Samples.PredatorPrey
     public static partial class SampleTemplates
     {
         // Base template — PredatorEntity and PreyEntity inherit these components via IExtends
-        public partial class Movable : ITemplate, IHasTags<SampleTags.Movable>
+        public abstract partial class Movable
+            : ITemplate,
+                IExtends<CommonTemplates.RenderableGameObject>,
+                ITagged<SampleTags.Movable>
         {
-            public Position Position = default;
-            public MoveDirection MoveDirection = default;
-            public Speed Speed;
-            public GameObjectId GameObjectId;
+            Position Position = default;
+            MoveDirection MoveDirection = default;
+            Speed Speed;
         }
 
         public partial class PredatorEntity
             : ITemplate,
-                IHasTags<SampleTags.Predator>,
+                ITagged<SampleTags.Predator>,
                 IExtends<Movable>
         {
-            public ChosenPrey ChosenPrey = default;
+            ChosenPrey ChosenPrey = default;
+            PrefabId PrefabId = new(PredatorPreyPrefabs.Predator);
         }
 
-        public partial class PreyEntity : ITemplate, IHasTags<SampleTags.Prey>, IExtends<Movable>
+        public partial class PreyEntity : ITemplate, ITagged<SampleTags.Prey>, IExtends<Movable>
         {
-            public ApproachingPredator ApproachingPredator = default;
+            ApproachingPredator ApproachingPredator = default;
+            PrefabId PrefabId = new(PredatorPreyPrefabs.Prey);
         }
     }
 }

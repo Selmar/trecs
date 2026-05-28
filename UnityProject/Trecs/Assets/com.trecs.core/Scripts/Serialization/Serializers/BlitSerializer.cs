@@ -1,0 +1,35 @@
+namespace Trecs.Serialization
+{
+    /// <summary>
+    /// Serializer for any unmanaged (blittable) type — writes the struct as
+    /// raw bytes via <c>BlitWrite</c>. Preferred over the generic
+    /// <see cref="ISerializer{T}"/> path for POD types since it avoids any
+    /// name/type framing per field. Register via
+    /// <c>SerializerRegistry.RegisterSerializer&lt;BlitSerializer&lt;T&gt;&gt;()</c>.
+    /// </summary>
+    public sealed class BlitSerializer<T> : ISerializer<T>, ISerializerDelta<T>
+        where T : unmanaged
+    {
+        public BlitSerializer() { }
+
+        public void Deserialize(ref T value, ISerializationReader reader)
+        {
+            reader.BlitRead("Value", ref value);
+        }
+
+        public void Serialize(in T value, ISerializationWriter writer)
+        {
+            writer.BlitWrite("Value", value);
+        }
+
+        public void DeserializeDelta(ref T value, in T baseValue, ISerializationReader reader)
+        {
+            reader.BlitReadDelta("Value", ref value, baseValue);
+        }
+
+        public void SerializeDelta(in T value, in T baseValue, ISerializationWriter writer)
+        {
+            writer.BlitWriteDelta("Value", value, baseValue);
+        }
+    }
+}

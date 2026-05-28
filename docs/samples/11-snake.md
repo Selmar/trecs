@@ -1,34 +1,25 @@
 # 11 — Snake
 
-A complete grid-based game with deterministic input handling, recording/playback, and structured entity lifecycle management.
+A grid-based game with deterministic input and entity lifecycle management.
 
-**Source:** `Samples/11_Snake/`
+**Source:** `com.trecs.core/Samples~/Tutorials/11_Snake/`
 
-## What It Does
+## What it does
 
-Classic Snake — a head moves on a grid, eats food to grow, and leaves a trail of body segments. The game supports deterministic recording and playback via hotkeys:
-
-| Key | Action |
-|---|---|
-| F5 | Toggle recording |
-| F6 | Toggle playback |
-| F8 | Save bookmark |
-| F9 | Load bookmark |
-
-Recordings and bookmarks are written under `{Application.persistentDataPath}/Snake/Recordings/`.
+Classic Snake — a head moves on a grid, eats food to grow, and leaves body segments behind. WASD moves the snake. The simulation is deterministic, so recording, scrubbing, and snapshot capture are available through the Trecs Player editor window (**Window → Trecs → Player**) without any sample-side wiring.
 
 ## Schema
 
 ### Components
 
 ```csharp
-public struct GridPos : IEntityComponent { public int2 Value; }
-public struct Direction : IEntityComponent { public int2 Value; }
-public struct MoveInput : IEntityComponent { public int2 RequestedDirection; }
-public struct SegmentAge : IEntityComponent { public int Value; }
-public struct SnakeLength : IEntityComponent { public int Value; }
-public struct Score : IEntityComponent { public int Value; }
-public struct MoveTickCounter : IEntityComponent { public int FramesUntilNextMove; }
+[Unwrap] public partial struct GridPos          : IEntityComponent { public int2 Value; }
+[Unwrap] public partial struct Direction        : IEntityComponent { public int2 Value; }
+[Unwrap] public partial struct MoveInput        : IEntityComponent { public int2 RequestedDirection; }
+[Unwrap] public partial struct SegmentAge       : IEntityComponent { public int Value; }
+[Unwrap] public partial struct SnakeLength      : IEntityComponent { public int Value; }
+[Unwrap] public partial struct Score            : IEntityComponent { public int Value; }
+[Unwrap] public partial struct MoveTickCounter  : IEntityComponent { public int FramesUntilNextMove; }
 ```
 
 ### Tags
@@ -44,24 +35,24 @@ public struct SnakeFood : ITag { }
 ```csharp
 public partial class SnakeGlobals : ITemplate, IExtends<TrecsTemplates.Globals>
 {
-    [Input(MissingInputFrameBehaviour.RetainCurrent)]
-    public MoveInput MoveInput;
-    public SnakeLength SnakeLength = new(4);
-    public Score Score;
-    public MoveTickCounter MoveTickCounter;
+    [Input(MissingInputBehavior.Retain)]
+    MoveInput MoveInput = default;
+    SnakeLength SnakeLength = new(4);
+    Score Score = default;
+    MoveTickCounter MoveTickCounter = default;
 }
 ```
 
-The `[Input(RetainCurrent)]` attribute ensures the last input persists until a new one is received — critical for a game where the snake keeps moving in its current direction.
+`[Input(Retain)]` keeps the last input until a new one arrives — needed because the snake keeps moving in its current direction.
 
-## Systems (Execution Order)
+## Systems (execution order)
 
-### 1. SnakeInputSystem (`[InputSystem]`)
+### 1. SnakeInputSystem (`[ExecuteIn(SystemPhase.Input)]`)
 
 Captures WASD input each visual frame and queues it:
 
 ```csharp
-[InputSystem]
+[ExecuteIn(SystemPhase.Input)]
 public partial class SnakeInputSystem : ISystem
 {
     int2 _pendingDirection;
@@ -79,7 +70,7 @@ public partial class SnakeInputSystem : ISystem
     {
         if (_pendingDirection.x != 0 || _pendingDirection.y != 0)
         {
-            World.AddInput(World.GlobalEntityHandle, new MoveInput { RequestedDirection = _pendingDirection });
+            World.GlobalEntityHandle.AddInput(World, new MoveInput { RequestedDirection = _pendingDirection });
             _pendingDirection = int2.zero;
         }
     }
@@ -95,26 +86,25 @@ Every N fixed frames (controlled by `MoveTickCounter`):
 3. Advances the head one cell in the current direction
 4. Wraps around grid edges
 
-Demonstrates `World.GlobalComponent<T>()` for reading/writing global state, and `World.Frame` for tracking creation order:
+`[SingleEntity]` is a per-parameter attribute that finds the one entity matching the given tag and binds it to the aspect parameter. Both the global entity and the snake head are bound this way. `World.Frame` stamps each segment with its creation frame:
 
 ```csharp
-public void Execute()
+void Execute(
+    [SingleEntity(typeof(TrecsTags.Globals))] in Globals globals,
+    [SingleEntity(typeof(SnakeTags.SnakeHead))] in SnakeHead head
+)
 {
-    ref var counter = ref World.GlobalComponent<MoveTickCounter>().Write;
-
-    if (counter.FramesUntilNextMove > 0)
+    if (globals.MoveTickCounter > 0)
     {
-        counter.FramesUntilNextMove--;
+        globals.MoveTickCounter--;
         return;
     }
 
-    counter.FramesUntilNextMove = _settings.FramesPerMove - 1;
+    globals.MoveTickCounter = _settings.FramesPerMove - 1;
 
-    var head = SnakeHead.Query(World).WithTags<SnakeTags.SnakeHead>().Single();
-
-    // Read input from global entity
-    var requested = World.GlobalComponent<MoveInput>().Read.RequestedDirection;
-    // ... apply turn, reject 180° reversals ...
+    // Read input from global entity, apply turn (reject 180° reversals)
+    var requested = globals.MoveInput;
+    // ... apply turn ...
 
     // Spawn segment at head's current position, tagged with creation frame
     World.AddEntity<SnakeTags.SnakeSegment>()
@@ -122,6 +112,7 @@ public void Execute()
         .Set(new SegmentAge(World.Frame));
 
     // Advance head and wrap around grid edges
+    int size = _settings.GridSize;
     var newPos = head.GridPos + head.Direction;
     newPos.x = ((newPos.x % size) + size) % size;
     newPos.y = ((newPos.y % size) + size) % size;
@@ -129,47 +120,49 @@ public void Execute()
 }
 
 partial struct SnakeHead : IAspect, IWrite<Direction, GridPos> { }
+
+partial struct Globals : IAspect, IWrite<MoveTickCounter>, IRead<MoveInput> { }
 ```
 
 ### 3. FoodConsumeSystem
 
-Checks if the head overlaps food. If so: removes the food entity, increments `SnakeLength` and `Score`.
+If the head overlaps food, removes the food entity and increments `SnakeLength` and `Score`.
 
 ### 4. SegmentTrimSystem
 
-If the segment count exceeds `SnakeLength - 1`, removes the oldest segment (by `SegmentAge`).
+When segment count exceeds `SnakeLength - 1`, removes the oldest segment (by `SegmentAge`).
 
 ### 5. FoodSpawnSystem
 
 Spawns food up to a maximum count at random unoccupied grid cells using `World.Rng`.
 
-### 6. SnakeRendererSystem (`[VariableUpdate]`)
+### 6. SnakePresenter (`[ExecuteIn(SystemPhase.Presentation)]`)
 
 Maps `GridPos` to world coordinates for rendering.
 
-## Determinism & Recording
+## Determinism
 
-The world is configured for deterministic replay:
+The world is configured for deterministic replay via a fixed seed:
 
 ```csharp
 new WorldBuilder()
     .SetSettings(new WorldSettings
     {
-        RequireDeterministicSubmission = true,
         RandomSeed = settings.RandomSeed,
     })
     // ...
 ```
 
-Serialization is wired in via the sample-side `SerializationFactory.CreateAll(world)` helper (in `Samples/Common/Scripts/`), which composes a registry + `WorldStateSerializer` + `BookmarkSerializer` + `RecordingHandler` + `PlaybackHandler`. The `RecordAndPlaybackController` reads keyboard input and drives `SaveBookmark(path)` / `LoadBookmark(path)` / `EndRecording(path)` / `StartPlayback(path, ...)` against file paths under `persistentDataPath`.
+That's all the sample does on the serialization side — no recorder/player, no key bindings. The Trecs Player editor window (**Window → Trecs → Player**) attaches itself to any active Trecs `World` automatically, so recording, scrubbing, save/load, and snapshot capture are available out of the box.
 
-See [Serialization](../advanced/serialization.md) for custom-serializer authoring and [Recording & Playback](../advanced/recording-and-playback.md) for the full handler API.
+See [Serialization](../experimental/serialization.md) for custom-serializer authoring if any of the world's heap data is a managed type that needs to round-trip through recording / scrub.
 
-## Concepts Introduced
+## Concepts introduced
 
-- **`[Input(RetainCurrent)]`** — input persists across frames until replaced
-- **`[InputSystem]`** — system runs in the input phase, before fixed update
-- **`AddInput()`** — queues input from outside the ECS tick
+- **`[Input(Retain)]`** on a template field — input persists until replaced
+- **`[ExecuteIn(SystemPhase.Input)]`** — runs in the input phase, before fixed update
+- **`entity.AddInput<T>(World, value)`** — queues input from outside the ECS tick
+- **`[SingleEntity(typeof(Tag))]`** parameter — binds the one tagged entity into the `Execute` signature
 - **Grid-based gameplay** — integer positions, discrete movement
 - **FIFO entity management** — `SegmentAge` tracks creation order for oldest-first removal
-- **Deterministic recording/playback** — seeded RNG + deterministic submission
+- **Deterministic simulation** — seeded RNG + deterministic submission

@@ -5,7 +5,7 @@ namespace Trecs.Samples.Partitions
     /// <summary>
     /// Applies gravity, velocity integration, and floor bounce to Active balls.
     ///
-    /// Because Active balls live in their own group (via IHasPartition), this loop
+    /// Because Active balls live in their own group (via IPartitionedBy), this loop
     /// iterates contiguous memory — no branches to skip resting balls.
     /// </summary>
     public partial class PhysicsSystem : ISystem
@@ -15,7 +15,7 @@ namespace Trecs.Samples.Partitions
         const float Bounciness = 0.7f;
         const float RestThreshold = 0.3f;
 
-        [ForEachEntity(Tags = new[] { typeof(BallTags.Ball), typeof(BallTags.Active) })]
+        [ForEachEntity(typeof(BallTags.Ball), typeof(BallTags.Active))]
         void Execute(in ActiveBall ball)
         {
             var vel = ball.Velocity;
@@ -34,7 +34,7 @@ namespace Trecs.Samples.Partitions
                 ball.Velocity = vel;
             }
 
-            // MoveTo transitions the entity to a different partition — this moves
+            // SetTag transitions the entity to a different partition — this moves
             // component data to a new contiguous array so iteration stays cache-friendly
             if (
                 math.lengthsq(ball.Velocity) < RestThreshold * RestThreshold
@@ -44,7 +44,7 @@ namespace Trecs.Samples.Partitions
                 ball.Velocity = float3.zero;
                 ball.RestTimer = 2f + World.Rng.Next() * 3f; // rest 2-5 seconds
 
-                ball.MoveTo<BallTags.Ball, BallTags.Resting>(World);
+                ball.UnsetTag<BallTags.Active>(World);
             }
         }
 

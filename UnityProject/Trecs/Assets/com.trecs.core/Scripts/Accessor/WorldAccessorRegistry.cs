@@ -1,26 +1,30 @@
+using System.Collections.Generic;
 using System.ComponentModel;
 using Trecs.Collections;
 
 namespace Trecs.Internal
 {
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public class WorldAccessorRegistry
+    public sealed class WorldAccessorRegistry
     {
-        static readonly TrecsLog _log = new(nameof(WorldAccessorRegistry));
+        readonly TrecsLog _log;
 
-        readonly DenseDictionary<ISystem, WorldAccessor> _executeAccessors = new();
-        readonly DenseDictionary<int, WorldAccessor> _accessorById = new();
+        readonly Dictionary<ISystem, WorldAccessor> _executeAccessors = new();
+        readonly IterableDictionary<int, WorldAccessor> _accessorById = new();
 
         bool _isClosed;
 
-        public WorldAccessorRegistry() { }
+        public WorldAccessorRegistry(TrecsLog log)
+        {
+            _log = log;
+        }
 
-        public ReadOnlyDenseDictionary<ISystem, WorldAccessor> ExecuteAccessors
+        public Dictionary<ISystem, WorldAccessor> ExecuteAccessors
         {
             get { return _executeAccessors; }
         }
 
-        public ReadOnlyDenseDictionary<int, WorldAccessor> AccessorsById
+        public ReadOnlyIterableDictionary<int, WorldAccessor> AccessorsById
         {
             get { return _accessorById; }
         }
@@ -28,26 +32,21 @@ namespace Trecs.Internal
         public void RegisterById(WorldAccessor accessor)
         {
             _accessorById.Add(accessor.Id, accessor);
-            _log.Trace("Registered accessor '{}' with id {}", accessor.DebugName, accessor.Id);
+            _log.Trace("Registered accessor '{0}' with id {1}", accessor.DebugName, accessor.Id);
         }
 
         public void RegisterExecute(ISystem system, WorldAccessor accessor, string debugName)
         {
-            Assert.That(!_isClosed);
-            Assert.That(
+            TrecsDebugAssert.That(!_isClosed);
+            TrecsDebugAssert.That(
                 !_executeAccessors.ContainsKey(system),
-                "System {} already has registered execute accessor - secondary accessors should use isSecondary flag",
+                "System {0} already has registered execute accessor - secondary accessors should use isSecondary flag",
                 debugName
             );
 
             _executeAccessors.Add(system, accessor);
 
-            _log.Trace("Registered execute accessor for system {}", debugName);
-        }
-
-        public ReadOnlyDenseDictionary<int, WorldAccessor> AllAccessors
-        {
-            get { return _accessorById; }
+            _log.Trace("Registered execute accessor for system {0}", debugName);
         }
 
         public WorldAccessor GetAccessorById(int id)
@@ -57,7 +56,7 @@ namespace Trecs.Internal
 
         public void Close()
         {
-            Assert.That(!_isClosed);
+            TrecsDebugAssert.That(!_isClosed);
             _isClosed = true;
         }
     }

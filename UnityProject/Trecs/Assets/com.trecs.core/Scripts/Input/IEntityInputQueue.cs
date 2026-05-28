@@ -9,14 +9,13 @@ namespace Trecs.Internal
     }
 
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public interface IEntityInputQueue
+    internal interface IEntityInputQueue
     {
         void ClearFutureInputsAfterOrAt(int frame);
         void ClearInputsBeforeOrAt(int frame);
         void ClearAllInputs();
-        void Serialize(ITrecsSerializationWriter writer);
-        void Deserialize(ITrecsSerializationReader reader);
-        void RemapFrameOffsets(int frameOffset);
+        void Serialize(ISerializationWriter writer);
+        void Deserialize(ISerializationReader reader);
         void AddHistoryLocker(IInputHistoryLocker locker);
         void RemoveHistoryLocker(IInputHistoryLocker locker);
         bool HasInputFrame<T>(int frame, EntityHandle entityHandle)
@@ -29,6 +28,6 @@ namespace Trecs.Internal
             where T : unmanaged, IEntityComponent;
         void SetInput<T>(int frame, EntityHandle entityHandle, in T value)
             where T : unmanaged, IEntityComponent;
-        int GetMaxClearFrame();
+        int GetMaxClearFrame(int currentFixedFrame);
     }
 }

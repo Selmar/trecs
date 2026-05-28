@@ -1,28 +1,38 @@
 # Jobs & Burst
 
-Trecs integrates with Unity's job system and Burst compiler for parallel, high-performance entity processing.
+Trecs integrates with [Unity's job system and Burst compiler](https://docs.unity3d.com/Packages/com.unity.burst@latest) for parallel, high-performance entity processing. You can write job structs by hand — Trecs's source generator handles the scheduling boilerplate (`ScheduleParallel`, [dependency tracking](dependency-tracking.md), field auto-wiring). For the simplest cases, the generator emits the entire job struct from a single annotated method.
 
-## WrapAsJob — The Simplest Approach
+## `[WrapAsJob]` — the simplest approach
 
-Mark a static `[ForEachEntity]` method with `[WrapAsJob]` to generate a Burst-compiled parallel job:
+Mark a `static` `[ForEachEntity]` method with `[WrapAsJob]` and Trecs generates a Burst-compiled parallel job for you:
 
 ```csharp
 public partial class ParticleMoveSystem : ISystem
 {
-    [ForEachEntity(Tag = typeof(SampleTags.Particle))]
+    [ForEachEntity(typeof(SampleTags.Particle))]
     [WrapAsJob]
-    static void Execute(in Velocity velocity, ref Position position, in NativeWorldAccessor world)
+    static void Execute(
+        in Velocity velocity,
+        ref Position position,
+        in NativeWorldAccessor world)
     {
         position.Value += world.DeltaTime * velocity.Value;
     }
 }
 ```
 
-The source generator creates the job struct, scheduling method, and [dependency tracking](dependency-tracking.md) automatically. The method must be `static` because it is called from inside a job and must use `NativeWorldAccessor` instead of `WorldAccessor`
+Two requirements:
 
-## Manual Job Structs
+- **`static`** — the generated Burst job calls your method directly, with no system instance, so it must be `static`.
+- **Use `NativeWorldAccessor`, not `WorldAccessor`** for any world-level operations (`DeltaTime`, structural changes, set ops) inside the body.
 
-For more control, define a job struct yourself with a `[ForEachEntity]` Execute method:
+Trecs schedules the job instead of calling your `Execute()` method directly.
+
+[`[PassThroughArgument]`](../core/systems.md#passthroughargument) is supported here too and forwards the data to the generated job.
+
+## Manual job structs
+
+To define a custom job struct instead of using `[WrapAsJob]`, put `[ForEachEntity]` on the job's `Execute` method — Trecs generates a `ScheduleParallel` for it the same way:
 
 ```csharp
 public partial class ParticleJobSystem : ISystem
@@ -32,7 +42,7 @@ public partial class ParticleJobSystem : ISystem
     {
         public float DeltaTime;
 
-        [ForEachEntity(Tag = typeof(SampleTags.Particle))]
+        [ForEachEntity(typeof(SampleTags.Particle))]
         public readonly void Execute(in Velocity velocity, ref Position position)
         {
             position.Value += DeltaTime * velocity.Value;
@@ -46,41 +56,39 @@ public partial class ParticleJobSystem : ISystem
 }
 ```
 
-The Trecs Source Generator will add a ScheduleParallel extension method for your job struct that handles the iteration and component access.
+`[ForEachEntity]` is **not** required. You can write an entirely hand-rolled `IJobFor` / `IJobParallelFor` and still pass Trecs data into it. See [Advanced Job Features](../advanced/advanced-jobs.md).
 
-This gives you control over the job struct fields (e.g., passing precomputed values like `DeltaTime`), while the source generator still handles scheduling and dependency tracking.
+## Per-iteration `EntityHandle`
 
-However note that you can also use [`[PassThroughArgument]`](../core/systems.md#passthroughargument) on fields of a `[WrapAsJob]` method to achieve the same effect without defining a job struct.
+A `[ForEachEntity]` callback inside a job can take an `EntityHandle` parameter alongside its components — works in both `[WrapAsJob]` and manual job structs:
 
-## NativeWorldAccessor
+```csharp
+[ForEachEntity(typeof(SampleTags.Particle))]
+[WrapAsJob]
+static void Cull(ref Lifetime lifetime, EntityHandle handle, in NativeWorldAccessor world)
+{
+    if (lifetime.Remaining <= 0)
+        handle.Remove(world);
+}
+```
 
-`NativeWorldAccessor` is the job-safe counterpart to `WorldAccessor`. It supports structural operations with a `sortKey` parameter for deterministic ordering:
+The handle is materialized per iteration from a component buffer the source generator wires up automatically. Inside jobs, entity-targeted ops go through `EntityHandle` taking a `NativeWorldAccessor` parameter — the same `handle.Op(accessor)` pattern as on the main thread (where the accessor is a `WorldAccessor` instead).
+
+## `NativeWorldAccessor`
+
+`NativeWorldAccessor` is the Burst-compatible counterpart to `WorldAccessor`. Get one with `world.ToNative()` (or take it as an `in NativeWorldAccessor` parameter — `[WrapAsJob]` auto-injects it). World-level operations (entity creation, set membership) live on `NativeWorldAccessor` directly; entity-targeted operations live on `EntityHandle` and take the native accessor as an argument:
 
 ```csharp
 // In a job:
 nativeWorld.AddEntity<GameTags.Bullet>(sortKey: (uint)index)
     .Set(new Position(pos));
 
-nativeWorld.RemoveEntity(entityIndex);
-nativeWorld.MoveTo<BallTags.Ball, BallTags.Resting>(entityIndex);
+entityHandle.Remove(nativeWorld);
+entityHandle.SetTag<BallTags.Resting>(nativeWorld);     // partition transition (turn tag on / switch variant)
+entityHandle.UnsetTag<BallTags.Active>(nativeWorld);    // partition transition (presence/absence dim only)
 ```
 
-### Sort Keys
-
-When `RequireDeterministicSubmission` is enabled, sort keys determine the order structural operations are applied. Use entity IDs or loop indices as sort keys for reproducible results.
-
-## Thread Safety Rules
-
-| Operation | Main Thread | Jobs |
-|-----------|------------|------|
-| Read components | `WorldAccessor` | `NativeComponentBufferRead`, `NativeComponentLookupRead` |
-| Write components | `WorldAccessor` | `NativeComponentBufferWrite`, `NativeComponentLookupWrite` |
-| Add/remove entities | `WorldAccessor` (deferred) | `NativeWorldAccessor` (deferred + sort key) |
-| Move entities | `WorldAccessor` (deferred) | `NativeWorldAccessor` (deferred + sort key) |
-| Read sets | `SetAccessor.Read` | `NativeSetRead` |
-| Write sets | `SetAccessor.Write` | `NativeSetWrite` |
-
 !!! warning
-    `WorldAccessor` is **main-thread only**. Always use `NativeWorldAccessor` and native component types inside jobs.
+    `WorldAccessor` is **main-thread only**. Inside jobs always use `NativeWorldAccessor` and the native read/write types — see [Advanced Job Features](../advanced/advanced-jobs.md) for how to wire them via `[FromWorld]`.
 
-For advanced job features — `[FromWorld]` auto-wiring, native component access types, native set operations, and external job tracking — see [Advanced Job Features](../advanced/advanced-jobs.md).
+For deeper coverage — `[FromWorld]` auto-wiring, cross-template lookup types, native set operations, `[GlobalIndex]`, external job-handle tracking — see [Advanced Job Features](../advanced/advanced-jobs.md). For the parallel iteration pattern itself, see [Queries & Iteration](../data-access/queries-and-iteration.md).

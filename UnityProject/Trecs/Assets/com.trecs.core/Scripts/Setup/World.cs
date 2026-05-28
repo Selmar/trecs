@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using Trecs.Collections;
 using Trecs.Internal;
+using UnityEngine;
 
 namespace Trecs
 {
@@ -18,20 +19,23 @@ namespace Trecs
     /// </para>
     /// <para>
     /// <b>Thread Safety:</b> World is <b>main-thread-only</b>. All methods including
-    /// <c>Tick()</c>, <c>LateTick()</c>, <c>SubmitEntities()</c>, <c>Initialize()</c>,
+    /// <c>Tick()</c>, <c>LateTick()</c>, <c>Submit()</c>, <c>Initialize()</c>,
     /// and <c>Dispose()</c> must be called from the main thread. Job parallelism is
     /// achieved through <see cref="WorldAccessor"/> job scheduling APIs, not by calling
     /// World methods from multiple threads.
     /// </para>
     /// </summary>
-    public class World : IDisposable
+    public sealed class World : IDisposable
     {
-        static readonly TrecsLog _log = new(nameof(World));
+        readonly TrecsLog _log;
 
         readonly EntityQuerier _querier;
         readonly SystemRunner _systemRunner;
         readonly EntitySubmitter _entitySubmitter;
         readonly WorldAccessorRegistry _accessorRegistry;
+        readonly SerializerRegistry _serializerRegistry;
+        readonly ComponentArraySerializerRegistry _componentArraySerializerRegistry;
+        IAccessRecorder _accessRecorder;
         readonly WorldSettings _settings;
         readonly Rng _fixedRng;
         readonly Rng _variableUpdateRng;
@@ -40,14 +44,16 @@ namespace Trecs
         readonly EventsManager _eventsManager;
         readonly EcsHeapAllocator _heapAllocator;
         readonly EcsStructuralOps _structuralOps;
-        readonly DisposeGroup _eventSubscriptions = new();
         readonly BlobCache _blobCache;
+        readonly NativeBlobBoxPool _nativeBlobBoxPool;
         readonly InterpolatedPreviousSaverManager _interpolatedPreviousSaverManager;
         readonly ComponentStore _componentStore;
         readonly SystemLoader _systemLoader;
+        readonly SystemEnableState _systemEnableState = new();
         readonly List<ISystem> _systems;
 
-        bool _hasTriggeredAllRemoveEvents;
+        bool _hasRemovedAllEntities;
+        bool _initializeCompleted;
         bool _systemAddLocked;
         int _accessorIdCounter = 1; // Start at 1 because zero can be like null
         EntityHandle? _globalEntityHandle;
@@ -56,15 +62,16 @@ namespace Trecs
         readonly SetStore _setStore;
 
         internal World(
+            TrecsLog log,
             SetStore setStore,
             EntityInputQueue entityInputQueue,
             SystemRunner systemRunner,
             UniqueHeap uniqueHeap,
-            FrameScopedUniqueHeap frameScopedUniqueHeap,
-            FrameScopedSharedHeap frameScopedSharedHeap,
-            FrameScopedNativeSharedHeap nativeFrameScopedSharedHeap,
-            NativeUniqueHeap nativeUniqueHeap,
-            FrameScopedNativeUniqueHeap frameScopedNativeUniqueHeap,
+            NativeHeap nativeUniqueChunkStore,
+            InputNativeUniqueHeap inputNativeUniqueHeap,
+            InputNativeSharedHeap inputNativeSharedHeap,
+            InputSharedHeap inputSharedHeap,
+            InputUniqueHeap inputUniqueHeap,
             WorldAccessorRegistry accessorRegistry,
             SystemLoader systemLoader,
             EntitySubmitter entitySubmitter,
@@ -75,11 +82,15 @@ namespace Trecs
             SharedHeap sharedHeap,
             WorldSettings settings,
             BlobCache blobCache,
+            NativeBlobBoxPool nativeBlobBoxPool,
             InterpolatedPreviousSaverManager interpolatedPreviousSaverManager,
             ComponentStore componentStore,
-            List<ISystem> systems
+            List<ISystem> systems,
+            SerializerRegistry serializerRegistry,
+            ComponentArraySerializerRegistry componentArraySerializerRegistry
         )
         {
+            _log = log;
             _setStore = setStore;
             _entityInputQueue = entityInputQueue;
             _systemLoader = systemLoader;
@@ -90,8 +101,10 @@ namespace Trecs
             _querier = entitiesDb;
             _componentStore = componentStore;
             _eventsManager = eventsManager;
+            TrecsDebugAssert.IsNotNull(nativeBlobBoxPool);
             _settings = settings ?? new WorldSettings();
             _blobCache = blobCache;
+            _nativeBlobBoxPool = nativeBlobBoxPool;
             _fixedRng = new Rng(_settings.RandomSeed);
             _interpolatedPreviousSaverManager = interpolatedPreviousSaverManager;
 
@@ -104,27 +117,74 @@ namespace Trecs
                 uniqueHeap,
                 sharedHeap,
                 nativeSharedHeap,
-                frameScopedUniqueHeap,
-                frameScopedSharedHeap,
-                nativeFrameScopedSharedHeap,
-                nativeUniqueHeap,
-                frameScopedNativeUniqueHeap
+                nativeUniqueChunkStore,
+                inputNativeUniqueHeap,
+                inputNativeSharedHeap,
+                inputSharedHeap,
+                inputUniqueHeap
             );
 
             _structuralOps = new EcsStructuralOps(
+                log,
                 entitySubmitter,
                 worldInfo,
                 entitiesDb.GetSets(),
                 setStore
             );
+
+            TrecsDebugAssert.IsNotNull(serializerRegistry);
+            _serializerRegistry = serializerRegistry;
+
+            TrecsDebugAssert.IsNotNull(componentArraySerializerRegistry);
+            _componentArraySerializerRegistry = componentArraySerializerRegistry;
         }
+
+        /// <summary>
+        /// The <see cref="SerializerRegistry"/> backing all save / load,
+        /// snapshot, and recording workflows on this world. Pre-populated
+        /// with the built-in primitive, math, ECS, and recording-metadata
+        /// serializers. Register additional <c>ISerializer&lt;T&gt;</c>
+        /// implementations for any managed type stored on the heap
+        /// (<c>SharedPtr&lt;T&gt;</c>, <c>UniquePtr&lt;T&gt;</c>, etc.);
+        /// blittable types can wrap a <see cref="Trecs.Serialization.BlitSerializer{T}"/>.
+        /// Registrations made before <see cref="Initialize"/> are picked up
+        /// by all editor tooling; registering later is still fine for
+        /// runtime save / load.
+        /// </summary>
+        public SerializerRegistry SerializerRegistry => _serializerRegistry;
+
+        /// <summary>
+        /// The <see cref="ComponentArraySerializerRegistry"/> for this world.
+        /// Register <see cref="IComponentArraySerializer{T}"/> implementations
+        /// here to override how the component array of a given component type
+        /// is serialized during snapshots, recordings, and checksums — for
+        /// example to skip transient single-frame state, to reset a runtime
+        /// handle on load, or to walk a native container that can't be
+        /// byte-blitted. Empty by default.
+        /// </summary>
+        public ComponentArraySerializerRegistry ComponentArraySerializerRegistry =>
+            _componentArraySerializerRegistry;
 
         public bool IsDisposed
         {
             get { return _isDisposed; }
         }
 
-        internal BlobCache BlobCache
+        /// <summary>
+        /// Optional human-readable name for this world. Surfaced by editor tooling
+        /// (e.g. the World dropdown in <c>TrecsPlayerWindow</c>) when present.
+        /// Null by default.
+        /// </summary>
+        public string DebugName { get; set; }
+
+        /// <summary>
+        /// The single <see cref="TrecsLog"/> instance shared by this world and every
+        /// framework class it owns. User systems should obtain it via
+        /// <see cref="WorldAccessor.Log"/> rather than this property.
+        /// </summary>
+        public TrecsLog Log => _log;
+
+        public BlobCache BlobCache
         {
             get { return _blobCache; }
         }
@@ -144,18 +204,14 @@ namespace Trecs
             get { return _setStore; }
         }
 
-        public ISimpleObservable SubmissionCompletedEvent =>
-            _entitySubmitter.SubmissionCompletedEvent;
-
         internal WorldAccessor GetAccessorById(int id) => _accessorRegistry.GetAccessorById(id);
 
-        internal ReadOnlyDenseDictionary<ISystem, WorldAccessor> ExecuteAccessors =>
+        internal Dictionary<ISystem, WorldAccessor> ExecuteAccessors =>
             _accessorRegistry.ExecuteAccessors;
 
-        internal ReadOnlyDenseDictionary<int, WorldAccessor> AllAccessors =>
-            _accessorRegistry.AllAccessors;
+        internal ReadOnlyIterableDictionary<int, WorldAccessor> AccessorsById =>
+            _accessorRegistry.AccessorsById;
 
-        // Expose WorldInfo since this is often needed inside the accessor declaration method
         public WorldInfo WorldInfo
         {
             get { return _worldInfo; }
@@ -166,9 +222,46 @@ namespace Trecs
         {
             get
             {
-                Assert.That(!_isDisposed);
+                TrecsDebugAssert.That(!_isDisposed);
                 return _systemRunner;
             }
+        }
+
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        internal SystemEnableState SystemEnableState
+        {
+            get
+            {
+                TrecsDebugAssert.That(!_isDisposed);
+                return _systemEnableState;
+            }
+        }
+
+        /// <summary>
+        /// Returns the registry entry for every system in this world, in registration
+        /// order. The returned list is stable for the lifetime of the world; indices
+        /// match <see cref="SystemEntry.DeclarationIndex"/> and can be used with
+        /// <see cref="WorldAccessor.SetSystemEnabled"/> /
+        /// <see cref="WorldAccessor.SetSystemPaused"/>. Use this to build custom
+        /// groupings (e.g. "all systems matching some game tag") that drive enable /
+        /// pause calls.
+        /// </summary>
+        public IReadOnlyList<SystemEntry> GetSystems()
+        {
+            TrecsDebugAssert.That(!_isDisposed);
+            return _systemRunner.Systems;
+        }
+
+        /// <summary>
+        /// Returns true iff the system would run on the next tick — i.e. no
+        /// <see cref="EnableChannel"/> has it disabled and it is not paused via
+        /// <see cref="WorldAccessor.SetSystemPaused"/>. Convenience for debug UIs and
+        /// tests that want a single "is this system actually live" query.
+        /// </summary>
+        public bool IsSystemEffectivelyEnabled(int systemIndex)
+        {
+            TrecsDebugAssert.That(!_isDisposed);
+            return _systemEnableState.IsSystemEffectivelyEnabled(systemIndex);
         }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
@@ -176,7 +269,7 @@ namespace Trecs
         {
             get
             {
-                Assert.That(!_isDisposed);
+                TrecsDebugAssert.That(!_isDisposed);
                 return _entitySubmitter;
             }
         }
@@ -186,7 +279,7 @@ namespace Trecs
         {
             get
             {
-                Assert.That(!_isDisposed);
+                TrecsDebugAssert.That(!_isDisposed);
                 return _querier;
             }
         }
@@ -196,7 +289,7 @@ namespace Trecs
         {
             get
             {
-                Assert.That(!_isDisposed);
+                TrecsDebugAssert.That(!_isDisposed);
                 return _eventsManager;
             }
         }
@@ -209,7 +302,7 @@ namespace Trecs
         {
             get
             {
-                Assert.That(!_isDisposed);
+                TrecsDebugAssert.That(!_isDisposed);
                 return _fixedRng;
             }
         }
@@ -222,7 +315,7 @@ namespace Trecs
         {
             get
             {
-                Assert.That(!_isDisposed);
+                TrecsDebugAssert.That(!_isDisposed);
                 return _variableUpdateRng;
             }
         }
@@ -231,7 +324,7 @@ namespace Trecs
         {
             get
             {
-                Assert.That(!_isDisposed);
+                TrecsDebugAssert.That(!_isDisposed);
 
                 if (!_globalEntityHandle.HasValue)
                 {
@@ -247,17 +340,8 @@ namespace Trecs
         {
             get
             {
-                Assert.That(!_isDisposed);
+                TrecsDebugAssert.That(!_isDisposed);
                 return _heapAllocator.UniqueHeap;
-            }
-        }
-
-        internal FrameScopedUniqueHeap FrameScopedUniqueHeap
-        {
-            get
-            {
-                Assert.That(!_isDisposed);
-                return _heapAllocator.FrameScopedUniqueHeap;
             }
         }
 
@@ -265,17 +349,8 @@ namespace Trecs
         {
             get
             {
-                Assert.That(!_isDisposed);
+                TrecsDebugAssert.That(!_isDisposed);
                 return _heapAllocator.NativeSharedHeap;
-            }
-        }
-
-        internal FrameScopedNativeSharedHeap FrameScopedNativeSharedHeap
-        {
-            get
-            {
-                Assert.That(!_isDisposed);
-                return _heapAllocator.FrameScopedNativeSharedHeap;
             }
         }
 
@@ -283,35 +358,26 @@ namespace Trecs
         {
             get
             {
-                Assert.That(!_isDisposed);
+                TrecsDebugAssert.That(!_isDisposed);
                 return _heapAllocator.SharedHeap;
             }
         }
 
-        internal FrameScopedSharedHeap FrameScopedSharedHeap
+        internal InputNativeUniqueHeap InputNativeUniqueHeap
         {
             get
             {
-                Assert.That(!_isDisposed);
-                return _heapAllocator.FrameScopedSharedHeap;
+                TrecsDebugAssert.That(!_isDisposed);
+                return _heapAllocator.InputNativeUniqueHeap;
             }
         }
 
-        internal NativeUniqueHeap NativeUniqueHeap
+        internal NativeHeap NativeUniqueChunkStore
         {
             get
             {
-                Assert.That(!_isDisposed);
-                return _heapAllocator.NativeUniqueHeap;
-            }
-        }
-
-        internal FrameScopedNativeUniqueHeap FrameScopedNativeUniqueHeap
-        {
-            get
-            {
-                Assert.That(!_isDisposed);
-                return _heapAllocator.FrameScopedNativeUniqueHeap;
+                TrecsDebugAssert.That(!_isDisposed);
+                return _heapAllocator.NativeUniqueChunkStore;
             }
         }
 
@@ -319,7 +385,7 @@ namespace Trecs
         {
             get
             {
-                Assert.That(!_isDisposed);
+                TrecsDebugAssert.That(!_isDisposed);
                 return _systemRunner.FixedFrame;
             }
         }
@@ -328,7 +394,7 @@ namespace Trecs
         {
             get
             {
-                Assert.That(!_isDisposed);
+                TrecsDebugAssert.That(!_isDisposed);
                 return _heapAllocator;
             }
         }
@@ -337,89 +403,138 @@ namespace Trecs
         {
             get
             {
-                Assert.That(!_isDisposed);
+                TrecsDebugAssert.That(!_isDisposed);
                 return _structuralOps;
             }
         }
 
-        // Keep for external callers (SceneInitializer, etc.)
-        internal SharedPtr<T> AllocShared<T>(T blob)
-            where T : class
-        {
-            Assert.That(!_isDisposed);
-            return _heapAllocator.AllocShared(blob);
-        }
-
-        internal UniquePtr<T> AllocUnique<T>(T value)
-            where T : class
-        {
-            Assert.That(!_isDisposed);
-            return _heapAllocator.AllocUnique(value);
-        }
-
         ~World()
         {
-            _log.Warning("World class has been garbage collected, don't forget to call Dispose()!");
-            Dispose(false);
+            // Warning only — do NOT call Dispose from the finalizer thread:
+            // Dispose touches managed event subscriptions and frees native heaps,
+            // both of which are unsafe from the GC thread (allocator state can be
+            // mid-mutation on the main thread, AtomicSafetyHandles can fire on the
+            // wrong thread, and event subscriptions can race). Native memory leaks
+            // if the user forgets Dispose() — this warning surfaces the bug; clean
+            // shutdown is the user's responsibility.
+            Debug.LogWarning(
+                "World class has been garbage collected, don't forget to call Dispose()!"
+            );
         }
 
         /// <summary>
-        /// Fires all registered remove-event observers for every existing entity without actually
-        /// removing them. Call this before <see cref="Dispose"/> when
-        /// <see cref="WorldSettings.TriggerRemoveEventsOnDispose"/> is <c>false</c> and you need
-        /// cleanup callbacks to run while accessors are still valid.
+        /// Fires reactive <c>OnRemoved</c> observers for every non-global entity and zeros
+        /// out the per-group entity counts so subsequent queries see an empty world.
+        /// The backing component storage is not freed — the heap allocator tears it down
+        /// during <see cref="Dispose"/>; this method only flips the logical view.
+        /// <para>
+        /// The global singleton entity is intentionally untouched: its lifecycle is
+        /// co-terminus with the <see cref="World"/>, not with normal entity removal, so
+        /// firing <c>OnRemoved</c> for it would lie to subscribers, and zeroing its
+        /// count would break the user contract that the global entity remains queryable
+        /// and mutable from <c>OnShutdown</c>.
+        /// </para>
+        /// <para>
+        /// Called automatically from <see cref="Dispose"/> before system
+        /// <c>OnShutdown</c> hooks run. Can also be called manually earlier if you
+        /// need cleanup callbacks to fire at a specific point while accessors are
+        /// still valid — calling it twice is guarded by an assertion.
+        /// </para>
         /// </summary>
-        public void TriggerAllRemoveEvents()
+        public void RemoveAllEntities()
         {
-            Assert.That(!_hasTriggeredAllRemoveEvents);
-            _hasTriggeredAllRemoveEvents = true;
+            if (_hasRemovedAllEntities)
+            {
+                return;
+            }
+            _hasRemovedAllEntities = true;
 
-            // Note here that we do not actually remove in this case -
-            // We just trigger the remove events
-            Assert.That(
-                _componentStore.GroupEntityComponentsDB.ContainsKey(_worldInfo.GlobalGroup)
+            TrecsDebugAssert.That(
+                !_worldInfo.GlobalGroup.IsNull
+                    && _worldInfo.GlobalGroup.Index < _componentStore.GroupEntityComponentsDB.Length
             );
 
-            foreach (
-                var (group, groupRemovedObservers) in _eventsManager.ReactiveOnRemovedObservers
-            )
+            var globalGroup = _worldInfo.GlobalGroup;
+
+            // Pass 1: fire OnRemoved for every observed non-global group.
+            foreach (var (group, groupRemovedSubject) in _eventsManager.ReactiveOnRemovedObservers)
             {
+                if (group == globalGroup)
+                {
+                    continue;
+                }
+
                 var count = _querier.CountEntitiesInGroup(group);
 
                 if (count > 0)
                 {
-                    var rangeValues = new EntityRange(0, count);
-
-                    for (var i = 0; i < groupRemovedObservers.Count; i++)
-                    {
-                        groupRemovedObservers[i].Observer(group, rangeValues);
-                    }
+                    groupRemovedSubject.Invoke(new EntityRange(0, count));
                 }
             }
 
-            _log.Debug("Called all ECS remove callbacks for all {} groups", _worldInfo.AllGroups);
+            // Pass 2: zero out per-component-array counts on every non-global group, so any
+            // Query() / Count() / [ForEachEntity] call from a later OnShutdown hook sees an
+            // empty world. Component storage is left allocated; the heap allocator frees it
+            // during the rest of Dispose. We must iterate ALL groups here (not just observed
+            // ones) — a group with zero OnRemoved observers still needs its count zeroed so
+            // non-reactive queries return empty too.
+            var groupComponentsDB = _componentStore.GroupEntityComponentsDB;
+            var globalGroupIndex = globalGroup.Index;
+            for (int g = 0; g < groupComponentsDB.Length; g++)
+            {
+                if (g == globalGroupIndex)
+                {
+                    continue;
+                }
+
+                foreach (var (_, componentArray) in groupComponentsDB[g])
+                {
+                    componentArray.SetCount(0);
+                }
+            }
+
+            _log.Debug(
+                "Removed all non-global entities for all {0} groups",
+                _worldInfo.AllGroups.Count
+            );
         }
 
-        void Dispose(bool _)
+        public void Dispose()
         {
-            Assert.That(!_isDisposed, "Attempted to dispose WorldAccessor multiple times");
+            TrecsDebugAssert.That(!_isDisposed, "Attempted to dispose World multiple times");
 
-#if DEBUG && TRECS_IS_PROFILING
+            WorldRegistry.Unregister(this);
+
+#if DEBUG && !TRECS_IS_PROFILING
             if (_settings.WarnOnUnusedTemplates)
             {
                 WarnOnUnusedTemplates();
             }
 #endif
 
-            if (_settings.TriggerRemoveEventsOnDispose)
+            if (_initializeCompleted)
             {
-                TriggerAllRemoveEvents();
+                RemoveAllEntities();
             }
 
-            _entityInputQueue.Dispose();
+            if (_initializeCompleted)
+            {
+                CallSystemShutdownHooks();
+            }
 
-            _eventSubscriptions.Dispose();
+            _eventsManager.ShutdownEvent.Invoke();
+
+            // The input queue is a peer of the heaps and component store, not
+            // a leaf that should die first. Keep it alive across SystemRunner
+            // teardown so any code path reachable from OnShutdown or from the
+            // job drain in SystemRunner.Dispose() can still touch it without
+            // hitting "already disposed". Tearing it down before SystemRunner
+            // works today only because no in-tree code path needs the queue
+            // after OnShutdown has run — that's a contract every future hook
+            // author would otherwise have to remember.
             _systemRunner.Dispose();
+            _entityInputQueue.Dispose();
+            _systemEnableState.Dispose();
             _heapAllocator.Dispose();
 
             _entitySubmitter.Dispose();
@@ -428,10 +543,17 @@ namespace Trecs
 
             _blobCache.Dispose();
 
+            // Pool is disposed last — heaps and blob stores both return boxes to it
+            // during their own Dispose, so it must outlive everything that holds boxes.
+            _nativeBlobBoxPool.Dispose();
+
+            _worldInfo.Dispose();
+
             _isDisposed = true;
+            GC.SuppressFinalize(this);
         }
 
-#if DEBUG && TRECS_IS_PROFILING
+#if DEBUG && !TRECS_IS_PROFILING
         void WarnOnUnusedTemplates()
         {
             var usedGroups = _entitySubmitter._groupsWithEntitiesEverAdded;
@@ -459,7 +581,7 @@ namespace Trecs
                 if (!anyGroupUsed)
                 {
                     _log.Warning(
-                        "Template '{}' was registered but no entities were ever created in any of its groups",
+                        "Template '{0}' was registered but no entities were ever created in any of its groups",
                         resolvedTemplate.DebugName
                     );
                 }
@@ -467,29 +589,18 @@ namespace Trecs
         }
 #endif
 
-        public void Dispose()
-        {
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
-
         void WarmupGroups()
         {
-            using (TrecsProfiling.Start("Preallocating Groups"))
-            {
-                foreach (var group in _worldInfo.AllGroups)
-                {
-                    var _ = _entitySubmitter.GetOrAddDBGroup(group);
-                    var template = _worldInfo.GetResolvedTemplateForGroup(group);
+            // Per-group component-array slots are now materialized lazily —
+            // the first entity into a group triggers the IComponentArray
+            // creation via ComponentStore.GetOrAddTypeSafeDictionary, the
+            // staging buffer slots via EntityFactory.AddEntity, and the
+            // reference list growth via the locator. Skipping the eager
+            // warmup avoids O(groups × components) startup allocations
+            // for templates with many partitions; the per-group startup
+            // cost is paid only for groups that actually get populated.
 
-                    using (TrecsProfiling.Start("EntitySubmitter.Preallocate (group {})", group))
-                    {
-                        _entitySubmitter.Preallocate(group, 1, template.ComponentBuilders);
-                    }
-                }
-            }
-
-            _log.Debug("Initialized {} groups", _worldInfo.AllGroups.Count);
+            _log.Debug("Registered {0} groups (lazy buffer init)", _worldInfo.AllGroups.Count);
 
             using (TrecsProfiling.Start("EntitySubmitter.FreezeConfiguration"))
             {
@@ -497,12 +608,13 @@ namespace Trecs
             }
         }
 
-        // NOTE: Usually should not need to call this
-        public void SubmitEntities()
+        // Prefer letting SystemRunner call Submit() automatically between system phases.
+        // Manual calls are only needed for pre-Initialize entity setup or test harnesses.
+        public void Submit()
         {
-            Assert.That(!_isDisposed);
-            Assert.That(!_systemRunner.IsExecutingSystems);
-            _entitySubmitter.SubmitEntities();
+            TrecsDebugAssert.That(!_isDisposed);
+            TrecsDebugAssert.That(!_systemRunner.IsExecutingSystems);
+            _entitySubmitter.Submit();
         }
 
         void ScheduleBuildGlobalEntity()
@@ -512,7 +624,7 @@ namespace Trecs
             if (_log.IsTraceEnabled())
             {
                 _log.Trace(
-                    "Constructing global entity with components {}",
+                    "Constructing global entity with components {0}",
                     globalTemplate
                         .ComponentDeclarations.Select(c => c.ComponentType.ToString())
                         .Join(", ")
@@ -524,7 +636,7 @@ namespace Trecs
             using (TrecsProfiling.Start("AddEntity"))
             {
                 initializer = _entitySubmitter.AddEntity(
-                    _worldInfo.GlobalEntityIndex.Group,
+                    _worldInfo.GlobalEntityIndex.GroupIndex,
                     globalTemplate.ComponentBuilders,
                     globalTemplate.DebugName
                 );
@@ -541,9 +653,9 @@ namespace Trecs
             foreach (var system in _systems)
             {
 #if DEBUG
-                Assert.That(
+                TrecsDebugAssert.That(
                     seen.Add(system),
-                    "System {} was added multiple times to the world",
+                    "System {0} was added multiple times to the world",
                     system.GetType()
                 );
 #endif
@@ -551,11 +663,67 @@ namespace Trecs
                 var systemInternal = (ISystemInternal)system;
                 if (systemInternal.World == null)
                 {
-                    systemInternal.World = CreateAccessor(system.GetType());
+                    systemInternal.World = CreateAccessorForSystem(system.GetType());
                 }
+            }
+        }
 
+        // OnReady runs in runtime execute order: EarlyPresentation → Input → Fixed → Presentation → LatePresentation,
+        // with [ExecuteAfter]/[ExecuteBefore]/[ExecutePriority] applied within each phase.
+        void CallSystemReadyHooks(SystemLoader.LoadInfo loadInfo)
+        {
+            void CallReady(int globalIndex)
+            {
+                var systemInternal = (ISystemInternal)loadInfo.Systems[globalIndex].System;
                 systemInternal.Ready();
             }
+
+            foreach (var globalIndex in loadInfo.SortedEarlyPresentationSystems)
+            {
+                CallReady(globalIndex);
+            }
+            foreach (var globalIndex in loadInfo.SortedInputSystems)
+            {
+                CallReady(globalIndex);
+            }
+            foreach (var globalIndex in loadInfo.SortedFixedSystems)
+            {
+                CallReady(globalIndex);
+            }
+            foreach (var globalIndex in loadInfo.SortedPresentationSystems)
+            {
+                CallReady(globalIndex);
+            }
+            foreach (var globalIndex in loadInfo.SortedLatePresentationSystems)
+            {
+                CallReady(globalIndex);
+            }
+        }
+
+        // Strict reverse of CallSystemReadyHooks: phases in reverse, and within each
+        // phase, sorted systems in reverse. Driven from _systemRunner because loadInfo
+        // is not retained past Initialize.
+        void CallSystemShutdownHooks()
+        {
+            void CallShutdown(int globalIndex)
+            {
+                var systemInternal = (ISystemInternal)_systemRunner.Systems[globalIndex].System;
+                systemInternal.Shutdown();
+            }
+
+            void IterateReverse(IReadOnlyList<int> sorted)
+            {
+                for (int i = sorted.Count - 1; i >= 0; i--)
+                {
+                    CallShutdown(sorted[i]);
+                }
+            }
+
+            IterateReverse(_systemRunner.SortedLatePresentationSystems);
+            IterateReverse(_systemRunner.SortedPresentationSystems);
+            IterateReverse(_systemRunner.SortedFixedSystems);
+            IterateReverse(_systemRunner.SortedInputSystems);
+            IterateReverse(_systemRunner.SortedEarlyPresentationSystems);
         }
 
         /// <summary>
@@ -564,13 +732,13 @@ namespace Trecs
         /// </summary>
         public void AddSystem(ISystem system)
         {
-            Assert.That(!_systemAddLocked);
+            TrecsDebugAssert.That(!_systemAddLocked);
             _systems.Add(system);
         }
 
         public void AddSystems(IEnumerable<ISystem> systems)
         {
-            Assert.That(!_systemAddLocked);
+            TrecsDebugAssert.That(!_systemAddLocked);
             _systems.AddRange(systems);
         }
 
@@ -580,19 +748,18 @@ namespace Trecs
         /// </summary>
         public void Initialize()
         {
-            Assert.That(!_isDisposed);
-            Assert.That(!_hasInitialized);
+            TrecsDebugAssert.That(!_isDisposed);
+            TrecsDebugAssert.That(!_hasInitialized);
             _hasInitialized = true;
 
-            _entityInputQueue.Accessor = CreateAccessor("EntityInputQueue");
+            _entityInputQueue.Accessor = CreateAccessor(
+                AccessorRole.Unrestricted,
+                "EntityInputQueue"
+            );
 
             _systemRunner.SetEventSubjects(_eventsManager);
 
-            _eventsManager
-                .DeserializeCompletedEvent.Subscribe(_systemRunner.OnEcsDeserializeCompleted)
-                .AddTo(_eventSubscriptions);
-
-            _entityInputQueue.SetPostApplyInputsSubject(_eventsManager.PostApplyInputsEvent);
+            _entityInputQueue.SetInputsAppliedSubject(_eventsManager.InputsAppliedEvent);
 
             _systemAddLocked = true;
             InitializeSystemAccessors(); // This has to happen before LoadSystems
@@ -600,9 +767,11 @@ namespace Trecs
 
             var loadInfo = _systemLoader.LoadSystems(this, _systems);
 
+            _systemEnableState.Initialize(loadInfo.Systems.Count);
+
             using (TrecsProfiling.Start("SystemRunner.Initialize"))
             {
-                _systemRunner.Initialize(this, loadInfo);
+                _systemRunner.Initialize(this, loadInfo, _systemEnableState);
             }
 
             _interpolatedPreviousSaverManager.Initialize(this);
@@ -619,23 +788,34 @@ namespace Trecs
 
             using (TrecsProfiling.Start("SubmitGlobalEntity"))
             {
-                _entitySubmitter.SubmitEntities();
+                _entitySubmitter.Submit();
             }
+
+            CallSystemReadyHooks(loadInfo);
+
+            _initializeCompleted = true;
+
+            // Register only after Initialize completes so editor-tool listeners
+            // (TrecsEntitiesWindow et al.) never see a partially-built world.
+            // Per-group component dictionaries are materialized lazily on
+            // first entity creation, but CountEntitiesInGroup and similar
+            // queries already handle the empty-group case.
+            WorldRegistry.Register(this);
         }
 
         /// <summary>
-        /// Advances the simulation by one frame. Runs input systems, fixed-update systems (potentially
-        /// multiple times to catch up), and variable-update systems, then ticks the blob cache.
+        /// Advances the simulation by one frame. Runs input systems, fixed-update systems
+        /// (potentially multiple times to catch up), and variable-update systems. Blob-cache
+        /// eviction is driven inline on the alloc / handle-dispose hot path
+        /// (see <see cref="BlobCache"/>) and does not require a per-frame tick.
         /// </summary>
         public void Tick()
         {
-            Assert.That(!_isDisposed);
+            TrecsDebugAssert.That(!_isDisposed);
             using (TrecsProfiling.Start("SystemRunner.Tick"))
             {
                 _systemRunner.Tick();
             }
-
-            _blobCache.Tick();
         }
 
         /// <summary>
@@ -643,7 +823,7 @@ namespace Trecs
         /// </summary>
         public void LateTick()
         {
-            Assert.That(!_isDisposed);
+            TrecsDebugAssert.That(!_isDisposed);
             using (TrecsProfiling.Start("SystemRunner.LateTick"))
             {
                 _systemRunner.LateTick();
@@ -658,13 +838,21 @@ namespace Trecs
         }
 
         /// <summary>
-        /// Creates a standalone <see cref="WorldAccessor"/> not bound to any system. Useful for
-        /// application-level code that needs to interact with the ECS world outside of systems.
+        /// Creates a standalone <see cref="WorldAccessor"/> with the given <see cref="AccessorRole"/>.
+        /// The role controls component read/write rules, structural-change rules, and heap-allocation
+        /// rules — see <see cref="AccessorRole"/> for the full matrix. Pick <see cref="AccessorRole.Unrestricted"/>
+        /// only for non-system code (lifecycle hooks, debug tooling, event callbacks, networking,
+        /// scripting bridges); runtime gameplay code that runs as part of system execution should
+        /// declare a real role so rule violations surface loudly. Manually-created accessors never
+        /// gain input-system permissions — input-queue access is only granted to system-owned
+        /// accessors created from a system declared with <c>[ExecuteIn(SystemPhase.Input)]</c>.
         /// </summary>
         public WorldAccessor CreateAccessor(
+            AccessorRole role,
             string debugName = null,
 #if DEBUG
             [CallerFilePath] string callerFile = "",
+            [CallerLineNumber] int callerLine = 0,
 #endif
             [CallerMemberName] string callerMember = ""
         )
@@ -673,60 +861,62 @@ namespace Trecs
             debugName ??= Path.GetFileNameWithoutExtension(callerFile) + "." + callerMember;
 #else
             debugName ??= callerMember;
+            string callerFile = string.Empty;
+            int callerLine = 0;
 #endif
             return CreateAccessorImpl(
-                isInputSystem: false,
-                isFixedSystem: false,
-                debugName: debugName
+                role: role,
+                isInput: false,
+                debugName: debugName,
+                createdAtFile: callerFile,
+                createdAtLine: callerLine
             );
         }
 
         /// <summary>
-        /// Creates a <see cref="WorldAccessor"/> configured for the given system type, inspecting
-        /// its attributes to determine update phase (fixed, variable, or input).
+        /// Framework-internal: creates a <see cref="WorldAccessor"/> for an
+        /// <see cref="ISystem"/> by reflecting on the system type's
+        /// <see cref="ExecuteInAttribute"/>. End-user code should not call this —
+        /// systems get their accessor automatically from
+        /// <see cref="Initialize"/>; non-system code should use
+        /// <see cref="CreateAccessor(AccessorRole, string, string, int, string)"/>
+        /// with an explicit role.
         /// </summary>
-        public WorldAccessor CreateAccessor(Type ownerType)
+        internal WorldAccessor CreateAccessorForSystem(Type systemType)
         {
-            var debugName = ownerType.GetPrettyName();
+            var debugName = systemType.GetPrettyName();
 
-            var isVariableUpdate =
-                ownerType.GetCustomAttributes(typeof(VariableUpdateAttribute), true).Length > 0
-                || ownerType.GetCustomAttributes(typeof(LateVariableUpdateAttribute), true).Length
-                    > 0;
+            var executeInAttribute = (ExecuteInAttribute)
+                systemType.GetCustomAttributes(typeof(ExecuteInAttribute), true).SingleOrDefault();
 
-            var isInputSystem =
-                ownerType.GetCustomAttributes(typeof(InputSystemAttribute), true).Length > 0;
+            var phase = executeInAttribute?.Phase ?? SystemPhase.Fixed;
 
-            var isFixedSystem = !isVariableUpdate && !isInputSystem;
-
+            // System-owned accessors take their identity from the system
+            // type — no source-line origin to capture.
             return CreateAccessorImpl(
-                isInputSystem: isInputSystem,
-                isFixedSystem: isFixedSystem,
-                debugName: debugName
+                role: phase.ToAccessorRole(),
+                isInput: phase == SystemPhase.Input,
+                debugName: debugName,
+                createdAtFile: string.Empty,
+                createdAtLine: 0
             );
-        }
-
-        /// <summary>
-        /// Creates an accessor configured for the given system type, inspecting its attributes
-        /// to determine update phase (fixed, variable, input).
-        /// </summary>
-        public WorldAccessor CreateAccessor<T>()
-        {
-            return CreateAccessor(typeof(T));
         }
 
         internal WorldAccessor CreateAccessorImpl(
-            bool isInputSystem,
-            bool isFixedSystem,
-            string debugName
+            AccessorRole role,
+            bool isInput,
+            string debugName,
+            string createdAtFile,
+            int createdAtLine
         )
         {
-            Assert.IsNotNull(debugName);
+            TrecsDebugAssert.IsNotNull(debugName);
 
             var accessor = new WorldAccessor(
                 ClaimAccessorIdInternal(),
                 this,
                 systemRunnerInfo: _systemRunner,
+                systemEnableState: _systemEnableState,
                 heapAllocator: _heapAllocator,
                 structuralOps: _structuralOps,
                 entitiesDb: _querier,
@@ -735,14 +925,38 @@ namespace Trecs
                 fixedRng: _fixedRng,
                 variableRng: _variableUpdateRng,
                 entityInputQueue: _entityInputQueue,
-                isFixedSystem: isFixedSystem,
-                isInputSystem: isInputSystem,
-                debugName: debugName
+                role: role,
+                isInput: isInput,
+                debugName: debugName,
+                createdAtFile: createdAtFile,
+                createdAtLine: createdAtLine
             );
 
             _accessorRegistry.RegisterById(accessor);
 
+            if (_accessRecorder != null)
+            {
+                accessor.AccessRecorder = _accessRecorder;
+            }
+
             return accessor;
+        }
+
+        /// <summary>
+        /// Installs (or removes, if <c>null</c>) an
+        /// <see cref="IAccessRecorder"/> that the world hands to every
+        /// accessor — current and future. Intended for editor / debug tooling
+        /// that wants per-system read/write and add/remove/move maps. Pass
+        /// <c>null</c> to detach.
+        /// </summary>
+        public void SetAccessRecorder(IAccessRecorder recorder)
+        {
+            _accessRecorder = recorder;
+            foreach (var kvp in _accessorRegistry.AccessorsById)
+            {
+                kvp.Value.AccessRecorder = recorder;
+            }
+            _entitySubmitter.SetAccessRecorder(recorder);
         }
     }
 }
@@ -801,21 +1015,15 @@ namespace Trecs.Internal
         }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public static NativeUniqueHeap GetNativeUniqueHeap(this World world)
+        public static InputNativeUniqueHeap GetInputNativeUniqueHeap(this World world)
         {
-            return world.NativeUniqueHeap;
+            return world.InputNativeUniqueHeap;
         }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public static FrameScopedNativeUniqueHeap GetFrameScopedNativeUniqueHeap(this World world)
+        internal static NativeHeap GetNativeUniqueChunkStore(this World world)
         {
-            return world.FrameScopedNativeUniqueHeap;
-        }
-
-        [EditorBrowsable(EditorBrowsableState.Never)]
-        public static BlobCache GetBlobCache(this World world)
-        {
-            return world.BlobCache;
+            return world.NativeUniqueChunkStore;
         }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
@@ -825,17 +1033,17 @@ namespace Trecs.Internal
         }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public static ReadOnlyDenseDictionary<ISystem, WorldAccessor> GetExecuteAccessors(
-            this World world
-        )
+        public static Dictionary<ISystem, WorldAccessor> GetExecuteAccessors(this World world)
         {
             return world.ExecuteAccessors;
         }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public static ReadOnlyDenseDictionary<int, WorldAccessor> GetAllAccessors(this World world)
+        public static ReadOnlyIterableDictionary<int, WorldAccessor> GetAccessorsById(
+            this World world
+        )
         {
-            return world.AllAccessors;
+            return world.AccessorsById;
         }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
@@ -853,15 +1061,23 @@ namespace Trecs.Internal
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static WorldAccessor CreateAccessorExplicit(
             this World world,
-            bool isInputSystem,
-            bool isFixedSystem,
-            string debugName
+            AccessorRole role,
+            bool isInput,
+            string debugName,
+            [CallerFilePath] string callerFile = "",
+            [CallerLineNumber] int callerLine = 0
         )
         {
+            // Required role + isInput arguments (no defaults) so framework-internal
+            // callers — Lua system bridges, custom system loaders — have to declare
+            // exactly what they're constructing. isInput should be true iff the
+            // owning system is in SystemPhase.Input.
             return world.CreateAccessorImpl(
-                isInputSystem: isInputSystem,
-                isFixedSystem: isFixedSystem,
-                debugName: debugName
+                role: role,
+                isInput: isInput,
+                debugName: debugName,
+                createdAtFile: callerFile,
+                createdAtLine: callerLine
             );
         }
     }

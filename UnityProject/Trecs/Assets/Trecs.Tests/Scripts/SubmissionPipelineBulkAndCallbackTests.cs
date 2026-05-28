@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Unity.Collections;
 using NAssert = NUnit.Framework.Assert;
 
 namespace Trecs.Tests
@@ -36,12 +37,12 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 99 })
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             // Bulk remove all PartitionA, individually remove the alpha entity
             a.RemoveEntitiesWithTags(PartitionA);
             a.RemoveEntity(alphaHandle);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(0, a.CountEntitiesWithTags(PartitionA));
             NAssert.AreEqual(0, a.CountEntitiesWithTags(TestTags.Alpha));
@@ -66,14 +67,14 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             // Move entity 0 to PartitionB, then bulk remove PartitionA
             // The bulk remove sees entity 0 still in PartitionA and removes it,
             // superseding the move.
-            a.MoveTo(handles[0].ToIndex(a), PartitionB);
+            a.SetTag<TestPartitionB>(handles[0].ToIndex(a));
             a.RemoveEntitiesWithTags(PartitionA);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(0, a.CountEntitiesWithTags(PartitionA));
             NAssert.AreEqual(
@@ -100,14 +101,15 @@ namespace Trecs.Tests
                     .Set(new TestVec())
                     .AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             // Bulk remove all, then native add new
             a.RemoveEntitiesWithTags(PartitionA);
-            var init = nativeEcs.AddEntity(PartitionA, sortKey: 0);
+            using var refs = a.ReserveEntityHandles(1, Allocator.Temp);
+            var init = nativeEcs.AddEntity(PartitionA, sortKey: 0, refs[0]);
             init.Set(new TestInt { Value = 777 });
             init.Set(new TestVec());
-            a.SubmitEntities();
+            a.Submit();
 
             // Removes happen first (in SingleSubmission), then adds.
             // The new entity should exist.
@@ -131,12 +133,12 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             // Remove entity 0 individually, then bulk remove all PartitionA
             a.RemoveEntity(handles[0]);
             a.RemoveEntitiesWithTags(PartitionA);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(0, a.CountEntitiesWithTags(PartitionA));
         }
@@ -157,7 +159,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 1 })
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             EntityHandle addedByCallback = default;
             var subscription = a
@@ -173,12 +175,12 @@ namespace Trecs.Tests
                 );
 
             a.RemoveEntity(handle);
-            a.SubmitEntities();
+            a.Submit();
 
             // Original removed, callback-added entity exists
-            NAssert.IsFalse(a.EntityExists(handle));
+            NAssert.IsFalse(handle.Exists(a));
             NAssert.AreEqual(1, a.CountEntitiesWithTags(TestTags.Alpha));
-            NAssert.IsTrue(a.EntityExists(addedByCallback));
+            NAssert.IsTrue(addedByCallback.Exists(a));
             NAssert.AreEqual(999, a.Component<TestInt>(addedByCallback).Read.Value);
 
             subscription.Dispose();
@@ -196,7 +198,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 0 })
                 .Set(new TestVec())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var subscription = a
                 .Events.EntitiesWithTags(PartitionA)
@@ -207,7 +209,7 @@ namespace Trecs.Tests
                         for (int idx = indices.Start; idx < indices.End; idx++)
                         {
                             var ei = new EntityIndex(idx, group);
-                            a.MoveTo(ei, PartitionB);
+                            a.SetTag<TestPartitionB>(ei);
                         }
                     }
                 );
@@ -218,10 +220,10 @@ namespace Trecs.Tests
                 .Set(new TestVec())
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             // The new entity should end up in PartitionB
-            NAssert.IsTrue(a.EntityExists(newHandle));
+            NAssert.IsTrue(newHandle.Exists(a));
             NAssert.AreEqual(42, a.Component<TestInt>(newHandle).Read.Value);
             NAssert.AreEqual(1, a.CountEntitiesWithTags(PartitionB));
 
@@ -241,7 +243,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 1 })
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             EntityHandle handleB = default;
             EntityHandle handleC = default;
@@ -281,11 +283,11 @@ namespace Trecs.Tests
                 );
 
             a.RemoveEntity(handleA);
-            a.SubmitEntities();
+            a.Submit();
 
-            NAssert.IsFalse(a.EntityExists(handleA));
-            NAssert.IsTrue(a.EntityExists(handleB));
-            NAssert.IsTrue(a.EntityExists(handleC));
+            NAssert.IsFalse(handleA.Exists(a));
+            NAssert.IsTrue(handleB.Exists(a));
+            NAssert.IsTrue(handleC.Exists(a));
             NAssert.AreEqual(2, a.CountEntitiesWithTags(TestTags.Alpha));
             NAssert.AreEqual(2, a.Component<TestInt>(handleB).Read.Value);
             NAssert.AreEqual(3, a.Component<TestInt>(handleC).Read.Value);
@@ -315,17 +317,17 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             // Remove entity 0 (causes swap-back of entity 4 to index 0)
             a.RemoveEntity(handles[0]);
-            a.SubmitEntities();
+            a.Submit();
 
             // All remaining handles should still be valid with correct data
-            NAssert.IsFalse(a.EntityExists(handles[0]));
+            NAssert.IsFalse(handles[0].Exists(a));
             for (int i = 1; i < 5; i++)
             {
-                NAssert.IsTrue(a.EntityExists(handles[i]), $"Handle {i} should be valid");
+                NAssert.IsTrue(handles[i].Exists(a), $"Handle {i} should be valid");
                 NAssert.AreEqual(
                     i * 10,
                     a.Component<TestInt>(handles[i]).Read.Value,
@@ -345,19 +347,19 @@ namespace Trecs.Tests
                 .Set(new TestVec())
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
-            a.MoveTo(handle.ToIndex(a), PartitionB);
-            a.SubmitEntities();
+            a.SetTag<TestPartitionB>(handle.ToIndex(a));
+            a.Submit();
 
             // Handle should still work after move
-            NAssert.IsTrue(a.EntityExists(handle));
+            NAssert.IsTrue(handle.Exists(a));
             NAssert.AreEqual(42, a.Component<TestInt>(handle).Read.Value);
 
             // And the index should point to the new group
             var idx = handle.ToIndex(a);
             var groupB = a.WorldInfo.GetSingleGroupWithTags(PartitionB);
-            NAssert.AreEqual(groupB, idx.Group);
+            NAssert.AreEqual(groupB, idx.GroupIndex);
         }
 
         [Test]
@@ -371,12 +373,12 @@ namespace Trecs.Tests
                 .Set(new TestVec())
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             a.RemoveEntity(handle);
-            a.SubmitEntities();
+            a.Submit();
 
-            NAssert.IsFalse(a.EntityExists(handle));
+            NAssert.IsFalse(handle.Exists(a));
             NAssert.IsFalse(handle.TryToIndex(a, out _));
         }
 
@@ -393,10 +395,10 @@ namespace Trecs.Tests
                 .Set(new TestVec())
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             a.RemoveEntity(oldHandle);
-            a.SubmitEntities();
+            a.Submit();
 
             // Add new entity (may reuse internal handle slot)
             var newHandle = a.AddEntity(PartitionA)
@@ -404,10 +406,10 @@ namespace Trecs.Tests
                 .Set(new TestVec())
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
-            NAssert.IsFalse(a.EntityExists(oldHandle), "Old handle should be invalid");
-            NAssert.IsTrue(a.EntityExists(newHandle), "New handle should be valid");
+            NAssert.IsFalse(oldHandle.Exists(a), "Old handle should be invalid");
+            NAssert.IsTrue(newHandle.Exists(a), "New handle should be valid");
             NAssert.AreEqual(2, a.Component<TestInt>(newHandle).Read.Value);
         }
 
@@ -428,7 +430,7 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             // Remove entities at scattered positions
             a.RemoveEntity(handles[1]);
@@ -436,19 +438,19 @@ namespace Trecs.Tests
             a.RemoveEntity(handles[5]);
             a.RemoveEntity(handles[7]);
             a.RemoveEntity(handles[9]);
-            a.SubmitEntities();
+            a.Submit();
 
             // Even-indexed entities should all survive with correct data
             for (int i = 0; i < 10; i += 2)
             {
-                NAssert.IsTrue(a.EntityExists(handles[i]), $"Handle {i} should be valid");
+                NAssert.IsTrue(handles[i].Exists(a), $"Handle {i} should be valid");
                 NAssert.AreEqual(i, a.Component<TestInt>(handles[i]).Read.Value);
             }
 
             // Odd-indexed entities should be invalid
             for (int i = 1; i < 10; i += 2)
             {
-                NAssert.IsFalse(a.EntityExists(handles[i]), $"Handle {i} should be invalid");
+                NAssert.IsFalse(handles[i].Exists(a), $"Handle {i} should be invalid");
             }
         }
 
@@ -469,32 +471,32 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var tracked = handles[3]; // Track entity 3
 
             // Frame 2: Move 0,1 to PartitionB, remove 4
-            a.MoveTo(handles[0].ToIndex(a), PartitionB);
-            a.MoveTo(handles[1].ToIndex(a), PartitionB);
+            a.SetTag<TestPartitionB>(handles[0].ToIndex(a));
+            a.SetTag<TestPartitionB>(handles[1].ToIndex(a));
             a.RemoveEntity(handles[4]);
-            a.SubmitEntities();
+            a.Submit();
 
-            NAssert.IsTrue(a.EntityExists(tracked));
+            NAssert.IsTrue(tracked.Exists(a));
             NAssert.AreEqual(3, a.Component<TestInt>(tracked).Read.Value);
 
             // Frame 3: Remove 2, move 5 to PartitionB
             a.RemoveEntity(handles[2]);
-            a.MoveTo(handles[5].ToIndex(a), PartitionB);
-            a.SubmitEntities();
+            a.SetTag<TestPartitionB>(handles[5].ToIndex(a));
+            a.Submit();
 
-            NAssert.IsTrue(a.EntityExists(tracked));
+            NAssert.IsTrue(tracked.Exists(a));
             NAssert.AreEqual(3, a.Component<TestInt>(tracked).Read.Value);
 
             // Frame 4: Move tracked to PartitionB
-            a.MoveTo(tracked.ToIndex(a), PartitionB);
-            a.SubmitEntities();
+            a.SetTag<TestPartitionB>(tracked.ToIndex(a));
+            a.Submit();
 
-            NAssert.IsTrue(a.EntityExists(tracked));
+            NAssert.IsTrue(tracked.Exists(a));
             NAssert.AreEqual(3, a.Component<TestInt>(tracked).Read.Value);
         }
 
@@ -513,7 +515,7 @@ namespace Trecs.Tests
                 .Set(new TestVec())
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.IsTrue(handle.TryToIndex(a, out var idx));
             NAssert.AreEqual(0, idx.Index);
@@ -530,10 +532,10 @@ namespace Trecs.Tests
                 .Set(new TestVec())
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             a.RemoveEntity(handle);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.IsFalse(handle.TryToIndex(a, out _));
         }

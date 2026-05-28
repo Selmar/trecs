@@ -1,12 +1,12 @@
 # 04 — Predator Prey
 
-Cross-entity relationships using `EntityHandle`. Predators chase prey, and cleanup handlers prevent dangling references.
+Cross-entity references via `EntityHandle`, with cleanup handlers to prevent dangling references.
 
-**Source:** `Samples/04_PredatorPrey/`
+**Source:** `com.trecs.core/Samples~/Tutorials/04_PredatorPrey/`
 
-## What It Does
+## What it does
 
-Predators (red) chase the nearest prey (green). When a predator catches its prey, the prey is removed and a new one spawns. Predators continuously re-target the nearest available prey.
+Predators (red) chase the nearest prey (cyan). On contact, the prey is removed and a new one spawns. Predators re-target the nearest available prey.
 
 ## Schema
 
@@ -26,9 +26,9 @@ public partial struct ApproachingPredator : IEntityComponent
 }
 ```
 
-Plus `Position`, `Velocity`, `Speed`, `MoveDirection`, `GameObjectId`.
+Plus `Speed` and `MoveDirection` from this sample, and `Position` from `Common/`.
 
-### Tags & Templates
+### Tags & templates
 
 ```csharp
 public struct Predator : ITag { }
@@ -36,32 +36,35 @@ public struct Prey : ITag { }
 public struct Movable : ITag { }
 ```
 
-Template inheritance shares common movement components:
+Template inheritance shares common movement components. `Movable` is abstract — it exists only as an `IExtends` base, so registering it directly would trip `TRECS039`. Concrete templates extend it and set their own `PrefabId`:
 
 ```csharp
-// Base template
-public partial class Movable : ITemplate, IHasTags<SampleTags.Movable>
+public abstract partial class Movable
+    : ITemplate,
+        IExtends<CommonTemplates.RenderableGameObject>,
+        ITagged<SampleTags.Movable>
 {
-    public Position Position = default;
-    public MoveDirection MoveDirection = default;
-    public Speed Speed;
-    public GameObjectId GameObjectId;
+    Position Position = default;
+    MoveDirection MoveDirection = default;
+    Speed Speed;
 }
 
-// Predator extends Movable
-public partial class PredatorEntity : ITemplate,
-    IHasTags<SampleTags.Predator>,
-    IExtends<Movable>
+public partial class PredatorEntity
+    : ITemplate,
+        ITagged<SampleTags.Predator>,
+        IExtends<Movable>
 {
-    public ChosenPrey ChosenPrey = default;
+    ChosenPrey ChosenPrey = default;
+    PrefabId PrefabId = new(PredatorPreyPrefabs.Predator);
 }
 
-// Prey extends Movable
-public partial class PreyEntity : ITemplate,
-    IHasTags<SampleTags.Prey>,
-    IExtends<Movable>
+public partial class PreyEntity
+    : ITemplate,
+        ITagged<SampleTags.Prey>,
+        IExtends<Movable>
 {
-    public ApproachingPredator ApproachingPredator = default;
+    ApproachingPredator ApproachingPredator = default;
+    PrefabId PrefabId = new(PredatorPreyPrefabs.Prey);
 }
 ```
 
@@ -96,8 +99,8 @@ foreach (var predator in Predator.Query(World).WithTags<SampleTags.Predator>())
     if (found)
     {
         // Link predator ↔ prey via aspects
-        chosenPrey.ApproachingPredator = predator.EntityIndex.ToHandle(World);
-        predator.ChosenPrey = chosenPrey.EntityIndex.ToHandle(World);
+        chosenPrey.ApproachingPredator = predator.Handle(World);
+        predator.ChosenPrey = chosenPrey.Handle(World);
     }
 }
 
@@ -107,54 +110,23 @@ partial struct Prey : IAspect, IRead<Position>, IWrite<ApproachingPredator> { }
 
 ### PredatorChaseSystem
 
-Steers predators toward their target prey, removes prey on contact.
+Steers predators toward their target prey and removes prey on contact.
 
 ### PreyRespawnSystem
 
 Maintains the prey population by spawning replacements.
 
-### Cleanup Handler
+### GameObject cleanup
 
-When prey are removed, clean up their GameObjects using an `OnRemoved` event handler. Using events for cleanup is good practice for two reasons:
+When prey are removed, the shared `RenderableGameObjectManager` (from `Common/`) automatically tears down the companion GameObject. It subscribes once to `OnAdded` / `OnRemoved` for every entity carrying `PrefabId` + `GameObjectId`, so concrete samples don't write their own cleanup observer — see [Sample 15 — Reactive Events](15-reactive-events.md) for the same `OnRemoved` pattern in user code, and [Entity Events](../entity-management/entity-events.md) for the API. Events are preferred over inline destruction in the lifetime system because:
 
-- **Consistency** — since entity removal is deferred, the entity still exists until the next submission. If not cleaning up via an event, subsequent systems could attempt to use stale data on the about-to-be-removed entity.
-- **Centralized cleanup** — if entities can be removed from multiple places (e.g., caught by a predator, starvation, despawning), the same cleanup handler runs regardless of the removal source.
+- **Consistency** — entity removal is deferred, so the entity still exists until submission. Without an event, later systems could read stale data on an about-to-be-removed entity.
+- **Centralized cleanup** — if entities can be removed from multiple places (caught, starved, despawned), the same handler runs regardless of source.
 
-```csharp
-public partial class CleanupHandlers
-{
-    readonly GameObjectRegistry _gameObjectRegistry;
-    readonly DisposeCollection _disposables = new();
+## Concepts introduced
 
-    public CleanupHandlers(World world, GameObjectRegistry gameObjectRegistry)
-    {
-        World = world.CreateAccessor();
-        _gameObjectRegistry = gameObjectRegistry;
-
-        World.Events
-            .EntitiesWithTags<SampleTags.Prey>()
-            .OnRemoved(OnPreyRemoved)
-            .AddTo(_disposables);
-    }
-
-    WorldAccessor World { get; }
-
-    [ForEachEntity]
-    void OnPreyRemoved(in Prey prey)
-    {
-        var go = _gameObjectRegistry.Resolve(prey.GameObjectId);
-        GameObject.Destroy(go);
-        _gameObjectRegistry.Unregister(prey.GameObjectId);
-    }
-
-    partial struct Prey : IAspect, IRead<GameObjectId, ApproachingPredator> { }
-}
-```
-
-## Concepts Introduced
-
-- **`EntityHandle`** for stable cross-entity references that survive structural changes
-- **Template inheritance** with `IExtends<T>` to share common components
-- **Nested aspect queries** — iterating one entity type while querying another
-- **Entity events** (`OnRemoved`) for cleanup of cross-references
-- **Bidirectional linking** — predator points to prey and prey points back to predator
+- **`EntityHandle`** — stable cross-entity references that survive structural changes. See [Entities](../core/entities.md).
+- **Template inheritance** via `IExtends<T>` to share common components. See [Templates](../core/templates.md).
+- **Nested aspect queries** — iterate one template while querying another. See [Queries & Iteration](../data-access/queries-and-iteration.md).
+- **Entity events** (`OnRemoved`) for cross-reference cleanup. See [Entity Events](../entity-management/entity-events.md).
+- **Bidirectional linking** — predator points to prey and prey points back.

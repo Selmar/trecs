@@ -1,19 +1,19 @@
 # Advanced Job Features
 
-This page covers advanced job APIs for manual job scheduling and low-level component access. For the basics of running jobs with `[WrapAsJob]` and manual job structs, see [Jobs & Burst](../performance/jobs-and-burst.md).
+This page covers advanced job APIs for manual job scheduling and low-level component access. For basics of `[WrapAsJob]` and manual job structs, see [Jobs & Burst](../performance/jobs-and-burst.md).
 
 ## FromWorld — Auto-Wiring Job Fields
 
-The `[FromWorld]` attribute marks fields on a job struct to be automatically populated from the world before scheduling:
+`[FromWorld]` marks fields on a job struct to be auto-populated from the world before scheduling:
 
 ```csharp
 [BurstCompile]
 partial struct MyJob : IJobFor
 {
-    [FromWorld(Tag = typeof(GameTags.Player))]
+    [FromWorld(typeof(GameTags.Player))]
     public NativeComponentBufferRead<Position> Positions;
 
-    [FromWorld(Tag = typeof(GameTags.Player))]
+    [FromWorld(typeof(GameTags.Player))]
     public NativeComponentBufferWrite<Velocity> Velocities;
 
     [FromWorld]
@@ -26,7 +26,7 @@ partial struct MyJob : IJobFor
 }
 ```
 
-### Supported Field Types
+### Supported field types
 
 | Field Type | Purpose | Requires Tag? |
 |-----------|---------|---------------|
@@ -35,16 +35,17 @@ partial struct MyJob : IJobFor
 | `NativeComponentLookupRead<T>` | Read-only lookup across multiple groups | Yes |
 | `NativeComponentLookupWrite<T>` | Writable lookup across multiple groups | Yes |
 | `NativeSetRead<TSet>` | Read-only set access | No |
-| `NativeSetWrite<TSet>` | Writable set access | No |
+| `NativeSetCommandBuffer<TSet>` | Writable set access (deferred) | No |
+| `NativeEntitySetIndices<TSet>` | Per-group entity indices of a set | Yes |
 | `NativeWorldAccessor` | Job-safe world operations | No |
-| `Group` | Group identifier | Yes |
+| `GroupIndex` | Runtime handle for the resolved group | Yes |
 
-### Tag Resolution
+### Tag resolution
 
-Fields that require a tag scope (buffers, lookups, `Group`) can get their tags in two ways:
+Fields that require a tag scope (buffers, lookups, `GroupIndex`, `NativeEntitySetIndices`) can get their tags two ways:
 
-- **Inline** — specify `Tag` or `Tags` directly on the attribute: `[FromWorld(Tag = typeof(GameTags.Player))]`. The tag is baked into the generated code.
-- **At schedule time** — omit `Tag`/`Tags`, and the generated `ScheduleParallel` method will include a `TagSet` parameter that the caller must provide:
+- **Inline** — pass tag types to the attribute constructor: `[FromWorld(typeof(GameTags.Player))]`, or use the named properties `Tag`/`Tags` for the same effect. The tags are baked into the generated code. When an inline tag is present, the generated schedule method still accepts an optional `TagSet?` parameter for that field, allowing the caller to combine extra tags (e.g., a partition tag) at schedule time.
+- **At schedule time** — omit the tag entirely, and the generated `ScheduleParallel` includes a mandatory `TagSet` parameter the caller must provide:
 
 ```csharp
 [BurstCompile]
@@ -57,14 +58,14 @@ partial struct FlexibleJob : IJobFor
 }
 
 // Caller provides the tag at schedule time
-new FlexibleJob().ScheduleParallel(World, TagSet<GameTags.Player>.Value);
+new FlexibleJob().ScheduleParallel(accessor, TagSet<GameTags.Player>.Value);
 ```
 
-This is useful when if the tagset being operated on is not known until runtime, or if you want to reuse the same job struct for multiple tag scopes. The generated `ScheduleParallel` method will have a parameter for each `[FromWorld]` field that doesn't specify tags inline.
+Useful when the tag set is not known until runtime, or when reusing the same job struct for multiple tag scopes. `ScheduleParallel` gets one `TagSet` parameter per `[FromWorld]` field that lacks an inline tag.
 
-Fields that don't require tags (`NativeSetRead`, `NativeSetWrite`, `NativeWorldAccessor`) are populated automatically and never generate schedule parameters.
+Fields that do not require tags (`NativeSetRead`, `NativeSetCommandBuffer`, `NativeWorldAccessor`) are populated automatically and never generate schedule parameters.
 
-## Native Component Access
+## Native component access
 
 ### Buffers — Single Group
 
@@ -81,22 +82,9 @@ ref Velocity vel = ref velocities[i];
 
 ### Lookups — Cross-Group
 
-For accessing components on arbitrary entities across groups:
+For accessing components on arbitrary entities across groups. Lookups are wired into the job struct via `[FromWorld]` and consumed by generated aspect code — you rarely index into them directly. Prefer the higher-level `<Aspect>.NativeFactory` pattern (see [Aspects](../data-access/aspects.md)), which hides the lookup plumbing behind the same aspect interface you use on the main thread.
 
-```csharp
-NativeComponentLookupRead<Health> healthLookup;
-NativeComponentLookupWrite<Damage> damageLookup;
-
-// Access by EntityIndex
-ref readonly Health hp = ref healthLookup[entityIndex];
-ref Damage dmg = ref damageLookup[entityIndex];
-
-// Check existence
-if (healthLookup.Exists(entityIndex)) { ... }
-if (healthLookup.TryGet(entityIndex, out Health hp)) { ... }
-```
-
-## Native Set Operations
+## Native set operations
 
 Sets can be read and modified from jobs:
 
@@ -105,30 +93,48 @@ Sets can be read and modified from jobs:
 NativeSetRead<HighlightedParticle> highlightedRead;
 
 [FromWorld]
-NativeSetWrite<HighlightedParticle> highlightedWrite;
+NativeSetCommandBuffer<HighlightedParticle> highlightedWrite;
 
-// Check membership
-bool isHighlighted = highlightedRead.Exists(entityIndex);
+// Modify (queued, applied after the writer's SetFlushJob — same frame, before any
+// reader job that depends on the set)
+highlightedWrite.Add(handle, world);
+highlightedWrite.Remove(handle, world);
+highlightedWrite.Clear();   // Order-insensitive: wins over any Add/Remove in this writer cycle.
 
-// Modify (thread-safe, immediate within job)
-highlightedWrite.AddImmediate(entityIndex);
-highlightedWrite.RemoveImmediate(entityIndex);
+// Read-side iteration is via TryGetGroupEntry on a per-group basis.
 ```
 
-## External Job Tracking
+## External job tracking
 
-In the rare case where a job is scheduled manually without using the Trecs source generator (e.g., a third-party job or a custom scheduling pattern), you can register it with the world so the [dependency tracker](../performance/dependency-tracking.md) knows about them, using `TrackExternalJob`:
+When a job is scheduled manually without the Trecs source generator (e.g., a third-party job or custom scheduling pattern), register it with the world so the [dependency tracker](../performance/dependency-tracking.md) knows about it, via `TrackExternalJob` on the system's `WorldAccessor`:
 
 ```csharp
 JobHandle handle = myJob.Schedule(count, batchSize);
 
-World.TrackExternalJob(handle)
+accessor.TrackExternalJob(handle)
     .Writes<Position>(TagSet<GameTags.Player>.Value)
     .Reads<Velocity>(TagSet<GameTags.Player>.Value);
 ```
 
-To force-complete jobs before main-thread access:
+To force-complete tracked jobs before main-thread access:
 
 ```csharp
-World.SyncMainThread<Position>(group);
+accessor.SyncMainThread<Position>(group);
 ```
+
+Note that this is a very low-level operation that shouldn't be necessary in most cases.
+
+## Thread-safety cheat sheet
+
+| Operation | Main thread | Jobs |
+|-----------|-------------|------|
+| Read a single component | `handle.Component<T>(world).Read` | `NativeComponentRead<T>` (single entity), `NativeComponentBufferRead<T>` (one group), `NativeComponentLookupRead<T>` (across groups) |
+| Write a single component | `handle.Component<T>(world).Write` | `NativeComponentWrite<T>`, `NativeComponentBufferWrite<T>`, `NativeComponentLookupWrite<T>` |
+| Add / remove / partition-transition entity | `world.AddEntity<T>()` / `handle.Remove(world)` / `handle.SetTag<T>(world)` / `handle.UnsetTag<T>(world)` | `NativeWorldAccessor` (queued until next submission; `AddEntity` takes a `sortKey` for deterministic ordering) |
+| Read a set | `world.Set<T>().Read` | `NativeSetRead<T>` |
+| Mutate a set | `world.Set<T>().Write` | `NativeSetCommandBuffer<T>` (deferred; flushed by a `SetFlushJob` after the writer job completes) |
+
+## See also
+
+- [Sample 05 — Job System](../samples/05-job-system.md): the basic `[WrapAsJob]` pattern with structural changes.
+- [Sample 07 — Feeding Frenzy](../samples/07-feeding-frenzy.md): multiple iteration styles compared side by side, all using jobs.

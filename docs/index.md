@@ -1,66 +1,107 @@
+<div class="hero" markdown>
+
+<div class="hero-text" markdown>
+
 # Trecs
 
-A high-performance Entity Component System framework for Unity, designed for deterministic simulation, recording/playback, and Burst/Jobs integration.
+A high-performance Entity Component System for Unity, built for **deterministic simulation, Burst/Jobs, and recording/playback/rollback**.
+
+</div>
+
+![Trecs](assets/logo.png)
+
+</div>
+
+!!! info "0.x status"
+    Trecs is currently 0.x. The core APIs are stable in spirit but may shift between minor releases ahead of 1.0. Features under [Experimental](experimental/index.md) are explicitly in flux — expect breakage there.
 
 ## Features
 
-- **High-performance storage** — Components are stored in contiguous arrays (structure-of-arrays), grouped by explicit tags for cache-friendly iteration
-- **Serialization** — Full world state serialization out of the box, including all entities, components, and heap data
-- **Bookmarks, Recording & Playback** — Save and load snapshots of full game state, record and replay inputs deterministically with checksum-based desync detection, or use for network rollbacks
-- **Burst & Jobs** — First-class support for Unity's job system and Burst compiler with automatic dependency tracking based on component access
-- **Source generation** — Roslyn-powered code generation eliminates boilerplate for systems, aspects, and templates
-- **Aspects** — Bundled component access that groups related read/write operations into a single reusable struct
-- **Sets** — Dynamic entity subsets without group changes, for efficient sparse iteration and overlapping membership
-- **Interpolation** — Built-in fixed-to-variable timestep interpolation for smooth rendering
-- **Heap & Pointers** — `SharedPtr`, `UniquePtr`, and native variants for storing managed or large data outside of components
-- **Deterministic simulation** — Fixed-timestep loop with deterministic RNG and isolated input handling, designed for networking and replay
-- **Template system** — Composable entity type blueprints with tag-based grouping and inheritance
+- **Cache-friendly storage.** Components live in contiguous structure-of-arrays buffers grouped by tag set.
+- **Composable building blocks.** Aspects bundle component access; sets give sparse subsets without restructuring storage; templates declare entity blueprints with inheritance and partitions.
+- **Burst and Jobs out of the box.** A source generator emits job structs and chains `JobHandle` dependencies from the components you read and write — no manual wiring.
+- **Deterministic by construction.** Fixed-timestep simulation, seeded RNG, isolated input, and built-in snapshot / record / replay with desync detection.
+- **Editor tooling.** A live entity inspector and a record / scrub / fork timeline window for diagnosing transient bugs.
 
 ## Quick Start
 
 ```csharp
-// Step 1: Define components
-[Unwrap]
-public partial struct Position : IEntityComponent
-{
-    public float3 Value;
-}
+// 1. Components — unmanaged structs holding per-entity data
+public partial struct Position : IEntityComponent { public float3 Value; }
+public partial struct Velocity : IEntityComponent { public float3 Value; }
 
-// Step 2: Define entity tags
+// 2. A tag — an entity category
 public struct PlayerTag : ITag { }
 
-// Step 3: Define entity types
-public partial class PlayerEntity : ITemplate, IHasTags<PlayerTag>
+// 3. A template — the entity blueprint
+public partial class PlayerEntity : ITemplate, ITagged<PlayerTag>
 {
-    public Position Position;
-    public Velocity Velocity;
+    Position Position;
+    Velocity Velocity;
 }
 
-// Step 4: Define systems to operate on entities
+// 4. A system — logic that runs over matching entities
 public partial class MovementSystem : ISystem
 {
-    [ForEachEntity(Tag = typeof(PlayerTag))]
-    void Execute(in Player player)
+    [ForEachEntity(typeof(PlayerTag))]
+    void Execute(ref Position position, in Velocity velocity)
     {
-        player.Position += player.Velocity * World.DeltaTime;
+        position.Value += velocity.Value * World.DeltaTime;
     }
-
-    partial struct Player : IAspect, IRead<Velocity>, IWrite<Position> { }
 }
 
-// Step 5: Define, initialize, and run the world
+// 5. Build and run
 var world = new WorldBuilder()
-    .AddEntityType(PlayerEntity.Template)
-    .Build();
+    .AddTemplate(PlayerEntity.Template)
+    .AddSystem(new MovementSystem())
+    .BuildAndInitialize();
 
-world.AddSystems(new ISystem[] { new MovementSystem() });
-world.Initialize();
-
-// Call this from a MonoBehaviour Update
-world.Tick();
-
-// Call this on MonoBehaviour OnDestroy or when complete
-world.Dispose();
+// In a MonoBehaviour:
+void Update()     => world.Tick();
+void LateUpdate() => world.LateTick();
+void OnDestroy()  => world.Dispose();
 ```
 
-See [Getting Started](getting-started.md) for a complete walkthrough.
+Inside a system, `World` is a source-generated property that gives access to the running world for the current phase.
+
+## Where to go next
+
+<div class="grid cards" markdown>
+
+-   :material-rocket-launch:{ .lg .middle } **[Getting Started](getting-started.md)**
+
+    ---
+
+    Install Trecs and run your first entity in a Unity scene.
+
+-   :material-cube-outline:{ .lg .middle } **[Core: World Setup](core/world-setup.md)**
+
+    ---
+
+    Reference for `WorldBuilder`, lifecycle, and `WorldAccessor`.
+
+-   :material-book-open-variant:{ .lg .middle } **[Glossary](glossary.md)**
+
+    ---
+
+    The terms — Partition, Set, Tag, Aspect, Accessor — and how they relate.
+
+-   :material-puzzle-outline:{ .lg .middle } **[Samples](samples/index.md)**
+
+    ---
+
+    A progressive tutorial series plus full sample games.
+
+-   :material-help-circle-outline:{ .lg .middle } **[FAQ](faq.md)**
+
+    ---
+
+    Quick answers to common questions about scope, limits, and design choices.
+
+-   :material-compare:{ .lg .middle } **[Trecs vs Unity ECS](guides/trecs-vs-unity-ecs.md)**
+
+    ---
+
+    Side-by-side comparison if you're sizing up the framework.
+
+</div>

@@ -22,12 +22,12 @@ namespace Trecs.Samples.FeedingFrenzy101
             _settings = settings;
         }
 
-        [ForEachEntity(Tag = typeof(FrenzyTags.Fish))]
+        [ForEachEntity(typeof(FrenzyTags.Fish))]
         [WrapAsJob]
         static void ExecuteImpl(
             ref UniformScale scale,
             ref ColorComponent color,
-            EntityIndex entityIndex,
+            EntityHandle handle,
             in NativeWorldAccessor world,
             [PassThroughArgument] Settings settings
         )
@@ -36,7 +36,7 @@ namespace Trecs.Samples.FeedingFrenzy101
 
             if (scale.Value <= settings.MinScale)
             {
-                world.RemoveEntity(entityIndex);
+                handle.Remove(world);
                 return;
             }
 

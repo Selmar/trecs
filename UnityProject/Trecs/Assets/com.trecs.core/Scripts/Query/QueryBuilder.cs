@@ -6,7 +6,7 @@ namespace Trecs
     /// <summary>
     /// Fluent builder for dense entity queries. Chain <c>WithTags</c>, <c>WithoutTags</c>,
     /// <c>WithComponents</c>, and <c>WithoutComponents</c> to narrow matching groups, then
-    /// terminate with <see cref="EntityIndices"/>, <see cref="GroupSlices"/>, <see cref="Single"/>,
+    /// terminate with <see cref="Indices"/>, <see cref="GroupSlices"/>, <see cref="SingleHandle"/>,
     /// or <see cref="Count"/> to consume results. Call <see cref="InSet{T}"/> to switch to
     /// sparse (set-filtered) iteration via <see cref="SparseQueryBuilder"/>.
     /// Obtained from <see cref="WorldAccessor.Query"/>.
@@ -126,7 +126,7 @@ namespace Trecs
         public QueryBuilder WithComponents<T1>()
             where T1 : unmanaged, IEntityComponent
         {
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T1>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T1>.Value);
             return this;
         }
 
@@ -134,8 +134,8 @@ namespace Trecs
             where T1 : unmanaged, IEntityComponent
             where T2 : unmanaged, IEntityComponent
         {
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T1>.Value);
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T2>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T1>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T2>.Value);
             return this;
         }
 
@@ -144,9 +144,9 @@ namespace Trecs
             where T2 : unmanaged, IEntityComponent
             where T3 : unmanaged, IEntityComponent
         {
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T1>.Value);
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T2>.Value);
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T3>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T1>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T2>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T3>.Value);
             return this;
         }
 
@@ -156,17 +156,23 @@ namespace Trecs
             where T3 : unmanaged, IEntityComponent
             where T4 : unmanaged, IEntityComponent
         {
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T1>.Value);
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T2>.Value);
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T3>.Value);
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T4>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T1>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T2>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T3>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T4>.Value);
+            return this;
+        }
+
+        public QueryBuilder WithComponents(ComponentTypeIdSet components)
+        {
+            _positiveComps = MergeComponents(_positiveComps, components);
             return this;
         }
 
         public QueryBuilder WithoutComponents<T1>()
             where T1 : unmanaged, IEntityComponent
         {
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T1>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T1>.Value);
             return this;
         }
 
@@ -174,8 +180,8 @@ namespace Trecs
             where T1 : unmanaged, IEntityComponent
             where T2 : unmanaged, IEntityComponent
         {
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T1>.Value);
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T2>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T1>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T2>.Value);
             return this;
         }
 
@@ -184,9 +190,9 @@ namespace Trecs
             where T2 : unmanaged, IEntityComponent
             where T3 : unmanaged, IEntityComponent
         {
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T1>.Value);
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T2>.Value);
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T3>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T1>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T2>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T3>.Value);
             return this;
         }
 
@@ -196,10 +202,16 @@ namespace Trecs
             where T3 : unmanaged, IEntityComponent
             where T4 : unmanaged, IEntityComponent
         {
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T1>.Value);
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T2>.Value);
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T3>.Value);
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T4>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T1>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T2>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T3>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T4>.Value);
+            return this;
+        }
+
+        public QueryBuilder WithoutComponents(ComponentTypeIdSet components)
+        {
+            _negativeComps = MergeComponents(_negativeComps, components);
             return this;
         }
 
@@ -208,7 +220,7 @@ namespace Trecs
         /// Returns a different builder type because set-filtered iteration is fundamentally
         /// sparse (walking set indices) rather than dense (walking all entities in a group).
         /// Only one set can be applied per query. If you need to intersect multiple sets,
-        /// query with one set and check <c>SetAccessor&lt;T&gt;.Exists()</c> for the others
+        /// query with one set and check <c>Set&lt;T&gt;().Read.Contains()</c> for the others
         /// inside the loop.
         /// </summary>
         public readonly SparseQueryBuilder InSet<T>()
@@ -224,7 +236,7 @@ namespace Trecs
             );
         }
 
-        public readonly SparseQueryBuilder InSet(SetDef setDef)
+        public readonly SparseQueryBuilder InSet(EntitySet entitySet)
         {
             return new SparseQueryBuilder(
                 _world,
@@ -232,7 +244,7 @@ namespace Trecs
                 _negativeTags,
                 _positiveComps,
                 _negativeComps,
-                setDef.Id
+                entitySet.Id
             );
         }
 
@@ -248,63 +260,103 @@ namespace Trecs
             );
         }
 
-        public readonly QueryIterator EntityIndices()
+        /// <summary>
+        /// Returns an iterator that yields a transient <see cref="EntityIndex"/> per
+        /// matched entity. Low-level — prefer <see cref="Handles"/> in most
+        /// code; reach for indices only when you have a hot loop that does multiple
+        /// ops per entity and wants to skip the per-call handle-to-index lookup.
+        /// </summary>
+        public readonly IndexQueryIterator Indices()
         {
+            AssertHasAnyCriteria();
             return CreateIterator();
         }
 
         /// <summary>
+        /// Returns an iterator that yields a stable <see cref="EntityHandle"/> per
+        /// matched entity. Primary entry point for entity iteration.
+        /// </summary>
+        public readonly HandleQueryIterator Handles()
+        {
+            AssertHasAnyCriteria();
+            return new HandleQueryIterator(CreateIterator(), _world);
+        }
+
+        /// <summary>
         /// Returns a dense group slice iterator for queries without set filters.
-        /// Each slice has Group, Count, and an identity indexer.
+        /// Each slice has GroupIndex, Count, and an identity indexer.
         /// </summary>
         public readonly DenseGroupSliceIterator GroupSlices()
         {
+            AssertHasAnyCriteria();
             var groups = ResolveGroups();
             return new DenseGroupSliceIterator(_world, groups);
         }
 
-        public readonly ReadOnlyFastList<Group> Groups()
+        public readonly ReadOnlyList<GroupIndex> Groups()
         {
+            AssertHasAnyCriteria();
             return ResolveGroups();
         }
 
         public readonly int Count()
         {
+            AssertHasAnyCriteria();
             var groups = ResolveGroups();
             return _world.CountEntitiesInGroups(groups);
         }
 
-        public readonly EntityAccessor Single()
-        {
-            return new EntityAccessor(_world, SingleEntityIndex());
-        }
+        /// <summary>
+        /// Returns the single matching entity as a stable <see cref="EntityHandle"/>.
+        /// Asserts exactly one match. Primary entry point — use
+        /// <see cref="SingleIndex"/> only in hot-loop code that wants to skip
+        /// the handle conversion.
+        /// </summary>
+        public readonly EntityHandle SingleHandle() => SingleIndex().ToHandle(_world);
 
-        public readonly bool TrySingle(out EntityAccessor entityRef)
+        /// <summary>
+        /// Resolves the single matching entity to an <see cref="EntityHandle"/>,
+        /// returning false on zero or multiple matches.
+        /// </summary>
+        public readonly bool TrySingleHandle(out EntityHandle entityHandle)
         {
-            if (!TrySingleEntityIndex(out var entityIndex))
+            if (!TrySingleIndex(out var entityIndex))
             {
-                entityRef = default;
+                entityHandle = default;
                 return false;
             }
-            entityRef = new EntityAccessor(_world, entityIndex);
+            entityHandle = entityIndex.ToHandle(_world);
             return true;
         }
 
-        public readonly EntityIndex SingleEntityIndex()
+        /// <summary>
+        /// Hot-loop variant of <see cref="SingleHandle"/> — returns the matching entity
+        /// as a transient <see cref="EntityIndex"/>, skipping the handle conversion.
+        /// Only valid within the current submission cycle.
+        /// </summary>
+        public readonly EntityIndex SingleIndex()
         {
+            AssertHasAnyCriteria();
             var iter = CreateIterator();
 
             var movedFirst = iter.MoveNext();
-            Assert.That(movedFirst, "Query matched no entities");
+            TrecsDebugAssert.That(movedFirst, "Query matched no entities");
             var result = iter.Current;
             var movedSecond = iter.MoveNext();
-            Assert.That(!movedSecond, "Query matched multiple entities, expected exactly one");
+            TrecsDebugAssert.That(
+                !movedSecond,
+                "Query matched multiple entities, expected exactly one"
+            );
 
             return result;
         }
 
-        public readonly bool TrySingleEntityIndex(out EntityIndex entityIndex)
+        /// <summary>
+        /// Hot-loop variant of <see cref="TrySingleHandle"/>.
+        /// </summary>
+        public readonly bool TrySingleIndex(out EntityIndex entityIndex)
         {
+            AssertHasAnyCriteria();
             var iter = CreateIterator();
 
             if (!iter.MoveNext())
@@ -325,7 +377,15 @@ namespace Trecs
             return true;
         }
 
-        internal readonly ReadOnlyFastList<Group> ResolveGroups()
+        readonly void AssertHasAnyCriteria()
+        {
+            TrecsAssert.That(
+                HasAnyCriteria,
+                "Query has no criteria — add at least one WithTags / WithoutTags / WithComponents / WithoutComponents constraint before calling a terminator"
+            );
+        }
+
+        internal readonly ReadOnlyList<GroupIndex> ResolveGroups()
         {
             var key = new GroupQueryKey(
                 _positiveTags,
@@ -334,19 +394,42 @@ namespace Trecs
                 _negativeComps
             );
 
-            return _world.WorldInfo.QueryEngine.ResolveGroups(key);
+            var groups = _world.WorldInfo.QueryEngine.ResolveGroups(key);
+
+            _world.AssertNoVariableUpdateOnlyGroupsForFixedRole(groups);
+
+            return groups;
         }
 
-        public readonly QueryIterator CreateIterator()
+        internal readonly IndexQueryIterator CreateIterator()
         {
             var groups = ResolveGroups();
-            return new QueryIterator(_world, groups);
+            return new IndexQueryIterator(_world, groups);
         }
 
         static TagSet MergeTags(TagSet existing, TagSet addition)
         {
-            Assert.That(!addition.IsNull);
+            TrecsDebugAssert.That(!addition.IsNull);
             return existing.IsNull ? addition : existing.CombineWith(addition);
+        }
+
+        static ComponentTypeIdSet MergeComponents(
+            ComponentTypeIdSet existing,
+            ComponentTypeIdSet addition
+        )
+        {
+            TrecsDebugAssert.That(!addition.IsNull);
+            if (existing.IsNull)
+            {
+                return addition;
+            }
+            var result = existing;
+            var components = addition.Components;
+            for (int i = 0; i < components.Count; i++)
+            {
+                result = result.Add(components[i]);
+            }
+            return result;
         }
     }
 }

@@ -188,7 +188,6 @@ MonoBehaviour:
       SpawnConcentration: 1.5
       MealSize: 2
       MealYOffset: -2.5
-      RenderingEnabled: 1
       MealColor: {r: 0.25848943, g: 0.9245283, b: 0, a: 0}
       FishColor: {r: 1, g: 0.4292453, b: 0.7101402, a: 1}
       MinPresetFishCount: 5000
@@ -208,7 +207,6 @@ MonoBehaviour:
       BobFrequency: 4.5
       BobBaseY: -2
   DisplayText: {fileID: 665378650}
-  ProfilerRunner: {fileID: 0}
 --- !u!1 &391647590
 GameObject:
   m_ObjectHideFlags: 0

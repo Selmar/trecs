@@ -28,14 +28,14 @@ namespace Trecs.Tests
                 .Set(new TestVec())
                 .AssertComplete();
             var handle = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(1, a.CountEntitiesWithTags(TestTags.Gamma));
 
             // Remove first, then move — remove should win
             a.RemoveEntity(handle.ToIndex(a));
-            a.MoveTo(handle.ToIndex(a), PartitionBSet);
-            a.SubmitEntities();
+            a.SetTag<TestPartitionB>(handle.ToIndex(a));
+            a.Submit();
 
             NAssert.AreEqual(
                 0,
@@ -57,12 +57,12 @@ namespace Trecs.Tests
                 .Set(new TestVec())
                 .AssertComplete();
             var handle = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             // Move first, then remove — remove should win
-            a.MoveTo(handle.ToIndex(a), PartitionBSet);
+            a.SetTag<TestPartitionB>(handle.ToIndex(a));
             a.RemoveEntity(handle.ToIndex(a));
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(
                 0,
@@ -92,14 +92,14 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(5, a.CountEntitiesWithTags(PartitionASet));
 
             // Move entity 1 to PartitionB, remove entity 4 (at the tail — will be swap-back source)
-            a.MoveTo(handles[1].ToIndex(a), PartitionBSet);
+            a.SetTag<TestPartitionB>(handles[1].ToIndex(a));
             a.RemoveEntity(handles[4]);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(
                 3,
@@ -113,11 +113,11 @@ namespace Trecs.Tests
             );
 
             // Verify the moved entity has correct data
-            var movedEntity = a.Query().WithTags(PartitionBSet).Single();
-            NAssert.AreEqual(1, movedEntity.Get<TestInt>().Read.Value);
+            var movedEntity = a.Query().WithTags(PartitionBSet).SingleHandle();
+            NAssert.AreEqual(1, movedEntity.Component<TestInt>(a).Read.Value);
 
             // Verify removed entity no longer exists
-            NAssert.IsFalse(a.EntityExists(handles[4]));
+            NAssert.IsFalse(handles[4].Exists(a));
         }
 
         [Test]
@@ -137,22 +137,22 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             // Move tail entity (4) to PartitionB, remove middle entity (2)
-            a.MoveTo(handles[4].ToIndex(a), PartitionBSet);
+            a.SetTag<TestPartitionB>(handles[4].ToIndex(a));
             a.RemoveEntity(handles[2]);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(3, a.CountEntitiesWithTags(PartitionASet));
             NAssert.AreEqual(1, a.CountEntitiesWithTags(PartitionBSet));
 
             // All surviving entities should still be accessible
-            NAssert.IsTrue(a.EntityExists(handles[0]));
-            NAssert.IsTrue(a.EntityExists(handles[1]));
-            NAssert.IsFalse(a.EntityExists(handles[2])); // removed
-            NAssert.IsTrue(a.EntityExists(handles[3]));
-            NAssert.IsTrue(a.EntityExists(handles[4])); // moved
+            NAssert.IsTrue(handles[0].Exists(a));
+            NAssert.IsTrue(handles[1].Exists(a));
+            NAssert.IsFalse(handles[2].Exists(a)); // removed
+            NAssert.IsTrue(handles[3].Exists(a));
+            NAssert.IsTrue(handles[4].Exists(a)); // moved
 
             // Data should be intact
             NAssert.AreEqual(0, a.Component<TestInt>(handles[0]).Read.Value);
@@ -177,15 +177,15 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             // Move entities 2, 5 to PartitionB. Remove entities 7, 8, 9 (tail entities).
-            a.MoveTo(handles[2].ToIndex(a), PartitionBSet);
-            a.MoveTo(handles[5].ToIndex(a), PartitionBSet);
+            a.SetTag<TestPartitionB>(handles[2].ToIndex(a));
+            a.SetTag<TestPartitionB>(handles[5].ToIndex(a));
             a.RemoveEntity(handles[7]);
             a.RemoveEntity(handles[8]);
             a.RemoveEntity(handles[9]);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(5, a.CountEntitiesWithTags(PartitionASet));
             NAssert.AreEqual(2, a.CountEntitiesWithTags(PartitionBSet));
@@ -195,11 +195,11 @@ namespace Trecs.Tests
             {
                 if (i == 7 || i == 8 || i == 9)
                 {
-                    NAssert.IsFalse(a.EntityExists(handles[i]), $"Entity {i} should be removed");
+                    NAssert.IsFalse(handles[i].Exists(a), $"Entity {i} should be removed");
                 }
                 else
                 {
-                    NAssert.IsTrue(a.EntityExists(handles[i]), $"Entity {i} should still exist");
+                    NAssert.IsTrue(handles[i].Exists(a), $"Entity {i} should still exist");
                     NAssert.AreEqual(
                         i,
                         a.Component<TestInt>(handles[i]).Read.Value,
@@ -229,7 +229,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 2 })
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             // Register callback: when any entity is removed, remove entity B
             var subscription = a
@@ -237,7 +237,7 @@ namespace Trecs.Tests
                 .OnRemoved(
                     (group, indices) =>
                     {
-                        if (a.EntityExists(handleB))
+                        if (handleB.Exists(a))
                         {
                             a.RemoveEntity(handleB);
                         }
@@ -245,10 +245,10 @@ namespace Trecs.Tests
                 );
 
             a.RemoveEntity(handleA);
-            a.SubmitEntities();
+            a.Submit();
 
-            NAssert.IsFalse(a.EntityExists(handleA), "Entity A should be removed");
-            NAssert.IsFalse(a.EntityExists(handleB), "Entity B should be removed by callback");
+            NAssert.IsFalse(handleA.Exists(a), "Entity A should be removed");
+            NAssert.IsFalse(handleB.Exists(a), "Entity B should be removed by callback");
             NAssert.AreEqual(0, a.CountEntitiesWithTags(TestTags.Alpha));
 
             subscription.Dispose();
@@ -270,7 +270,7 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             // Callback: when entities are removed, also remove entity 6
             var subscription = a
@@ -278,7 +278,7 @@ namespace Trecs.Tests
                 .OnRemoved(
                     (group, indices) =>
                     {
-                        if (a.EntityExists(handles[6]))
+                        if (handles[6].Exists(a))
                         {
                             a.RemoveEntity(handles[6]);
                         }
@@ -288,13 +288,13 @@ namespace Trecs.Tests
             // Remove entities 0 and 3 directly
             a.RemoveEntity(handles[0]);
             a.RemoveEntity(handles[3]);
-            a.SubmitEntities();
+            a.Submit();
 
             // 0, 3, and 6 should be removed (6 by callback)
             NAssert.AreEqual(5, a.CountEntitiesWithTags(TestTags.Alpha));
-            NAssert.IsFalse(a.EntityExists(handles[0]));
-            NAssert.IsFalse(a.EntityExists(handles[3]));
-            NAssert.IsFalse(a.EntityExists(handles[6]));
+            NAssert.IsFalse(handles[0].Exists(a));
+            NAssert.IsFalse(handles[3].Exists(a));
+            NAssert.IsFalse(handles[6].Exists(a));
 
             // Surviving entities should have correct data
             NAssert.AreEqual(100, a.Component<TestInt>(handles[1]).Read.Value);

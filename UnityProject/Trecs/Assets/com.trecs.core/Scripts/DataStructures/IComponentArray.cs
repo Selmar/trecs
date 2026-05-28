@@ -1,7 +1,5 @@
 using System;
 using System.ComponentModel;
-using Trecs.Collections;
-using Unity.Collections;
 
 namespace Trecs.Internal
 {
@@ -20,38 +18,18 @@ namespace Trecs.Internal
     {
         int Count { get; }
 
+        /// <summary>
+        /// The component value type stored in this array (i.e. the <c>T</c> in
+        /// <c>ComponentArray&lt;T&gt;</c>).
+        /// </summary>
+        Type ComponentType { get; }
+
         IComponentArray Create();
 
-        void AddEntitiesToDictionary(IComponentArray toDictionary, Group groupId);
-
-        /// <summary>
-        /// Remove entities at the given indices from the array using swap-back.
-        /// Indices must be sorted in descending order so that swap-back never invalidates
-        /// a future removal index, eliminating chain resolution.
-        /// </summary>
-        void RemoveEntitiesFromArray(FastList<int> sortedDescendingIndices);
-
-        /// <summary>
-        /// Move entities from this array to the destination array using swap-back.
-        /// Each MoveInfo must have resolvedFromIndex pre-set to the entity's current
-        /// position after accounting for prior swap-backs (precomputed by the caller).
-        /// </summary>
-        void SwapEntitiesBetweenDictionaries(
-            in DenseDictionary<int, MoveInfo> infosToProcess,
-            Group fromGroup,
-            Group toGroup,
-            IComponentArray toComponentsDictionary
-        );
+        void AddEntitiesToDictionary(IComponentArray toDictionary, GroupIndex groupId);
 
         void EnsureCapacity(int size);
         void Clear();
-
-        /// <summary>
-        /// Reorder a contiguous range of elements [startIndex, startIndex+count) according
-        /// to the given permutation. permutation[i] gives the source index (relative to
-        /// startIndex) for destination position startIndex+i.
-        /// </summary>
-        void ReorderRange(int startIndex, int count, NativeList<int> permutation);
 
         /// <summary>
         /// Returns the element size in bytes and the unsafe pointer to the underlying
@@ -70,5 +48,7 @@ namespace Trecs.Internal
         /// to reflect data movement performed by the job.
         /// </summary>
         void SetCount(int count);
+
+        void ResetToDefaultValuesWithCount(int count);
     }
 }

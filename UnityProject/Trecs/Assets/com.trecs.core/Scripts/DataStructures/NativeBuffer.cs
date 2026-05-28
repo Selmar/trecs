@@ -31,23 +31,14 @@ namespace Trecs.Internal
     public readonly unsafe struct NativeBuffer<T>
         where T : unmanaged
     {
-        /// <summary>
-        /// Note: static constructors are NOT compiled by burst as long as there are no static fields in the struct
-        /// </summary>
-        static NativeBuffer()
-        {
-#if ENABLE_DEBUG_CHECKS
-            if (!TypeMeta<T>.IsUnmanaged)
-                throw new TrecsException("NativeBuffer supports only unmanaged types");
-#endif
-        }
-
         [NativeDisableUnsafePtrRestriction]
         readonly T* _data;
         readonly int _length;
 
-        public NativeBuffer(NativeList<T> array)
-            : this((T*)NativeListUnsafeUtility.GetUnsafePtr(array), array.Length) { }
+        public static NativeBuffer<T> FromNativeList(NativeList<T> list)
+        {
+            return new NativeBuffer<T>((T*)NativeListUnsafeUtility.GetUnsafePtr(list), list.Length);
+        }
 
         public NativeBuffer(T* data, int length)
         {
@@ -67,20 +58,13 @@ namespace Trecs.Internal
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public IntPtr GetRawReadWritePointer(out int capacity)
+        public T* GetRawPointer(out int length)
         {
-            capacity = _length;
-            return new IntPtr(_data);
+            length = _length;
+            return _data;
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public IntPtr GetRawReadOnlyPointer(out int capacity)
-        {
-            capacity = _length;
-            return new IntPtr(_data);
-        }
-
-        public int Capacity
+        public int Length
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _length;
@@ -92,7 +76,7 @@ namespace Trecs.Internal
             if (index < 0 || index >= _length)
             {
                 throw new IndexOutOfRangeException(
-                    $"NativeBuffer - out of bound access: index {index} - capacity {Capacity}"
+                    $"NativeBuffer - out of bound access: index {index} - length {Length}"
                 );
             }
 
@@ -107,7 +91,7 @@ namespace Trecs.Internal
                 if (index < 0 || index >= _length)
                 {
                     throw new IndexOutOfRangeException(
-                        $"NativeBuffer - out of bound access: index {index} - capacity {Capacity}"
+                        $"NativeBuffer - out of bound access: index {index} - length {Length}"
                     );
                 }
 

@@ -8,30 +8,21 @@ namespace Trecs.Samples.SpawnAndDestroy
         readonly float _spawnInterval;
         readonly float _lifetime;
         readonly float _spawnRadius;
-        readonly GameObjectRegistry _gameObjectRegistry;
 
-        float _timer;
-
-        public SpawnSystem(
-            float spawnInterval,
-            float lifetime,
-            float spawnRadius,
-            GameObjectRegistry gameObjectRegistry
-        )
+        public SpawnSystem(float spawnInterval, float lifetime, float spawnRadius)
         {
             _spawnInterval = spawnInterval;
             _lifetime = lifetime;
             _spawnRadius = spawnRadius;
-            _gameObjectRegistry = gameObjectRegistry;
         }
 
-        public void Execute()
+        void Execute([SingleEntity(typeof(TrecsTags.Globals))] ref State state)
         {
-            _timer += World.DeltaTime;
+            state.Timer += World.DeltaTime;
 
-            while (_timer >= _spawnInterval)
+            while (state.Timer >= _spawnInterval)
             {
-                _timer -= _spawnInterval;
+                state.Timer -= _spawnInterval;
                 SpawnSphere();
             }
         }
@@ -42,23 +33,19 @@ namespace Trecs.Samples.SpawnAndDestroy
             float radius = World.Rng.Next() * _spawnRadius;
             var position = new float3(math.cos(angle) * radius, 0.5f, math.sin(angle) * radius);
 
-            var go = SampleUtil.CreatePrimitive(PrimitiveType.Sphere);
-            go.name = "Sphere";
-            go.transform.position = (Vector3)position;
-
             // World.Rng provides deterministic randomness that works with recording/playback
-            var renderer = go.GetComponent<Renderer>();
-            renderer.material.color = new Color(
-                World.Rng.Next(),
-                World.Rng.Next(),
-                World.Rng.Next()
-            );
+            var color = new Color(World.Rng.Next(), World.Rng.Next(), World.Rng.Next());
 
             World
                 .AddEntity<SampleTags.Sphere>()
                 .Set(new Position(position))
                 .Set(new Lifetime(_lifetime))
-                .Set(_gameObjectRegistry.Register(go));
+                .Set(new ColorComponent(color));
+        }
+
+        public partial struct State : IEntityComponent
+        {
+            public float Timer;
         }
     }
 }

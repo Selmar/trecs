@@ -1,5 +1,7 @@
 # Getting Started
 
+A five-minute walkthrough: one entity, one component, one system, ticking in a Unity scene.
+
 ## Installation
 
 Requires Unity 6000.3+.
@@ -10,11 +12,9 @@ With the [openupm-cli](https://openupm.com/):
 
 ```bash
 openupm add com.trecs.core
-# Optional: serialization features (bookmarks, recording/playback, save/load)
-openupm add com.trecs.serialization
 ```
 
-Or add manually to `Packages/manifest.json`:
+Or add the scoped registry to `Packages/manifest.json` manually:
 
 ```json
 {
@@ -26,129 +26,126 @@ Or add manually to `Packages/manifest.json`:
     }
   ],
   "dependencies": {
-    "com.trecs.core": "0.1.0",
-    "com.trecs.serialization": "0.1.0"
+    "com.trecs.core": "0.2.0"
   }
 }
 ```
 
 ### Via Git URL
 
-Open **Window > Package Manager**, click **+ > Add package from git URL**, and enter:
+In **Window → Package Manager**, click **+ → Add package from git URL** and enter:
 
 ```
 https://github.com/svermeulen/trecs.git?path=UnityProject/Trecs/Assets/com.trecs.core
 ```
 
-For the optional serialization package:
+## Your first entity
 
-```
-https://github.com/svermeulen/trecs.git?path=UnityProject/Trecs/Assets/com.trecs.serialization
-```
+We'll build a spinning cube using these pieces:
 
-When using git URLs, add `com.trecs.core` before `com.trecs.serialization` (Unity can't resolve versioned dependencies from git URLs).
+- **Component** — the data
+- **Tag** — what kind of entity this is
+- **Template** — the blueprint (components and tags)
+- **System** — the logic
+- **World** — the runtime
 
-## Your First Project
-
-This walkthrough creates a spinning cube — the "Hello World" of Trecs.
-
-### 1. Define a Component
-
-Components are unmanaged structs that hold data:
+### 1. Define a component
 
 ```csharp
+using Unity.Mathematics;
+
 public partial struct Rotation : IEntityComponent
 {
     public quaternion Value;
 }
 ```
 
-### 2. Define a Tag
+`partial` is required — the source generator emits a companion file with `Equals` and equality operators.
 
-Tags classify entities. Systems use tags to filter which entities they operate on:
+### 2. Define a tag
+
+Tags are empty marker structs that classify entities and act as query filters:
 
 ```csharp
 public struct Spinner : ITag { }
 ```
 
-### 3. Define a Template
+### 3. Define a template
 
-Templates are blueprints that declare which components and tags an entity has. The tag on the template is what you use when creating entities and querying them in systems:
+A template is an entity blueprint — its tags (via `ITagged<...>`) and its components (declared as fields):
 
 ```csharp
-public partial class SpinnerEntity : ITemplate, IHasTags<Spinner>
+public partial class SpinnerEntity : ITemplate, ITagged<Spinner>
 {
-    public Rotation Rotation;
+    Rotation Rotation;
 }
 ```
 
-### 4. Write a System
+The template class is never instantiated — the source generator reads it at compile time.
 
-Systems contain the logic that operates on entities:
+### 4. Write a system
+
+`[ForEachEntity]` iterates every entity tagged with `Spinner`, calling this method for each:
 
 ```csharp
+using Unity.Mathematics;
+
 public partial class SpinnerSystem : ISystem
 {
     readonly float _speed;
 
-    public SpinnerSystem(float speed) 
-    { 
-      _speed = speed; 
-    }
+    public SpinnerSystem(float speed) { _speed = speed; }
 
-    [ForEachEntity(MatchByComponents = true)]
+    [ForEachEntity(typeof(Spinner))]
     void Execute(ref Rotation rotation)
     {
-        float angle = World.DeltaTime * _speed;
+        var angle = World.DeltaTime * _speed;
         rotation.Value = math.mul(rotation.Value, quaternion.RotateY(angle));
     }
 }
 ```
 
-### 5. Build the World
+`World` here is a source-generated property on the system — see [World Setup](core/world-setup.md).
 
-Wire everything together:
+### 5. Build and run
 
-```csharp
-// Build world
-var world = new WorldBuilder()
-    .AddEntityType(SpinnerEntity.Template)
-    .Build();
-
-// Add systems
-world.AddSystems(new ISystem[]
-{
-    new SpinnerSystem(speed: 2f),
-    new SpinnerGameObjectUpdater(gameObjectRegistry),
-});
-
-// Initialize (allocates groups, initializes systems)
-world.Initialize();
-
-// Create accessor
-var worldAccessor = world.CreateAccessor();
-
-// Create an entity
-worldAccessor.AddEntity<Spinner>()
-    .Set(new Rotation { Value = quaternion.identity });
-```
-
-### 6. Run the Game Loop
+Wire it up from a `MonoBehaviour`:
 
 ```csharp
-void Update()
-{
-    world.Tick();
-}
+using UnityEngine;
+using Trecs;
+using Unity.Mathematics;
 
-void LateUpdate()
+public class GameLoop : MonoBehaviour
 {
-    world.LateTick();
-}
+    World _world;
 
-void OnDestroy()
-{
-    world.Dispose();
+    void Start()
+    {
+        _world = new WorldBuilder()
+            .AddTemplate(SpinnerEntity.Template)
+            .AddSystem(new SpinnerSystem(speed: 2f))
+            .BuildAndInitialize();
+
+        var accessor = _world.CreateAccessor(AccessorRole.Unrestricted);
+        accessor.AddEntity<Spinner>()
+            .Set(new Rotation { Value = quaternion.identity });
+    }
+
+    void Update()    => _world.Tick();
+    void LateUpdate()  => _world.LateTick();
+    void OnDestroy() => _world.Dispose();
 }
 ```
 
+Two things to notice:
+
+- `AddEntity<Spinner>()` takes the **tag**, not the template. Trecs matches `Spinner` to `SpinnerEntity` via `ITagged<Spinner>`.
+- `AccessorRole.Unrestricted` is for setup outside the tick loop. Inside systems, the right role is wired automatically — see [Accessor Roles](advanced/accessor-roles.md).
+
+## Where to next
+
+- **[World Setup](core/world-setup.md)** — `WorldBuilder`, `WorldSettings`, lifecycle, `WorldAccessor`. Read this next.
+- **[Systems](core/systems.md)** — defining systems, iteration, and the [per-frame phase order](core/systems.md#phase-diagram).
+- **[Aspects](data-access/aspects.md)** and **[Queries & Iteration](data-access/queries-and-iteration.md)** once you have multiple components per entity.
+- **[Samples](samples/index.md)** — one feature each, with a companion doc. The runnable version of this walkthrough lives in `Samples~/Tutorials/01_HelloEntity` (install via the Package Manager *Samples* tab).

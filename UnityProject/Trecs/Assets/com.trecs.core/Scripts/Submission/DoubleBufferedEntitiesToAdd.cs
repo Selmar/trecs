@@ -1,189 +1,125 @@
 using System;
+using System.Collections.Generic;
 using Trecs.Collections;
+using Unity.Burst;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
+using Unity.Jobs;
 
 namespace Trecs.Internal
 {
     struct OtherComponentsToAddPerGroupEnumerator
     {
+        int _index;
+        readonly int _length;
+        readonly int[] _counts;
+        readonly IterableDictionary<TypeId, IComponentArray>[] _components;
+
         public OtherComponentsToAddPerGroupEnumerator(
-            DenseDictionary<
-                Group,
-                DenseDictionary<ComponentId, IComponentArray>
-            > lastComponentsToAddPerGroup,
-            DenseDictionary<Group, int> otherNumberEntitiesCreatedPerGroup
+            IterableDictionary<TypeId, IComponentArray>[] lastComponentsToAddPerGroup,
+            int[] lastNumberEntitiesCreatedPerGroup
         )
         {
-            _lastComponentsToAddPerGroup = lastComponentsToAddPerGroup;
-            _lastNumberEntitiesCreatedPerGroup = otherNumberEntitiesCreatedPerGroup.GetEnumerator();
+            _components = lastComponentsToAddPerGroup;
+            _counts = lastNumberEntitiesCreatedPerGroup;
+            _length = _counts.Length;
+            _index = -1;
             Current = default;
         }
 
         public bool MoveNext()
         {
-            while (_lastNumberEntitiesCreatedPerGroup.MoveNext())
+            while (++_index < _length)
             {
-                var current = _lastNumberEntitiesCreatedPerGroup.Current;
-
-                if (current.Value > 0) //there are entities in this group
+                if (_counts[_index] > 0)
                 {
-                    var value = _lastComponentsToAddPerGroup[current.Key];
-                    Current = new GroupInfo() { Group = current.Key, Components = value };
-
+                    Current = new GroupInfo
+                    {
+                        GroupIndex = GroupIndex.FromIndex(_index),
+                        Components = _components[_index],
+                    };
                     return true;
                 }
             }
-
             return false;
         }
 
         public GroupInfo Current { get; private set; }
-
-        //cannot be read only as they will be modified by MoveNext
-        readonly DenseDictionary<
-            Group,
-            DenseDictionary<ComponentId, IComponentArray>
-        > _lastComponentsToAddPerGroup;
-
-        DenseDictionary<Group, int>.Enumerator _lastNumberEntitiesCreatedPerGroup;
     }
 
     struct GroupInfo
     {
-        public Group Group;
-        public DenseDictionary<ComponentId, IComponentArray> Components;
+        public GroupIndex GroupIndex;
+        public IterableDictionary<TypeId, IComponentArray> Components;
     }
 
     internal class DoubleBufferedEntitiesToAdd
     {
-        //while caching is good to avoid over creating dictionaries that may be reused, the side effect
-        //is that I have to iterate every time up to 100 dictionaries during the flushing of the build entities
-        //even if there are 0 entities inside.
-        const int MAX_NUMBER_OF_GROUPS_TO_CACHE = 100;
-        const int MAX_NUMBER_OF_TYPES_PER_GROUP_TO_CACHE = 100;
-
-        public DoubleBufferedEntitiesToAdd()
+        public DoubleBufferedEntitiesToAdd(int groupCount)
         {
-            var entitiesCreatedPerGroupA = new DenseDictionary<Group, int>();
-            var entitiesCreatedPerGroupB = new DenseDictionary<Group, int>();
-            var entityComponentsToAddBufferA =
-                new DenseDictionary<Group, DenseDictionary<ComponentId, IComponentArray>>();
-            var entityComponentsToAddBufferB =
-                new DenseDictionary<Group, DenseDictionary<ComponentId, IComponentArray>>();
+            currentComponentsToAddPerGroup = new IterableDictionary<TypeId, IComponentArray>[
+                groupCount
+            ];
+            lastComponentsToAddPerGroup = new IterableDictionary<TypeId, IComponentArray>[
+                groupCount
+            ];
 
-            _currentNumberEntitiesCreatedPerGroup = entitiesCreatedPerGroupA;
-            _lastNumberEntitiesCreatedPerGroup = entitiesCreatedPerGroupB;
+            _currentNumberEntitiesCreatedPerGroup = new int[groupCount];
+            _lastNumberEntitiesCreatedPerGroup = new int[groupCount];
 
-            currentComponentsToAddPerGroup = entityComponentsToAddBufferA;
-            lastComponentsToAddPerGroup = entityComponentsToAddBufferB;
+            _currentPendingReferences = new List<EntityHandle>[groupCount];
+            _lastPendingReferences = new List<EntityHandle>[groupCount];
 
-            _currentPendingReferences = new DenseDictionary<Group, FastList<EntityHandle>>();
-            _lastPendingReferences = new DenseDictionary<Group, FastList<EntityHandle>>();
+            _currentNativeAddSortKeys = new List<ulong>[groupCount];
+            _lastNativeAddSortKeys = new List<ulong>[groupCount];
 
-            _currentNativeAddSortKeys = new DenseDictionary<Group, FastList<ulong>>();
-            _lastNativeAddSortKeys = new DenseDictionary<Group, FastList<ulong>>();
-            _currentNativeAddStartIndices = new DenseDictionary<Group, int>();
-            _lastNativeAddStartIndices = new DenseDictionary<Group, int>();
+            _currentNativeAddStartIndices = new int[groupCount];
+            _lastNativeAddStartIndices = new int[groupCount];
+            Array.Fill(_currentNativeAddStartIndices, -1);
+            Array.Fill(_lastNativeAddStartIndices, -1);
         }
 
         public void ClearLastAddOperations()
         {
-            var numberOfGroupsAddedSoFar = lastComponentsToAddPerGroup.Count;
-            var componentDictionariesPerType = lastComponentsToAddPerGroup.UnsafeValues;
-
-            // Caching strategy: keep dictionaries alive for a reasonable number of groups
-            // to avoid recreation cost on subsequent submissions. When too many groups
-            // accumulate, dispose everything to avoid unbounded memory growth.
-
-            //If we didn't create too many groups, we keep them alive, so we avoid the cost of creating new dictionaries
-            //during future submissions, otherwise we clean up everything
-            if (numberOfGroupsAddedSoFar > MAX_NUMBER_OF_GROUPS_TO_CACHE)
+            // Reuse IComponentArrays by clearing in place — retained allocations
+            // are bounded by template-defined component counts (fixed at config).
+            for (int i = 0; i < lastComponentsToAddPerGroup.Length; i++)
             {
-                for (var i = 0; i < numberOfGroupsAddedSoFar; ++i)
-                {
-                    var componentTypesCount = componentDictionariesPerType[i].Count;
-                    var componentTypesDictionary = componentDictionariesPerType[i].UnsafeValues;
-                    {
-                        for (var j = 0; j < componentTypesCount; ++j)
-                            //dictionaries of components may be native so they need to be disposed
-                            //before the references are GCed
-                            componentTypesDictionary[j].Dispose();
-                    }
-                }
+                var inner = lastComponentsToAddPerGroup[i];
+                if (inner == null || inner.Count == 0)
+                    continue;
 
-                //reset the number of entities created so far
-                _lastNumberEntitiesCreatedPerGroup.Clear();
-                lastComponentsToAddPerGroup.Clear();
-                _lastPendingReferences.Recycle();
-                _lastNativeAddSortKeys.Recycle();
-                _lastNativeAddStartIndices.Clear();
-
-                return;
+                var componentTypesCount = inner.Count;
+                var componentTypesDictionary = inner.UnsafeValues;
+                for (int j = 0; j < componentTypesCount; j++)
+                    componentTypesDictionary[j].Clear();
             }
 
-            for (var i = 0; i < numberOfGroupsAddedSoFar; ++i)
-            {
-                var componentTypesCount = componentDictionariesPerType[i].Count;
-                IComponentArray[] componentTypesDictionary = componentDictionariesPerType[
-                    i
-                ].UnsafeValues;
+            Array.Clear(
+                _lastNumberEntitiesCreatedPerGroup,
+                0,
+                _lastNumberEntitiesCreatedPerGroup.Length
+            );
+            _totalEntitiesCreatedLastFrame = 0;
 
-                //if we didn't create too many component for this group, I reuse the component arrays
-                if (componentTypesCount <= MAX_NUMBER_OF_TYPES_PER_GROUP_TO_CACHE)
-                {
-                    for (var j = 0; j < componentTypesCount; ++j)
-                        //clear the dictionary of entities created so far (it won't allocate though)
-                        componentTypesDictionary[j].Clear();
-                }
-                else
-                {
-                    //here I have to dispose, because I am actually clearing the reference of the dictionary
-                    //with the next line.
-                    for (var j = 0; j < componentTypesCount; ++j)
-                        componentTypesDictionary[j].Dispose();
+            for (int i = 0; i < _lastPendingReferences.Length; i++)
+                _lastPendingReferences[i]?.Clear();
 
-                    componentDictionariesPerType[i].Clear();
-                }
-            }
+            for (int i = 0; i < _lastNativeAddSortKeys.Length; i++)
+                _lastNativeAddSortKeys[i]?.Clear();
 
-            //reset the number of entities created so far
-            _lastNumberEntitiesCreatedPerGroup.Clear();
-            _lastPendingReferences.Recycle();
-            _lastNativeAddSortKeys.Recycle();
-            _lastNativeAddStartIndices.Clear();
+            Array.Fill(_lastNativeAddStartIndices, -1);
         }
 
         public void Dispose()
         {
-            {
-                var otherValuesArray = lastComponentsToAddPerGroup.UnsafeValues;
-                for (var i = 0; i < lastComponentsToAddPerGroup.Count; ++i)
-                {
-                    int safeDictionariesCount = otherValuesArray[i].Count;
-                    IComponentArray[] safeDictionaries = otherValuesArray[i].UnsafeValues;
-                    //do not remove the dictionaries of entities per type created so far, they will be reused
-                    for (var j = 0; j < safeDictionariesCount; ++j)
-                        //clear the dictionary of entities create do far (it won't allocate though)
-                        safeDictionaries[j].Dispose();
-                }
-            }
-            {
-                var currentValuesArray = currentComponentsToAddPerGroup.UnsafeValues;
-                for (var i = 0; i < currentComponentsToAddPerGroup.Count; ++i)
-                {
-                    int safeDictionariesCount = currentValuesArray[i].Count;
-                    IComponentArray[] safeDictionaries = currentValuesArray[i].UnsafeValues;
-                    //do not remove the dictionaries of entities per type created so far, they will be reused
-                    for (var j = 0; j < safeDictionariesCount; ++j)
-                        //clear the dictionary of entities create do far (it won't allocate though)
-                        safeDictionaries[j].Dispose();
-                }
-            }
+            DisposeBuffer(lastComponentsToAddPerGroup);
+            DisposeBuffer(currentComponentsToAddPerGroup);
 
+            currentComponentsToAddPerGroup = null;
+            lastComponentsToAddPerGroup = null;
             _currentNumberEntitiesCreatedPerGroup = null;
             _lastNumberEntitiesCreatedPerGroup = null;
-            lastComponentsToAddPerGroup = null;
-            currentComponentsToAddPerGroup = null;
 
             if (_cachedSortBuffer.IsCreated)
                 _cachedSortBuffer.Dispose();
@@ -191,28 +127,40 @@ namespace Trecs.Internal
                 _cachedSortIndices.Dispose();
             if (_cachedSortTempRefs.IsCreated)
                 _cachedSortTempRefs.Dispose();
+            if (_cachedReorderScratch.IsCreated)
+                _cachedReorderScratch.Dispose();
         }
 
-        internal bool AnyEntityCreated()
+        static void DisposeBuffer(IterableDictionary<TypeId, IComponentArray>[] buffer)
         {
-            return _currentNumberEntitiesCreatedPerGroup.Count > 0;
+            for (int i = 0; i < buffer.Length; i++)
+            {
+                var inner = buffer[i];
+                if (inner == null)
+                    continue;
+                var count = inner.Count;
+                var values = inner.UnsafeValues;
+                for (int j = 0; j < count; j++)
+                    values[j].Dispose();
+            }
         }
 
-        internal bool AnyPreviousEntityCreated()
+        internal bool AnyEntityCreated() => _totalEntitiesCreatedThisFrame > 0;
+
+        internal bool AnyPreviousEntityCreated() => _totalEntitiesCreatedLastFrame > 0;
+
+        internal void IncrementEntityCount(GroupIndex groupId)
         {
-            return _lastNumberEntitiesCreatedPerGroup.Count > 0;
+            _currentNumberEntitiesCreatedPerGroup[groupId.Index]++;
+            _totalEntitiesCreatedThisFrame++;
         }
 
-        internal void IncrementEntityCount(Group groupId)
-        {
-            _currentNumberEntitiesCreatedPerGroup.GetOrAdd(groupId)++;
-            //   _totalEntitiesToAdd++;
-        }
-
-        // public uint NumberOfEntitiesToAdd()
-        // {
-        //     return _totalEntitiesToAdd;
-        // }
+        // Reserved hook for post-Init configuration-change asserts. Mirrors
+        // ComponentStore.ConfigurationFrozen, which EntityQuerier reads to
+        // guard against late reconfiguration. No live readers yet here; left
+        // wired so future add-config-shaped methods can assert against it
+        // without having to re-introduce the plumbing.
+        public bool ConfigurationFrozen => _configurationFrozen;
 
         public void FreezeConfiguration()
         {
@@ -220,59 +168,76 @@ namespace Trecs.Internal
         }
 
         internal void Preallocate(
-            Group groupId,
+            GroupIndex groupId,
             int numberOfEntities,
             IComponentBuilder[] entityComponentsToBuild
         )
         {
-            // We could relax this constraint, since this method could be useful
-            // at runtime if we know the number of entities we need
-            // If so - change to check _configurationFrozen below instead, in
-            // cases where new group/component dictionaries are added
-            Assert.That(!_configurationFrozen);
+            // Lazy by default; this entry point exists for callers that want to
+            // eagerly reserve buffers for a group ahead of a known burst of adds
+            // (see WorldAccessor.Warmup). Safe post-freeze — the underlying
+            // PreallocateDictionaries / GetOrAdd paths are idempotent.
 
-            void PreallocateDictionaries(
-                DenseDictionary<Group, DenseDictionary<ComponentId, IComponentArray>> dic
-            )
+            PreallocateDictionaries(
+                currentComponentsToAddPerGroup,
+                groupId,
+                numberOfEntities,
+                entityComponentsToBuild
+            );
+            PreallocateDictionaries(
+                lastComponentsToAddPerGroup,
+                groupId,
+                numberOfEntities,
+                entityComponentsToBuild
+            );
+        }
+
+        static void PreallocateDictionaries(
+            IterableDictionary<TypeId, IComponentArray>[] buffer,
+            GroupIndex groupId,
+            int numberOfEntities,
+            IComponentBuilder[] entityComponentsToBuild
+        )
+        {
+            ref var group = ref buffer[groupId.Index];
+            group ??= new IterableDictionary<TypeId, IComponentArray>();
+
+            foreach (var componentBuilder in entityComponentsToBuild)
             {
-                //get the set of entities in the group ID
-                var group = dic.GetOrAdd(
-                    groupId,
-                    () => new DenseDictionary<ComponentId, IComponentArray>()
+                var components = group.GetOrAdd(
+                    componentBuilder.TypeId,
+                    () => componentBuilder.CreateDictionary(numberOfEntities)
                 );
-
-                //for each component of the entities in the group
-                foreach (var componentBuilder in entityComponentsToBuild)
-                {
-                    //get the dictionary of entities for the component type
-                    var components = group.GetOrAdd(
-                        componentBuilder.ComponentId,
-                        () => componentBuilder.CreateDictionary(numberOfEntities)
-                    );
-
-                    componentBuilder.Preallocate(components, numberOfEntities);
-                }
+                componentBuilder.Preallocate(components, numberOfEntities);
             }
-
-            PreallocateDictionaries(currentComponentsToAddPerGroup);
-            PreallocateDictionaries(lastComponentsToAddPerGroup);
-
-            _currentNumberEntitiesCreatedPerGroup.GetOrAdd(groupId);
-            _lastNumberEntitiesCreatedPerGroup.GetOrAdd(groupId);
         }
 
         internal void Swap()
         {
-            Swap(ref currentComponentsToAddPerGroup, ref lastComponentsToAddPerGroup);
-            Swap(ref _currentNumberEntitiesCreatedPerGroup, ref _lastNumberEntitiesCreatedPerGroup);
-            Swap(ref _currentPendingReferences, ref _lastPendingReferences);
-            Swap(ref _currentNativeAddSortKeys, ref _lastNativeAddSortKeys);
-            Swap(ref _currentNativeAddStartIndices, ref _lastNativeAddStartIndices);
-        }
-
-        static void Swap<T>(ref T item1, ref T item2)
-        {
-            (item2, item1) = (item1, item2);
+            (currentComponentsToAddPerGroup, lastComponentsToAddPerGroup) = (
+                lastComponentsToAddPerGroup,
+                currentComponentsToAddPerGroup
+            );
+            (_currentNumberEntitiesCreatedPerGroup, _lastNumberEntitiesCreatedPerGroup) = (
+                _lastNumberEntitiesCreatedPerGroup,
+                _currentNumberEntitiesCreatedPerGroup
+            );
+            (_totalEntitiesCreatedThisFrame, _totalEntitiesCreatedLastFrame) = (
+                _totalEntitiesCreatedLastFrame,
+                _totalEntitiesCreatedThisFrame
+            );
+            (_currentPendingReferences, _lastPendingReferences) = (
+                _lastPendingReferences,
+                _currentPendingReferences
+            );
+            (_currentNativeAddSortKeys, _lastNativeAddSortKeys) = (
+                _lastNativeAddSortKeys,
+                _currentNativeAddSortKeys
+            );
+            (_currentNativeAddStartIndices, _lastNativeAddStartIndices) = (
+                _lastNativeAddStartIndices,
+                _currentNativeAddStartIndices
+            );
         }
 
         public OtherComponentsToAddPerGroupEnumerator GetEnumerator()
@@ -283,86 +248,112 @@ namespace Trecs.Internal
             );
         }
 
-        //Before I tried for the third time to use a SparseSet instead of DenseDictionary, remember that
-        //while group indices are sequential, they may not be used in a sequential order. Sparseset needs
-        //entities to be created sequentially (the index cannot be managed externally)
-        internal DenseDictionary<
-            Group,
-            DenseDictionary<ComponentId, IComponentArray>
-        > currentComponentsToAddPerGroup;
-
-        DenseDictionary<
-            Group,
-            DenseDictionary<ComponentId, IComponentArray>
-        > lastComponentsToAddPerGroup;
-
-        /// <summary>
-        ///     To avoid extra allocation, I don't clear the groups, so I need an extra data structure
-        ///     to keep count of the number of entities built this frame. At the moment the actual number
-        ///     of entities built is not used
-        /// </summary>
-        DenseDictionary<Group, int> _currentNumberEntitiesCreatedPerGroup;
-        DenseDictionary<Group, int> _lastNumberEntitiesCreatedPerGroup;
-
-        // Track EntityHandle references for entities being added, so we can
-        // call SetEntityHandle with the correct DB index during submission
-        internal DenseDictionary<Group, FastList<EntityHandle>> _currentPendingReferences;
-        DenseDictionary<Group, FastList<EntityHandle>> _lastPendingReferences;
-
-        static readonly Func<FastList<EntityHandle>> _newPendingRefList = () =>
-            new FastList<EntityHandle>();
-        static readonly ActionRef<FastList<EntityHandle>> _clearPendingRefList = (
-            ref FastList<EntityHandle> l
-        ) => l.Clear();
-
-        internal void AddPendingReference(Group group, EntityHandle reference)
+        internal IterableDictionary<TypeId, IComponentArray> GetOrCreateCurrentComponentsForGroup(
+            GroupIndex group
+        )
         {
-            var list = _currentPendingReferences.RecycleOrAdd(
-                group,
-                _newPendingRefList,
-                _clearPendingRefList
-            );
-            list.Add(reference);
+            ref var slot = ref currentComponentsToAddPerGroup[group.Index];
+            return slot ??= new IterableDictionary<TypeId, IComponentArray>();
         }
 
-        internal DenseDictionary<Group, FastList<EntityHandle>> LastPendingReferences =>
-            _lastPendingReferences;
-
-        // Track composite sort keys for native adds (packed as (ulong)accessorId << 32 | sortKey)
-        DenseDictionary<Group, FastList<ulong>> _currentNativeAddSortKeys;
-        DenseDictionary<Group, FastList<ulong>> _lastNativeAddSortKeys;
-
-        // Track where native adds start in each group's component arrays
-        DenseDictionary<Group, int> _currentNativeAddStartIndices;
-        DenseDictionary<Group, int> _lastNativeAddStartIndices;
-
-        static readonly Func<FastList<ulong>> _newSortKeyList = () => new FastList<ulong>();
-        static readonly ActionRef<FastList<ulong>> _clearSortKeyList = (ref FastList<ulong> l) =>
-            l.Clear();
-
-        internal void AddPendingNativeAddSortKey(Group group, int accessorId, uint sortKey)
+        internal bool TryGetLastPendingReferences(
+            GroupIndex group,
+            out List<EntityHandle> pendingRefs
+        )
         {
-            var list = _currentNativeAddSortKeys.RecycleOrAdd(
-                group,
-                _newSortKeyList,
-                _clearSortKeyList
-            );
+            pendingRefs = _lastPendingReferences[group.Index];
+            return pendingRefs != null && pendingRefs.Count > 0;
+        }
+
+        internal void AddPendingReference(GroupIndex group, EntityHandle reference)
+        {
+            ref var slot = ref _currentPendingReferences[group.Index];
+            slot ??= new List<EntityHandle>();
+            slot.Add(reference);
+        }
+
+        internal void AddPendingNativeAddSortKey(GroupIndex group, int accessorId, uint sortKey)
+        {
+            ref var slot = ref _currentNativeAddSortKeys[group.Index];
+            slot ??= new List<ulong>();
             ulong compositeKey = ((ulong)(uint)accessorId << 32) | sortKey;
-            list.Add(compositeKey);
+            slot.Add(compositeKey);
         }
 
-        internal void MarkNativeAddStartIfNeeded(Group group, int currentArrayCount)
+        internal void MarkNativeAddStartIfNeeded(GroupIndex group, int currentArrayCount)
         {
-            if (!_currentNativeAddStartIndices.ContainsKey(group))
+            if (_currentNativeAddStartIndices[group.Index] < 0)
             {
-                _currentNativeAddStartIndices.Add(group, currentArrayCount);
+                _currentNativeAddStartIndices[group.Index] = currentArrayCount;
             }
         }
+
+        /// <summary>
+        /// Walks the native-add slice of each group's pending-references list and
+        /// claims an <see cref="EntityHandle"/> for any slot still set to
+        /// <see cref="EntityHandle.Null"/> — i.e. queued by the void / handleless
+        /// AddEntity overloads, which deliberately defer id claiming to the main
+        /// thread to keep job-side enqueueing handle-free. Must run *after*
+        /// <see cref="SortNativeAdds"/> so the assigned ids follow deterministic
+        /// sort-key order rather than bag-thread arrival order. Pre-reserved
+        /// handles (non-Null) are skipped.
+        /// </summary>
+        internal void ClaimDeferredHandlesForNativeAdds(ref EntityHandleMap entityHandleMap)
+        {
+            for (int gi = 0; gi < _currentPendingReferences.Length; gi++)
+            {
+                var refs = _currentPendingReferences[gi];
+                if (refs == null || refs.Count == 0)
+                {
+                    continue;
+                }
+
+                var startIndex = _currentNativeAddStartIndices[gi];
+                if (startIndex < 0)
+                {
+                    // No native adds for this group this frame — only managed
+                    // adds, which already claimed at enqueue time.
+                    continue;
+                }
+
+                var count = refs.Count;
+                for (int i = startIndex; i < count; i++)
+                {
+                    if (refs[i] == EntityHandle.Null)
+                    {
+                        refs[i] = entityHandleMap.ClaimId();
+                    }
+                }
+            }
+        }
+
+        internal IterableDictionary<TypeId, IComponentArray>[] currentComponentsToAddPerGroup;
+
+        IterableDictionary<TypeId, IComponentArray>[] lastComponentsToAddPerGroup;
+
+        int[] _currentNumberEntitiesCreatedPerGroup;
+        int[] _lastNumberEntitiesCreatedPerGroup;
+
+        int _totalEntitiesCreatedThisFrame;
+        int _totalEntitiesCreatedLastFrame;
+
+        List<EntityHandle>[] _currentPendingReferences;
+        List<EntityHandle>[] _lastPendingReferences;
+
+        List<ulong>[] _currentNativeAddSortKeys;
+        List<ulong>[] _lastNativeAddSortKeys;
+
+        int[] _currentNativeAddStartIndices;
+        int[] _lastNativeAddStartIndices;
 
         // Cached native lists for SortNativeAdds to avoid per-frame allocations
         NativeList<KeyedIndex> _cachedSortBuffer;
         NativeList<int> _cachedSortIndices;
         NativeList<EntityHandle> _cachedSortTempRefs;
+
+        // Scratch for ReorderRangeJob — sized to max(elementSize * count) seen so far.
+        // Reused sequentially across per-component reorders within one SortNativeAdds call.
+        NativeList<byte> _cachedReorderScratch;
 
         struct KeyedIndex : IComparable<KeyedIndex>
         {
@@ -372,40 +363,57 @@ namespace Trecs.Internal
             public int CompareTo(KeyedIndex other) => Key.CompareTo(other.Key);
         }
 
+        // Burst-jobified equivalent of NativeList<KeyedIndex>.Sort(). Wrapped in
+        // IJob with .Run() so the AOT-compiled sort runs in place of the
+        // IL2CPP-generated managed call — same pattern as SortSwapsJob /
+        // SortRemovalsJob in SubmissionBurstJobs.cs.
+        [BurstCompile]
+        struct SortNatAddKeysJob : IJob
+        {
+            [NativeDisableUnsafePtrRestriction]
+            public long Ptr;
+            public int Count;
+
+            public void Execute()
+            {
+                unsafe
+                {
+                    NativeSortExtension.Sort((KeyedIndex*)Ptr, Count);
+                }
+            }
+        }
+
         /// <summary>
         /// Sort native adds within each group by composite sort key (accessorId, sortKey).
         /// Applies the resulting permutation to all component arrays and pending references.
         /// </summary>
         internal void SortNativeAdds()
         {
-            var sortKeysCount = _currentNativeAddSortKeys.Count;
-            if (sortKeysCount == 0)
-            {
-                return;
-            }
-
             if (!_cachedSortBuffer.IsCreated)
             {
                 _cachedSortBuffer = new NativeList<KeyedIndex>(16, Allocator.Persistent);
                 _cachedSortIndices = new NativeList<int>(16, Allocator.Persistent);
                 _cachedSortTempRefs = new NativeList<EntityHandle>(16, Allocator.Persistent);
+                _cachedReorderScratch = new NativeList<byte>(64, Allocator.Persistent);
             }
 
-            var sortKeysNodes = _currentNativeAddSortKeys.UnsafeKeys;
-            var sortKeysValues = _currentNativeAddSortKeys.UnsafeValues;
-
-            for (int gi = 0; gi < sortKeysCount; gi++)
+            for (int gi = 0; gi < _currentNativeAddSortKeys.Length; gi++)
             {
-                var group = sortKeysNodes[gi].key;
-                var keys = sortKeysValues[gi];
-                var count = keys.Count;
-
-                if (count <= 1)
+                var keys = _currentNativeAddSortKeys[gi];
+                if (keys == null || keys.Count <= 1)
                 {
                     continue;
                 }
 
-                var startIndex = _currentNativeAddStartIndices[group];
+                var group = GroupIndex.FromIndex(gi);
+                var count = keys.Count;
+                var startIndex = _currentNativeAddStartIndices[gi];
+                TrecsDebugAssert.That(
+                    startIndex >= 0,
+                    "Native add start index not set for group {0} despite non-empty sort keys. "
+                        + "MarkNativeAddStartIfNeeded must be called before AddPendingNativeAddSortKey.",
+                    group
+                );
 
                 // Build sortable key+index pairs
                 _cachedSortBuffer.Clear();
@@ -414,15 +422,23 @@ namespace Trecs.Internal
                     _cachedSortBuffer.Add(new KeyedIndex { Key = keys[i], Index = i });
                 }
 
-                // Native sort (non-allocating)
-                _cachedSortBuffer.Sort();
+                // Native sort (non-allocating) — Burst-jobified, .Run() blocks
+                // until the AOT-compiled sort completes on the main thread.
+                unsafe
+                {
+                    new SortNatAddKeysJob
+                    {
+                        Ptr = (long)_cachedSortBuffer.GetUnsafePtr(),
+                        Count = count,
+                    }.Run();
+                }
 
                 // Check for duplicates (adjacent after sort)
                 for (int i = 1; i < count; i++)
                 {
-                    Assert.That(
+                    TrecsDebugAssert.That(
                         _cachedSortBuffer[i].Key != _cachedSortBuffer[i - 1].Key,
-                        "Duplicate native add sort key detected in group {} (composite key {}). "
+                        "Duplicate native add sort key detected in group {0} (composite key {1}). "
                             + "Each system must use unique sort keys for adds to the same group.",
                         group,
                         _cachedSortBuffer[i].Key
@@ -452,19 +468,52 @@ namespace Trecs.Internal
                     _cachedSortIndices.Add(_cachedSortBuffer[i].Index);
                 }
 
-                // Apply permutation to all component arrays for this group
-                var groupDict = currentComponentsToAddPerGroup[group];
+                // Apply permutation to all component arrays for this group via a
+                // Burst-compiled reorder job. Scratch buffer is sized to the largest
+                // (elementSize * count) seen across the per-component loop and reused
+                // across .Run() calls — replaces a per-call Allocator.Temp alloc and
+                // moves the inner scatter-memcpy loop from IL2CPP-managed into Burst.
+                var groupDict = currentComponentsToAddPerGroup[gi];
                 var componentArrays = groupDict.UnsafeValues;
                 var componentCount = groupDict.Count;
 
+                int maxElementSize = 0;
                 for (int ci = 0; ci < componentCount; ci++)
                 {
-                    componentArrays[ci].ReorderRange(startIndex, count, _cachedSortIndices);
+                    var elemSize = componentArrays[ci].ElementSize;
+                    if (elemSize > maxElementSize)
+                        maxElementSize = elemSize;
+                }
+
+                int scratchBytes = (int)((long)maxElementSize * count);
+                if (_cachedReorderScratch.Length < scratchBytes)
+                    _cachedReorderScratch.Resize(
+                        scratchBytes,
+                        NativeArrayOptions.UninitializedMemory
+                    );
+
+                unsafe
+                {
+                    var scratchPtr = (long)_cachedReorderScratch.GetUnsafePtr();
+                    var permPtr = (long)_cachedSortIndices.GetUnsafePtr();
+                    for (int ci = 0; ci < componentCount; ci++)
+                    {
+                        var arr = componentArrays[ci];
+                        new ReorderRangeJob
+                        {
+                            BufferPtr = (long)arr.GetUnsafePtr(),
+                            ScratchPtr = scratchPtr,
+                            PermutationPtr = permPtr,
+                            ElementSize = arr.ElementSize,
+                            StartIndex = startIndex,
+                            Count = count,
+                        }.Run();
+                    }
                 }
 
                 // Apply permutation to pending references
                 _cachedSortTempRefs.Clear();
-                var refs = _currentPendingReferences[group];
+                var refs = _currentPendingReferences[gi];
                 for (int i = 0; i < count; i++)
                 {
                     _cachedSortTempRefs.Add(refs[startIndex + _cachedSortIndices[i]]);
@@ -478,7 +527,5 @@ namespace Trecs.Internal
         }
 
         bool _configurationFrozen;
-
-        //uint _totalEntitiesToAdd;
     }
 }

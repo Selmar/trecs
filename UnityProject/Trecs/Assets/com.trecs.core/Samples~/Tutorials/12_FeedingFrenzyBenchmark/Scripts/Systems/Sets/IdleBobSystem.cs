@@ -1,16 +1,13 @@
 using System;
-using Trecs.Internal;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Mathematics;
 
 namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
 {
-    [ExecutesAfter(typeof(IConsumingMeal))]
+    [ExecuteAfter(typeof(IConsumingMeal))]
     public partial class IdleBobSystem : IIdleBob, ISystem
     {
-        static readonly TrecsLog _log = new(nameof(IdleBobSystem));
-
         const float GoldenRatio = 1.61803f;
 
         readonly IdleBobSystemSettings _settings;
@@ -58,7 +55,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
             }
         }
 
-        [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.NotEating))]
+        [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.NotEating))]
         void RunForEachMethodAspect(in Fish fish)
         {
             float baseY = _settings.BobBaseY * fish.UniformScale;
@@ -70,15 +67,15 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
                     * math.sin(_settings.BobFrequency * World.ElapsedTime + phaseOffset);
         }
 
-        [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.NotEating))]
+        [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.NotEating))]
         void RunForEachMethodComponents(
             in UniformScale uniformScale,
             ref Position position,
-            EntityIndex entityIndex
+            EntityHandle entityHandle
         )
         {
             float baseY = _settings.BobBaseY * uniformScale.Value;
-            float phaseOffset = entityIndex.Index * GoldenRatio;
+            float phaseOffset = entityHandle.Id * GoldenRatio;
             position.Value.y =
                 baseY
                 + _settings.BobAmplitude
@@ -114,8 +111,8 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
                     .GroupSlices()
             )
             {
-                var positions = World.ComponentBuffer<Position>(slice.Group).Write;
-                var scales = World.ComponentBuffer<UniformScale>(slice.Group).Read;
+                var positions = World.ComponentBuffer<Position>(slice.GroupIndex).Write;
+                var scales = World.ComponentBuffer<UniformScale>(slice.GroupIndex).Read;
 
                 foreach (var i in slice.Indices)
                 {
@@ -130,7 +127,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
             }
         }
 
-        [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.NotEating))]
+        [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.NotEating))]
         [WrapAsJob]
         static void RunWrapAsJobAspect(
             in Fish fish,
@@ -147,18 +144,18 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
                     * math.sin(settings.BobFrequency * world.ElapsedTime + phaseOffset);
         }
 
-        [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.NotEating))]
+        [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.NotEating))]
         [WrapAsJob]
         static void RunWrapAsJobComponents(
             in UniformScale uniformScale,
             ref Position position,
-            EntityIndex entityIndex,
+            EntityHandle entityHandle,
             in NativeWorldAccessor world,
             [PassThroughArgument] IdleBobSystemSettings settings
         )
         {
             float baseY = settings.BobBaseY * uniformScale.Value;
-            float phaseOffset = entityIndex.Index * GoldenRatio;
+            float phaseOffset = entityHandle.Id * GoldenRatio;
             position.Value.y =
                 baseY
                 + settings.BobAmplitude
@@ -215,11 +212,11 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
             public float BobFrequency;
             public float BobBaseY;
 
-            [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.NotEating))]
-            public readonly void Execute(in Fish fish, EntityIndex entityIndex)
+            [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.NotEating))]
+            public readonly void Execute(in Fish fish, EntityHandle entityHandle)
             {
                 float baseY = BobBaseY * fish.UniformScale;
-                float phaseOffset = entityIndex.Index * GoldenRatio;
+                float phaseOffset = entityHandle.Id * GoldenRatio;
                 fish.Position.y =
                     baseY
                     + BobAmplitude
@@ -236,15 +233,15 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
             public float BobFrequency;
             public float BobBaseY;
 
-            [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.NotEating))]
+            [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.NotEating))]
             public readonly void Execute(
                 in UniformScale uniformScale,
                 ref Position position,
-                EntityIndex entityIndex
+                EntityHandle entityHandle
             )
             {
                 float baseY = BobBaseY * uniformScale.Value;
-                float phaseOffset = entityIndex.Index * GoldenRatio;
+                float phaseOffset = entityHandle.Id * GoldenRatio;
                 position.Value.y =
                     baseY
                     + BobAmplitude
@@ -261,14 +258,14 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
             public float BobFrequency;
             public float BobBaseY;
 
-            [FromWorld(Tag = typeof(FrenzyTags.Fish))]
+            [FromWorld(typeof(FrenzyTags.Fish))]
             public NativeEntitySetIndices<FrenzySets.NotEating> FilterIndices;
 
-            [FromWorld(Tag = typeof(FrenzyTags.Fish))]
+            [FromWorld(typeof(FrenzyTags.Fish))]
             public NativeComponentBufferRead<UniformScale> Scales;
 
             [NativeDisableParallelForRestriction]
-            [FromWorld(Tag = typeof(FrenzyTags.Fish))]
+            [FromWorld(typeof(FrenzyTags.Fish))]
             public NativeComponentBufferWrite<Position> Positions;
 
             public void Execute(int i)

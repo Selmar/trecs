@@ -1,30 +1,34 @@
 # 03 — Aspects
 
-Bundled component access via aspects. Instead of declaring individual component parameters, aspects group related read/write operations into a single reusable struct.
+Aspects group related read/write component operations into a single reusable struct, instead of listing individual component parameters.
 
-**Source:** `Samples/03_Aspects/`
+**Source:** `com.trecs.core/Samples~/Tutorials/03_Aspects/`
 
-## What It Does
+## What it does
 
-Boids (simple agents) move in straight lines and wrap around the edges of a bounded area. Their GameObjects are rotated to face the direction of movement.
+Boids move in straight lines and wrap around a bounded area, rotated to face their movement direction.
 
 ## Schema
 
 ### Components
 
-`Position`, `Velocity`, `Speed`, `GameObjectId` from Common.
+`Position` from `Common/`, plus `Velocity` and `Speed` defined in this sample. The template also pulls in `PrefabId` / `GameObjectId` via the `RenderableGameObject` base.
 
-### Tags & Template
+### Tags & template
 
 ```csharp
 public struct Boid : ITag { }
 
-public partial class BoidEntity : ITemplate, IHasTags<SampleTags.Boid>
+public partial class BoidEntity
+    : ITemplate,
+        IExtends<CommonTemplates.RenderableGameObject>,
+        ITagged<SampleTags.Boid>
 {
-    public Position Position = Position.Default;
-    public Velocity Velocity;
-    public Speed Speed;
-    public GameObjectId GameObjectId;
+    Position Position = default;
+    Velocity Velocity;
+    Speed Speed;
+    ColorComponent Color = new(UnityEngine.Color.white);
+    PrefabId PrefabId = new(AspectsPrefabs.Boid);
 }
 ```
 
@@ -32,7 +36,7 @@ public partial class BoidEntity : ITemplate, IHasTags<SampleTags.Boid>
 
 ### BoidMovementSystem
 
-Defines an aspect and uses it for iteration:
+Defines an aspect and iterates over it:
 
 ```csharp
 public partial class BoidMovementSystem : ISystem
@@ -57,10 +61,10 @@ The `Boid` aspect provides:
 
 ### BoidWrapSystem
 
-Wraps boids that go out of bounds. Uses `[ExecutesAfter]` to run after movement:
+Wraps boids that go out of bounds. `[ExecuteAfter]` ensures it runs after movement:
 
 ```csharp
-[ExecutesAfter(typeof(BoidMovementSystem))]
+[ExecuteAfter(typeof(BoidMovementSystem))]
 public partial class BoidWrapSystem : ISystem
 {
     readonly float _halfSize;
@@ -85,13 +89,14 @@ public partial class BoidWrapSystem : ISystem
 }
 ```
 
-### BoidRendererSystem (Variable Update)
+### BoidPresenter (variable update)
 
-Reads position and velocity to update the GameObject transform and face the movement direction.
+Reads position and velocity, then updates the GameObject transform to face the movement direction.
 
-## Concepts Introduced
+## Concepts introduced
 
-- **Aspects** — `partial struct` implementing `IAspect`, `IRead<T>`, `IWrite<T>`
-- **`[Unwrap]`** components expose their inner value type through aspect properties
-- **Multiple aspects per system** — different systems can define different aspect views over the same components
-- **Read vs Write** — `IRead<T>` provides `ref readonly`, `IWrite<T>` provides `ref`
+- **Aspects** — `partial struct` implementing `IAspect`, `IRead<T>`, `IWrite<T>`. See [Aspects](../data-access/aspects.md).
+- **`[Unwrap]`** components expose their inner value type through aspect properties. See [Components](../core/components.md).
+- **Multiple aspects per system** — different systems can define different aspect views over the same components.
+- **Read vs Write** — `IRead<T>` provides `ref readonly`, `IWrite<T>` provides `ref`.
+- **`Aspect.Query(World).MatchByComponents()`** vs **`[ForEachEntity]`** — two ways to drive iteration over an aspect. See [Queries & Iteration](../data-access/queries-and-iteration.md).

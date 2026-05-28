@@ -8,7 +8,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
 
         public InitialSetsApplier(FrenzyConfigSettings config, World world)
         {
-            World = world.CreateAccessor();
+            World = world.CreateAccessor(AccessorRole.Fixed);
 
             if (config.SubsetApproach != FrenzySubsetApproach.Sets)
             {
@@ -29,15 +29,15 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
         WorldAccessor World { get; }
 
         [ForEachEntity]
-        void OnFishAdded(EntityIndex entityIndex)
+        void OnFishAdded(EntityHandle handle)
         {
-            World.SetAdd<FrenzySets.NotEating>(entityIndex);
+            World.Set<FrenzySets.NotEating>().DeferredAdd(handle);
         }
 
         [ForEachEntity]
-        void OnMealAdded(EntityIndex entityIndex)
+        void OnMealAdded(EntityHandle handle)
         {
-            World.SetAdd<FrenzySets.NotEating>(entityIndex);
+            World.Set<FrenzySets.NotEating>().DeferredAdd(handle);
         }
 
         public void Dispose()

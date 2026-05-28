@@ -11,8 +11,8 @@ namespace Trecs
 {
     /// <summary>
     /// Primary API for interacting with the ECS world. Provides entity lifecycle operations,
-    /// component access, queries, event subscriptions, and job scheduling.
-    /// Heap allocations and pointer operations are accessed via <see cref="Heap"/>.
+    /// component access, queries, event subscriptions, job scheduling, and heap pointer
+    /// operations (allocation, read/write, disposal of shared/unique/native pointers).
     /// <para>
     /// <b>Thread Safety:</b> WorldAccessor is <b>main-thread-only</b>. All methods must be called
     /// from the main thread. For job-safe operations, use <see cref="ToNative"/> to obtain a
@@ -20,12 +20,11 @@ namespace Trecs
     /// deterministic ordering via sort keys.
     /// </para>
     /// </summary>
-    public class WorldAccessor
+    public sealed class WorldAccessor
     {
-        static readonly TrecsLog _log = new(nameof(WorldAccessor));
-
         readonly World _world;
         readonly SystemRunner _systemRunner;
+        readonly SystemEnableState _systemEnableState;
         readonly EcsStructuralOps _structuralOps;
         readonly EntityQuerier _entitiesDb;
         readonly WorldInfo _worldInfo;
@@ -33,18 +32,21 @@ namespace Trecs
         readonly Rng _fixedRng;
         readonly Rng _variableRng;
         readonly EntityInputQueue _entityInputQueue;
-        readonly bool _isFixedSystem;
-        readonly bool _isInputSystem;
+        readonly AccessorRole _role;
+        readonly bool _isInput;
         readonly string _debugName;
+        readonly string _createdAtFile;
+        readonly int _createdAtLine;
+        readonly EcsHeapAllocator _heapAllocator;
+        NativeHeapResolver _chunkStoreResolver;
 
-        internal IComponentAccessRecorder AccessRecorder;
-
-        public HeapAccessor Heap { get; }
+        internal IAccessRecorder AccessRecorder;
 
         internal WorldAccessor(
             int id,
             World world,
             SystemRunner systemRunnerInfo,
+            SystemEnableState systemEnableState,
             EcsHeapAllocator heapAllocator,
             EcsStructuralOps structuralOps,
             EntityQuerier entitiesDb,
@@ -53,15 +55,16 @@ namespace Trecs
             Rng fixedRng,
             Rng variableRng,
             EntityInputQueue entityInputQueue,
-            bool isInputSystem,
-            bool isFixedSystem,
-            string debugName
+            AccessorRole role,
+            bool isInput,
+            string debugName,
+            string createdAtFile,
+            int createdAtLine
         )
         {
-            Assert.That(!(isInputSystem && isFixedSystem));
-
             _world = world;
             _systemRunner = systemRunnerInfo;
+            _systemEnableState = systemEnableState;
             _structuralOps = structuralOps;
             _entitiesDb = entitiesDb;
             _worldInfo = worldInfo;
@@ -69,34 +72,92 @@ namespace Trecs
             _fixedRng = fixedRng;
             _variableRng = variableRng;
             _entityInputQueue = entityInputQueue;
-            _isInputSystem = isInputSystem;
-            _isFixedSystem = isFixedSystem;
+            _role = role;
+            _isInput = isInput;
             _debugName = debugName;
+            _createdAtFile = createdAtFile ?? string.Empty;
+            _createdAtLine = createdAtLine;
+            _heapAllocator = heapAllocator;
+            _chunkStoreResolver = new NativeHeapResolver(
+                in heapAllocator.NativeHeapResolver,
+                canMutateHeap: role == AccessorRole.Unrestricted || role == AccessorRole.Fixed
+            );
 
             Id = id;
-            Heap = new HeapAccessor(
-                heapAllocator,
-                systemRunnerInfo,
-                isFixedSystem,
-                isInputSystem,
-                fixedRng,
-                debugName
-            );
         }
 
-        public bool IsFixedSystem
+        /// <summary>
+        /// Source file path of the <c>CreateAccessor</c> call that produced
+        /// this accessor, captured via <see cref="CallerFilePathAttribute"/>
+        /// in DEBUG builds. Empty in release builds and for accessors made
+        /// from non-source-tracked callsites (system-owned accessors take
+        /// their identity from the system type instead). Editor tooling
+        /// surfaces this so users can jump back to where a manual accessor
+        /// was created.
+        /// </summary>
+        public string CreatedAtFile
         {
-            get { return _isFixedSystem; }
+            get { return _createdAtFile; }
         }
 
-        public bool IsInputSystem
+        /// <summary>
+        /// Source line of the <c>CreateAccessor</c> callsite. Pairs with
+        /// <see cref="CreatedAtFile"/>; <c>0</c> when unavailable.
+        /// </summary>
+        public int CreatedAtLine
         {
-            get { return _isInputSystem; }
+            get { return _createdAtLine; }
         }
+
+        /// <summary>
+        /// The <see cref="AccessorRole"/> this accessor was created with — controls
+        /// component read/write rules, structural-change rules, and heap-allocation
+        /// rules. See <see cref="AccessorRole"/> for the full matrix.
+        /// </summary>
+        public AccessorRole Role
+        {
+            get { return _role; }
+        }
+
+        bool IsFixed => _role == AccessorRole.Fixed;
+        bool IsUnrestricted => _role == AccessorRole.Unrestricted;
+        bool IsInput => _isInput;
 
         public bool IsExecutingSystems
         {
             get { return _systemRunner.IsExecutingSystems; }
+        }
+
+        /// <summary>
+        /// When true, all updates (fixed, variable, input, presentation) are skipped.
+        /// Distinct from <see cref="FixedIsPaused"/>, which only halts the fixed-update phase.
+        /// </summary>
+        public bool IsPaused
+        {
+            get { return _systemRunner.IsPaused; }
+            set { _systemRunner.IsPaused = value; }
+        }
+
+        /// <summary>
+        /// When true, the fixed-update phase is halted; variable, input, and presentation
+        /// updates continue. Subscribe to changes via
+        /// <c>world.Events.OnFixedPauseChanged(cb)</c>.
+        /// </summary>
+        public bool FixedIsPaused
+        {
+            get { return _systemRunner.FixedIsPaused; }
+            set { _systemRunner.FixedIsPaused = value; }
+        }
+
+        /// <summary>
+        /// Schedule one fixed-update frame to run on the next host tick, then
+        /// resume the paused state. Requires <see cref="FixedIsPaused"/> to be
+        /// true. Only fixed frames are steppable — variable frames are driven
+        /// by the host update loop.
+        /// </summary>
+        public void StepFixedFrame()
+        {
+            _systemRunner.StepFixedFrame();
         }
 
         /// <summary>
@@ -121,8 +182,8 @@ namespace Trecs
                     return _systemRunner.VariableDeltaTime;
                 }
 
-                throw Assert.CreateException(
-                    "Cannot access DeltaTime in context {} - use FixedDeltaTime or VariableDeltaTime explicitly instead",
+                throw TrecsDebugAssert.CreateException(
+                    "Cannot access DeltaTime in context {0} - use FixedDeltaTime or VariableDeltaTime explicitly instead",
                     DebugName
                 );
             }
@@ -150,8 +211,8 @@ namespace Trecs
                     return _systemRunner.VariableElapsedTime;
                 }
 
-                throw Assert.CreateException(
-                    "Cannot access ElapsedTime in context {} - use FixedElapsedTime or VariableElapsedTime explicitly instead",
+                throw TrecsDebugAssert.CreateException(
+                    "Cannot access ElapsedTime in context {0} - use FixedElapsedTime or VariableElapsedTime explicitly instead",
                     DebugName
                 );
             }
@@ -180,13 +241,19 @@ namespace Trecs
                     return _variableRng;
                 }
 
-                throw Assert.CreateException(
-                    "Cannot access Rng in context {} - use FixedRng or VariableRng explicitly instead",
+                throw TrecsDebugAssert.CreateException(
+                    "Cannot access Rng in context {0} - use FixedRng or VariableRng explicitly instead",
                     DebugName
                 );
             }
         }
 
+        /// <summary>
+        /// Returns the frame count appropriate to the current phase —
+        /// <see cref="FixedFrame"/> in Fixed phase, <see cref="VariableFrame"/> in
+        /// Variable phase. Throws if the accessor's phase is ambiguous (e.g.
+        /// Unrestricted role) — use the explicit accessors in that case.
+        /// </summary>
         public int Frame
         {
             get
@@ -204,13 +271,18 @@ namespace Trecs
                     return _systemRunner.VariableFrame;
                 }
 
-                throw Assert.CreateException(
-                    "Cannot access Frame in context {} - use FixedFrame or VariableFrame explicitly instead",
+                throw TrecsDebugAssert.CreateException(
+                    "Cannot access Frame in context {0} - use FixedFrame or VariableFrame explicitly instead",
                     DebugName
                 );
             }
         }
 
+        /// <summary>
+        /// Deterministic RNG seeded for the fixed-update phase. Identical across
+        /// record/replay — safe for use in gameplay logic that must reproduce on
+        /// replay. Only callable from Fixed or Unrestricted accessors.
+        /// </summary>
         public Rng FixedRng
         {
             get
@@ -220,6 +292,11 @@ namespace Trecs
             }
         }
 
+        /// <summary>
+        /// Deterministic RNG seeded for the variable-update phase. Only callable from
+        /// Variable or Unrestricted accessors. Not deterministic across record/replay
+        /// — use <see cref="FixedRng"/> for replayable randomness.
+        /// </summary>
         public Rng VariableRng
         {
             get
@@ -230,43 +307,49 @@ namespace Trecs
             }
         }
 
+        /// <summary>
+        /// Human-readable name for this accessor, surfaced in error messages and
+        /// editor tooling. System accessors default to the system's type name;
+        /// user-created accessors take the name passed to <c>CreateAccessor</c>.
+        /// </summary>
         public string DebugName
         {
             get { return _debugName; }
         }
 
-        public int Id { get; private set; }
+        /// <summary>
+        /// Per-world unique integer identifier for this accessor. Stable across
+        /// the accessor's lifetime; used internally for access tracking and as a
+        /// hash key in tooling.
+        /// </summary>
+        public int Id { get; }
 
-        public WorldInfo WorldInfo
-        {
-            get
-            {
-
-                return _worldInfo;
-            }
-        }
+        /// <summary>
+        /// Static metadata about the owning <see cref="World"/> — registered
+        /// templates, groups, components, system list. Safe to read from any
+        /// phase.
+        /// </summary>
+        public WorldInfo WorldInfo => _worldInfo;
 
         /// <summary>Whether there are any outstanding jobs that haven't completed yet.</summary>
         public bool HasOutstandingJobs => JobScheduler.HasOutstandingJobs;
 
-        public EntityHandle GlobalEntityHandle
-        {
-            get
-            {
+        /// <summary>
+        /// Handle for the world's auto-created global entity.
+        /// </summary>
+        public EntityHandle GlobalEntityHandle => _world.GlobalEntityHandle;
 
-                return _world.GlobalEntityHandle;
-            }
-        }
+        /// <summary>
+        /// Transient index for the world's global entity. Prefer
+        /// <see cref="GlobalEntityHandle"/> outside hot loops.
+        /// </summary>
+        public EntityIndex GlobalEntityIndex => _worldInfo.GlobalEntityIndex;
 
-        public EntityIndex GlobalEntityIndex
-        {
-            get
-            {
-
-                return _worldInfo.GlobalEntityIndex;
-            }
-        }
-
+        /// <summary>
+        /// Accumulated wall-clock time delivered by the variable-update phase.
+        /// Only readable from Variable or Unrestricted accessors — Fixed-phase
+        /// code should use <see cref="FixedElapsedTime"/>.
+        /// </summary>
         public float VariableElapsedTime
         {
             get
@@ -277,6 +360,10 @@ namespace Trecs
             }
         }
 
+        /// <summary>
+        /// Configured fixed-update step length, in seconds. Constant per world.
+        /// Safe to read from any phase.
+        /// </summary>
         public float FixedDeltaTime
         {
             get
@@ -286,6 +373,10 @@ namespace Trecs
             }
         }
 
+        /// <summary>
+        /// Wall-clock delta for the current variable-update frame, in seconds.
+        /// Only readable from Variable or Unrestricted accessors.
+        /// </summary>
         public float VariableDeltaTime
         {
             get
@@ -296,6 +387,10 @@ namespace Trecs
             }
         }
 
+        /// <summary>
+        /// Accumulated fixed-step time the simulation has consumed (<c>FixedFrame</c> ×
+        /// <see cref="FixedDeltaTime"/>). Deterministic across record/replay.
+        /// </summary>
         public float FixedElapsedTime
         {
             get
@@ -305,15 +400,17 @@ namespace Trecs
             }
         }
 
-        public int FixedFrame
-        {
-            get
-            {
+        /// <summary>
+        /// Number of fixed-update frames the simulation has executed. Deterministic
+        /// across record/replay; use as a stable time axis for replayable logic.
+        /// </summary>
+        public int FixedFrame => _systemRunner.FixedFrame;
 
-                return _systemRunner.FixedFrame;
-            }
-        }
-
+        /// <summary>
+        /// Number of variable-update frames the host has driven. NOT deterministic
+        /// across record/replay — host frame rate is independent of the simulation.
+        /// Only readable from Variable or Unrestricted accessors.
+        /// </summary>
         public int VariableFrame
         {
             get
@@ -323,14 +420,16 @@ namespace Trecs
             }
         }
 
-        public ISimpleObservable SubmissionCompletedEvent => _world.SubmissionCompletedEvent;
-
+        /// <summary>
+        /// Entry point for subscribing to entity lifecycle and frame events
+        /// (<c>OnAdded</c>, <c>OnRemoved</c>, <c>OnFixedUpdateCompleted</c>, etc).
+        /// </summary>
         public EntityEventsBuilder Events
         {
             get
             {
                 AssertCanAccessEvents();
-                return _eventsManager.Events(_worldInfo, this);
+                return _eventsManager.Events(_worldInfo, this, _systemRunner);
             }
         }
 
@@ -339,53 +438,37 @@ namespace Trecs
             get { return _world; }
         }
 
-        internal IReadOnlyList<ExecutableSystemInfo> Systems
-        {
-            get
-            {
-
-                return _systemRunner.Systems;
-            }
-        }
-
-        internal IReadOnlyList<int> SortedFixedSystems
-        {
-            get
-            {
-
-                return _systemRunner.SortedFixedSystems;
-            }
-        }
-
-        internal IReadOnlyList<int> SortedVariableSystems
-        {
-            get
-            {
-
-                return _systemRunner.SortedVariableSystems;
-            }
-        }
+        internal IReadOnlyList<int> SortedFixedSystems => _systemRunner.SortedFixedSystems;
 
         internal IReadOnlyList<int> SortedInputSystems
         {
-            get
-            {
-
-                return _systemRunner.SortedInputSystems;
-            }
+            get { return _systemRunner.SortedInputSystems; }
         }
 
-        internal IReadOnlyList<int> SortedLateVariableSystems
+        internal IReadOnlyList<int> SortedEarlyPresentationSystems
         {
-            get { return _systemRunner.SortedLateVariableSystems; }
+            get { return _systemRunner.SortedEarlyPresentationSystems; }
+        }
+
+        internal IReadOnlyList<int> SortedPresentationSystems
+        {
+            get { return _systemRunner.SortedPresentationSystems; }
+        }
+
+        internal IReadOnlyList<int> SortedLatePresentationSystems
+        {
+            get { return _systemRunner.SortedLatePresentationSystems; }
         }
 
         internal RuntimeJobScheduler JobScheduler => _systemRunner.JobScheduler;
         internal WorldSafetyManager SafetyManager => _systemRunner.SafetyManager;
-        internal bool RequireDeterministicSubmission =>
-            _systemRunner.RequireDeterministicSubmission;
 
-        bool CanMakeStructuralChanges => !_systemRunner.IsExecutingSystems || _isFixedSystem;
+        // Fixed and Unrestricted roles share the gate for simulation-state mutation:
+        // entity structural changes (Add/Remove/Move, set ops, SetSystemPaused),
+        // heap mutation (Alloc/Write/Set/Clone/Dispose), and the FixedRng stream.
+        // Used by ToNative to seed the Burst-job-side AllowSimulationMutation flag,
+        // and by AssertCanMakeStructuralChanges for the main-thread structural gate.
+        bool CanMutateSimulation => IsUnrestricted || IsFixed;
 
         /// <summary>
         /// Track an externally-scheduled job (not scheduled through Trecs).
@@ -393,23 +476,26 @@ namespace Trecs
         /// Optionally chain <c>.Writes</c> / <c>.WritesGlobal</c> to declare component
         /// dependencies so other systems wait when accessing those components.
         /// </summary>
-        public ExternalJobTracker TrackExternalJob(JobHandle handle)
+        /// <param name="handle">The externally-scheduled job to track.</param>
+        /// <param name="name">
+        /// Optional short identifier shown as the per-job <c>"Wait: {name}"</c>
+        /// profiling span label inside <c>CompleteAllOutstanding</c>. Defaults to
+        /// <c>"ExternalJob"</c>.
+        /// </param>
+        public ExternalJobTracker TrackExternalJob(JobHandle handle, string name = "ExternalJob")
         {
-            JobScheduler.TrackJob(handle);
-            return new ExternalJobTracker(JobScheduler, _worldInfo, handle);
+            JobScheduler.TrackJob(handle, name);
+            return new ExternalJobTracker(JobScheduler, _worldInfo, handle, name);
         }
 
         /// <summary>
         /// Ensure it is safe to access a component on the main thread by completing outstanding
         /// jobs that read or write the given component in the given group.
         /// </summary>
-        public bool SyncMainThread<T>(Group group)
+        public bool SyncMainThread<T>(GroupIndex group)
             where T : unmanaged, IEntityComponent
         {
-            return JobScheduler.SyncMainThread(
-                ResourceId.Component(ComponentTypeId<T>.Value),
-                group
-            );
+            return JobScheduler.SyncMainThread(ResourceId.Component(TypeId<T>.Value), group);
         }
 
         /// <summary>
@@ -418,88 +504,76 @@ namespace Trecs
         /// you need entities to be visible before the next automatic submission point.
         /// Cannot be called during system execution.
         /// </summary>
-        public void SubmitEntities()
+        public void Submit()
         {
-            Assert.That(
+            TrecsDebugAssert.That(
                 !_systemRunner.IsExecutingSystems,
-                "WorldAccessor accessor {} cannot submit entities during system execution",
+                "WorldAccessor accessor {0} cannot submit entities during system execution",
                 DebugName
             );
-            _world.SubmitEntities();
+            _world.Submit();
         }
 
         /// <summary>
-        /// Schedules moving an entity to the group identified by the given tags. The move is
-        /// deferred until the next entity submission. The entity's component data is preserved
-        /// for components shared between the source and destination groups.
+        /// Schedules moving the entity to the partition where the dimension containing
+        /// <typeparamref name="T"/> now has <typeparamref name="T"/> as its active
+        /// variant. All other dimensions and tags are preserved. For presence/absence
+        /// dimensions this sets the tag present; for multi-variant dimensions it
+        /// switches the active variant. Throws if <typeparamref name="T"/> is not
+        /// declared as a partition variant on the entity's template (via
+        /// <see cref="IPartitionedBy{T1}"/> / <see cref="IPartitionedBy{T1, T2}"/>),
+        /// or if another SetTag/UnsetTag has already touched the same dimension on
+        /// this entity in the current submission.
         /// </summary>
-        public void MoveTo(EntityIndex entityIndex, TagSet tags)
+        internal void SetTag<T>(EntityIndex entityIndex)
+            where T : struct, ITag
         {
-            AssertCanMakeStructuralChanges();
-
-            var toGroup = _worldInfo.GetSingleGroupWithTags(tags);
-
-            _structuralOps.MoveTo(entityIndex, toGroup);
+            AssertCanMakeStructuralChangesToGroup(entityIndex.GroupIndex);
+            _structuralOps.QueueSetTag(Id, entityIndex, Tag<T>.Value);
         }
 
-        public void MoveTo<T1>(EntityIndex entityIndex)
-            where T1 : struct, ITag => MoveTo(entityIndex, TagSet<T1>.Value);
+        internal void SetTag<T>(EntityHandle entityHandle)
+            where T : struct, ITag => SetTag<T>(entityHandle.ToIndex(_world));
 
-        public void MoveTo<T1, T2>(EntityIndex entityIndex)
-            where T1 : struct, ITag
-            where T2 : struct, ITag => MoveTo(entityIndex, TagSet<T1, T2>.Value);
+        /// <summary>
+        /// Schedules clearing <typeparamref name="T"/> from the entity, moving it to
+        /// the absent partition of <typeparamref name="T"/>'s presence/absence
+        /// dimension. Only valid when <typeparamref name="T"/> is declared via
+        /// <see cref="IPartitionedBy{T1}"/> (arity-1 form). For multi-variant
+        /// dimensions there is no "absent" partition — use
+        /// <see cref="SetTag{T}(EntityIndex)"/> to switch variants instead.
+        /// </summary>
+        internal void UnsetTag<T>(EntityIndex entityIndex)
+            where T : struct, ITag
+        {
+            AssertCanMakeStructuralChangesToGroup(entityIndex.GroupIndex);
+            _structuralOps.QueueUnsetTag(Id, entityIndex, Tag<T>.Value);
+        }
 
-        public void MoveTo<T1, T2, T3>(EntityIndex entityIndex)
-            where T1 : struct, ITag
-            where T2 : struct, ITag
-            where T3 : struct, ITag => MoveTo(entityIndex, TagSet<T1, T2, T3>.Value);
-
-        public void MoveTo<T1, T2, T3, T4>(EntityIndex entityIndex)
-            where T1 : struct, ITag
-            where T2 : struct, ITag
-            where T3 : struct, ITag
-            where T4 : struct, ITag => MoveTo(entityIndex, TagSet<T1, T2, T3, T4>.Value);
-
-        public void MoveTo(EntityHandle entityHandle, TagSet tags) =>
-            MoveTo(entityHandle.ToIndex(_world), tags);
-
-        public void MoveTo<T1>(EntityHandle entityHandle)
-            where T1 : struct, ITag => MoveTo<T1>(entityHandle.ToIndex(_world));
-
-        public void MoveTo<T1, T2>(EntityHandle entityHandle)
-            where T1 : struct, ITag
-            where T2 : struct, ITag => MoveTo<T1, T2>(entityHandle.ToIndex(_world));
-
-        public void MoveTo<T1, T2, T3>(EntityHandle entityHandle)
-            where T1 : struct, ITag
-            where T2 : struct, ITag
-            where T3 : struct, ITag => MoveTo<T1, T2, T3>(entityHandle.ToIndex(_world));
-
-        public void MoveTo<T1, T2, T3, T4>(EntityHandle entityHandle)
-            where T1 : struct, ITag
-            where T2 : struct, ITag
-            where T3 : struct, ITag
-            where T4 : struct, ITag => MoveTo<T1, T2, T3, T4>(entityHandle.ToIndex(_world));
+        internal void UnsetTag<T>(EntityHandle entityHandle)
+            where T : struct, ITag => UnsetTag<T>(entityHandle.ToIndex(_world));
 
         /// <summary>
         /// Schedules removal of an entity. The removal is deferred until the next entity submission.
         /// </summary>
-        public void RemoveEntity(EntityIndex entityIndex)
+        internal void RemoveEntity(EntityIndex entityIndex)
         {
-            AssertCanMakeStructuralChanges();
+            AssertCanMakeStructuralChangesToGroup(entityIndex.GroupIndex);
 
             _structuralOps.RemoveEntity(entityIndex);
+
+            AccessRecorder?.OnEntityRemoved(_debugName, entityIndex.GroupIndex);
         }
 
         public void RemoveEntitiesWithTags(TagSet tags)
         {
-            AssertCanMakeStructuralChanges();
-
             var groups = WorldInfo.GetGroupsWithTags(tags);
             foreach (var group in groups)
             {
+                AssertCanMakeStructuralChangesToGroup(group);
                 var count = CountEntitiesInGroup(group);
                 _structuralOps.RemoveAllEntitiesInGroup(group, count);
+                AccessRecorder?.OnEntityRemoved(_debugName, group);
             }
         }
 
@@ -521,7 +595,7 @@ namespace Trecs
             where T3 : struct, ITag
             where T4 : struct, ITag => RemoveEntitiesWithTags(TagSet<T1, T2, T3, T4>.Value);
 
-        public void RemoveEntity(EntityHandle entityHandle)
+        internal void RemoveEntity(EntityHandle entityHandle)
         {
             RemoveEntity(entityHandle.ToIndex(_world));
         }
@@ -529,7 +603,7 @@ namespace Trecs
         /// <summary>
         /// NOTE: Get groups list from WorldInfo so that it is cached
         /// </summary>
-        public int CountEntitiesInGroups(LocalReadOnlyFastList<Group> groups)
+        public int CountEntitiesInGroups(ReadOnlyList<GroupIndex> groups)
         {
             var totalCount = 0;
 
@@ -575,11 +649,15 @@ namespace Trecs
             [CallerLineNumber] int callerLine = 0
         )
         {
-            AssertCanMakeStructuralChanges();
-
             var group = _worldInfo.GetSingleGroupWithTags(tags);
 
-            return _structuralOps.AddEntity(group, callerFile, callerLine);
+            AssertCanMakeStructuralChangesToGroup(group);
+
+            var initializer = _structuralOps.AddEntity(group, callerFile, callerLine);
+
+            AccessRecorder?.OnEntityAdded(_debugName, group);
+
+            return initializer;
         }
 
         public EntityInitializer AddEntity<T1>(
@@ -613,7 +691,7 @@ namespace Trecs
             where T4 : struct, ITag =>
             AddEntity(TagSet<T1, T2, T3, T4>.Value, callerFile, callerLine);
 
-        public int CountEntitiesInGroup(Group group)
+        public int CountEntitiesInGroup(GroupIndex group)
         {
             return _entitiesDb.CountEntitiesInGroup(group);
         }
@@ -628,28 +706,100 @@ namespace Trecs
             return total;
         }
 
-        public ComponentBufferAccessor<T> ComponentBuffer<T>(Group group)
+        // ── Warmup ────────────────────────────────────────────────────
+        // Per-group component-array slots are normally lazy: the first
+        // AddEntity into a group triggers the IComponentArray allocations,
+        // which keeps world startup cheap even when templates declare many
+        // partitions. The Warmup* methods let callers opt back into the
+        // eager behavior — either world-wide or for specific hot groups —
+        // when they'd rather pay the allocation cost up front than at
+        // first-add time.
+
+        /// <summary>
+        /// Eagerly materializes the component-array slots for <paramref name="group"/>
+        /// and grows each to hold at least <paramref name="initialCapacity"/> entities.
+        /// Safe to call multiple times; capacities only grow.
+        /// </summary>
+        public void Warmup(GroupIndex group, int initialCapacity = 1)
+        {
+            TrecsDebugAssert.That(!group.IsNull, "Cannot warm up null group");
+            TrecsDebugAssert.That(initialCapacity >= 0, "initialCapacity must be non-negative");
+            var template = _worldInfo.GetResolvedTemplateForGroup(group);
+            _structuralOps.WarmupGroup(group, initialCapacity, template.ComponentBuilders);
+        }
+
+        /// <summary>
+        /// Warms up every group whose tag set contains <paramref name="tags"/>
+        /// — i.e. every group an entity added with these tags could land in
+        /// after the resolver picks a partition. <paramref name="initialCapacity"/>
+        /// is per-group. Throws if no groups match.
+        /// </summary>
+        public void Warmup(TagSet tags, int initialCapacity = 1)
+        {
+            var groups = _worldInfo.GetGroupsWithTags(tags);
+            TrecsDebugAssert.That(groups.Count > 0, "No groups found for tags {0}", tags);
+            for (int i = 0; i < groups.Count; i++)
+            {
+                Warmup(groups[i], initialCapacity);
+            }
+        }
+
+        public void Warmup<T1>(int initialCapacity = 1)
+            where T1 : struct, ITag => Warmup(TagSet<T1>.Value, initialCapacity);
+
+        public void Warmup<T1, T2>(int initialCapacity = 1)
+            where T1 : struct, ITag
+            where T2 : struct, ITag => Warmup(TagSet<T1, T2>.Value, initialCapacity);
+
+        public void Warmup<T1, T2, T3>(int initialCapacity = 1)
+            where T1 : struct, ITag
+            where T2 : struct, ITag
+            where T3 : struct, ITag => Warmup(TagSet<T1, T2, T3>.Value, initialCapacity);
+
+        public void Warmup<T1, T2, T3, T4>(int initialCapacity = 1)
+            where T1 : struct, ITag
+            where T2 : struct, ITag
+            where T3 : struct, ITag
+            where T4 : struct, ITag => Warmup(TagSet<T1, T2, T3, T4>.Value, initialCapacity);
+
+        /// <summary>
+        /// Warms up every group in the world — matches the pre-0.x eager-allocation
+        /// behavior. Call this from setup code if you'd rather pay the allocation
+        /// cost up front than at first-entity time.
+        /// </summary>
+        public void WarmupAllGroups(int initialCapacityPerGroup = 1)
+        {
+            foreach (var group in _worldInfo.AllGroups)
+            {
+                Warmup(group, initialCapacityPerGroup);
+            }
+        }
+
+        public ComponentBufferAccessor<T> ComponentBuffer<T>(GroupIndex group)
             where T : unmanaged, IEntityComponent
         {
             return new ComponentBufferAccessor<T>(this, group);
         }
 
-        public ComponentAccessor<T> Component<T>(EntityIndex entityIndex)
+        internal ComponentAccessor<T> Component<T>(EntityIndex entityIndex)
             where T : unmanaged, IEntityComponent
         {
             return new ComponentAccessor<T>(this, entityIndex);
         }
 
-        public ComponentAccessor<T> Component<T>(EntityHandle entityHandle)
+        internal ComponentAccessor<T> Component<T>(EntityHandle entityHandle)
             where T : unmanaged, IEntityComponent
         {
             return new ComponentAccessor<T>(this, entityHandle.ToIndex(_entitiesDb));
         }
 
-        public bool TryComponent<T>(EntityIndex entityIndex, out ComponentAccessor<T> componentRef)
+        internal bool TryComponent<T>(
+            EntityIndex entityIndex,
+            out ComponentAccessor<T> componentRef
+        )
             where T : unmanaged, IEntityComponent
         {
-            SyncAndRecordRead<T>(entityIndex.Group);
+            SyncAndRecordRead<T>(entityIndex.GroupIndex);
             if (_entitiesDb.TryQueryEntitiesAndIndex<T>(entityIndex, out _, out _))
             {
                 componentRef = new ComponentAccessor<T>(this, entityIndex);
@@ -659,24 +809,23 @@ namespace Trecs
             return false;
         }
 
+        internal bool TryComponent<T>(
+            EntityHandle entityHandle,
+            out ComponentAccessor<T> componentRef
+        )
+            where T : unmanaged, IEntityComponent
+        {
+            return TryComponent<T>(entityHandle.ToIndex(_entitiesDb), out componentRef);
+        }
+
         /// <summary>
         /// Returns a <see cref="ComponentAccessor{T}"/> for the global (singleton) entity.
-        /// Use this for world-wide state that doesn't belong to any specific entity type.
+        /// Use this for world-wide state that isn't tied to any specific entity.
         /// </summary>
         public ComponentAccessor<T> GlobalComponent<T>()
             where T : unmanaged, IEntityComponent
         {
             return Component<T>(_worldInfo.GlobalEntityIndex);
-        }
-
-        public EntityAccessor Entity(EntityIndex entityIndex)
-        {
-            return new EntityAccessor(this, entityIndex);
-        }
-
-        public EntityAccessor Entity(EntityHandle entityHandle)
-        {
-            return new EntityAccessor(this, entityHandle);
         }
 
         public QueryBuilder Query()
@@ -687,7 +836,6 @@ namespace Trecs
         /// <summary>
         /// Pre-reserve a batch of EntityHandles on the main thread for use in parallel jobs.
         /// Must be called before job scheduling, not from within a job.
-        /// Required for deterministic EntityHandle assignment when RequireDeterministicSubmission is true.
         /// Uses a two-phase algorithm: drains the recycled free list first, then bulk-allocates
         /// fresh sequential IDs. Much faster than individual ClaimId calls.
         /// </summary>
@@ -701,8 +849,12 @@ namespace Trecs
         /// Bundles entity lifecycle operations (add/remove/move), set mutations, entity
         /// reference resolution, and shared pointer resolution. The thread index is managed internally.
         /// <para>
-        /// Structural operations (add/remove/move) on the returned accessor are only allowed
-        /// from fixed systems. Read-only operations (entity reference resolution, shared pointer
+        /// Structural operations (Add/Remove/SetTag/UnsetTag) and set mutations on the returned
+        /// accessor are only allowed from <see cref="AccessorRole.Fixed"/> /
+        /// <see cref="AccessorRole.Unrestricted"/> roles, including against
+        /// <see cref="VariableUpdateOnlyAttribute"/> templates — VUO templates can
+        /// only have entities added / removed via the main-thread path, not via jobs.
+        /// Read-only operations (entity reference resolution, shared pointer
         /// resolution) are available from any context.
         /// </para>
         /// </summary>
@@ -731,14 +883,19 @@ namespace Trecs
                     : 0f;
             }
 
-            return _structuralOps.GetNativeWorldAccessor(Id, CanMakeStructuralChanges, dt, et);
+            return _structuralOps.GetNativeWorldAccessor(Id, CanMutateSimulation, dt, et);
         }
 
         /// <summary>
-        /// Returns a lazy-sync accessor for any entity set registered on the
-        /// WorldBuilder via AddSet&lt;T&gt;(). No sync occurs at creation time —
-        /// each operation triggers the appropriate sync (read or write) on demand.
-        /// Safe to cache as a member field.
+        /// Returns a lazy-sync gateway for an entity set registered on the
+        /// WorldBuilder via AddSet&lt;T&gt;(). The returned <see cref="SetAccessor{T}"/>
+        /// selects the timing mode:
+        /// <list type="bullet">
+        ///   <item><description><c>.DeferredAdd</c> / <c>.DeferredRemove</c> / <c>.DeferredClear</c> — queue for next submission (no sync).</description></item>
+        ///   <item><description><c>.Read</c> — synchronous read view (syncs writers once at acquisition).</description></item>
+        ///   <item><description><c>.Write</c> — synchronous read+write view (syncs all jobs once at acquisition).</description></item>
+        /// </list>
+        /// Cache the inner view (<c>.Read</c> / <c>.Write</c>) for repeated access in tight loops.
         /// </summary>
         public SetAccessor<T> Set<T>()
             where T : struct, IEntitySet
@@ -746,36 +903,21 @@ namespace Trecs
             return new SetAccessor<T>(this);
         }
 
-        // ── Deferred set operations (no sync needed) ──────────────────
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetAdd<T>(EntityIndex entityIndex)
-            where T : struct, IEntitySet
+        /// <summary>
+        /// Returns an untyped gateway for a set referenced by runtime <see cref="SetId"/>.
+        /// Use the typed <see cref="Set{T}"/> overload when the set type is known at compile time —
+        /// this overload is intended for tooling and editor code that handles sets generically.
+        /// </summary>
+        public SetByIdAccessor Set(SetId setId)
         {
-            ref var queues = ref _structuralOps.GetDeferredQueues(EntitySet<T>.Value.Id);
-            queues.AddQueue.GetBag(0).Enqueue(entityIndex);
+            return new SetByIdAccessor(this, setId);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetAdd<T>(EntityHandle entityHandle)
-            where T : struct, IEntitySet
+        internal NativeSetDeferredQueues GetSetDeferredQueues(SetId setId)
         {
-            SetAdd<T>(entityHandle.ToIndex(this));
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetRemove<T>(EntityIndex entityIndex)
-            where T : struct, IEntitySet
-        {
-            ref var queues = ref _structuralOps.GetDeferredQueues(EntitySet<T>.Value.Id);
-            queues.RemoveQueue.GetBag(0).Enqueue(entityIndex);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetRemove<T>(EntityHandle entityHandle)
-            where T : struct, IEntitySet
-        {
-            SetRemove<T>(entityHandle.ToIndex(this));
+            AssertCanMakeStructuralChanges();
+            return _structuralOps.GetDeferredQueues(setId);
         }
 
         internal void ClearSet(SetId setId)
@@ -794,32 +936,12 @@ namespace Trecs
             return new SetGroupLookup(_structuralOps.GetSet(id));
         }
 
-        public bool EntityExists(EntityHandle entityHandle)
-        {
-            return entityHandle.Exists(_entitiesDb);
-        }
-
-        public EntityHandle GetEntityHandle(EntityIndex entityIndex)
-        {
-            return entityIndex.ToHandle(_entitiesDb);
-        }
-
-        public EntityIndex GetEntityIndex(EntityHandle entityHandle)
-        {
-            return entityHandle.ToIndex(_entitiesDb);
-        }
-
-        public bool TryGetEntityIndex(EntityHandle entityHandle, out EntityIndex entityIndex)
-        {
-            return entityHandle.TryToIndex(_entitiesDb, out entityIndex);
-        }
-
         /// <summary>
         /// Enqueues an input component value for the next fixed-update frame. Only callable from
-        /// <see cref="InputSystemAttribute"/> systems. The value is applied to the entity's
+        /// <see cref="SystemPhase.Input"/> systems. The value is applied to the entity's
         /// <see cref="InputAttribute"/> component at the start of the next fixed-update tick.
         /// </summary>
-        public void AddInput<T>(EntityHandle entityHandle, in T value)
+        internal void AddInput<T>(EntityHandle entityHandle, in T value)
             where T : unmanaged, IEntityComponent
         {
             AssertCanAddInputsSystem();
@@ -827,46 +949,44 @@ namespace Trecs
             _entityInputQueue.AddInput(_systemRunner.FixedFrame, entityHandle, value);
         }
 
-        public void AddInput<T>(EntityIndex entityIndex, in T value)
+        internal void AddInput<T>(EntityIndex entityIndex, in T value)
             where T : unmanaged, IEntityComponent
         {
             AssertCanAddInputsSystem();
 
             _entityInputQueue.AddInput(
                 _systemRunner.FixedFrame,
-                GetEntityHandle(entityIndex),
+                entityIndex.ToHandle(_entitiesDb),
                 value
             );
         }
 
-        internal NativeComponentBufferRead<T> GetBufferRead<T>(Group group)
+        internal NativeComponentBufferRead<T> GetBufferRead<T>(GroupIndex group)
             where T : unmanaged, IEntityComponent
         {
+            AssertIsCurrentlyExecutingAccessor();
+            AssertCanReadComponent<T>(group);
             SyncAndRecordRead<T>(group);
             AssertGroupHasComponent<T>(group);
             var nb = _entitiesDb.QuerySingleBuffer<T>(group);
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            var safety = SafetyManager.GetReadHandle(
-                ResourceId.Component(ComponentTypeId<T>.Value),
-                group
-            );
+            var safety = SafetyManager.GetReadHandle(ResourceId.Component(TypeId<T>.Value), group);
             return new NativeComponentBufferRead<T>(nb, safety);
 #else
             return new NativeComponentBufferRead<T>(nb);
 #endif
         }
 
-        internal NativeComponentBufferWrite<T> GetBufferWrite<T>(Group group)
+        internal NativeComponentBufferWrite<T> GetBufferWrite<T>(GroupIndex group)
             where T : unmanaged, IEntityComponent
         {
+            AssertIsCurrentlyExecutingAccessor();
+            AssertCanWriteComponent<T>(group);
             SyncAndRecord<T>(group);
             AssertGroupHasComponent<T>(group);
             var nb = _entitiesDb.QuerySingleBuffer<T>(group);
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            var safety = SafetyManager.GetWriteHandle(
-                ResourceId.Component(ComponentTypeId<T>.Value),
-                group
-            );
+            var safety = SafetyManager.GetWriteHandle(ResourceId.Component(TypeId<T>.Value), group);
             return new NativeComponentBufferWrite<T>(nb, safety);
 #else
             return new NativeComponentBufferWrite<T>(nb);
@@ -874,17 +994,141 @@ namespace Trecs
         }
 
         [Conditional("DEBUG")]
-        void AssertGroupHasComponent<T1>(Group group)
+        void AssertGroupHasComponent<T1>(GroupIndex group)
             where T1 : unmanaged, IEntityComponent
         {
-            Assert.That(
+            TrecsDebugAssert.That(
                 _worldInfo.GroupHasComponent<T1>(group),
-                "Group {} does not contain component {} (system {}). The query that resolved this group is missing a constraint that ensures every matched group contains {}. Add .WithComponents<{}>() to the query, narrow it via tags/sets, or set MatchByComponents = true on the iteration attribute.",
+                "GroupIndex {0} does not contain component {1} (system {2}). The query that resolved this group is missing a constraint that ensures every matched group contains {3}. Add .WithComponents<{4}>() to the query, narrow it via tags/sets, or set MatchByComponents = true on the iteration attribute.",
                 group,
                 typeof(T1),
                 DebugName,
                 typeof(T1),
                 typeof(T1)
+            );
+        }
+
+        // Component access rules — see docs/advanced/heap-allocation-rules.md
+        // for the full matrix. In short:
+        //   - [VariableUpdateOnly] components are render-only territory: only
+        //     Variable-role / input-system / Unrestricted-role accessors may
+        //     read or write them.
+        //   - A template declared [VariableUpdateOnly] propagates VUO to every
+        //     component on it: same rules apply.
+        //   - Non-[VariableUpdateOnly] components are simulation state: any
+        //     accessor may read, only Fixed-role (or Unrestricted-role) may write.
+        //   - [Constant] components are immutable after entity creation.
+        //     Init-time writes go through EntityInitializer.SetRawImpl, which
+        //     bypasses this path; any write that reaches GetBufferWrite /
+        //     GetComponentWrite is therefore post-creation and illegal.
+        [Conditional("DEBUG")]
+        void AssertCanWriteComponent<T>(GroupIndex group)
+            where T : unmanaged, IEntityComponent
+        {
+            var template = _worldInfo.GetResolvedTemplateForGroup(group);
+            var dec = template.TryGetComponentDeclaration(typeof(T));
+
+            // AssertGroupHasComponent reports the missing-component case with a
+            // better message; skip rather than asserting twice.
+            if (dec == null)
+            {
+                return;
+            }
+
+            TrecsDebugAssert.That(
+                !dec.IsConstant,
+                "Cannot write [Constant] component {0} (context {1}). Constant components are immutable after entity creation — set them via the EntityInitializer at AddEntity time instead.",
+                typeof(T),
+                DebugName
+            );
+
+            if (IsUnrestricted)
+            {
+                return;
+            }
+
+            TrecsDebugAssert.That(
+                !dec.IsInput,
+                "Cannot write [Input] component {0} from {1}-role accessor {2}. Input components are externally driven — values must be supplied via World.AddInput<T>(...) inside an [ExecuteIn(SystemPhase.Input)] system so that recording / playback can replay them deterministically.",
+                typeof(T),
+                _role,
+                DebugName
+            );
+
+            if (IsFixed)
+            {
+                TrecsDebugAssert.That(
+                    !template.IsVariableUpdateOnly(dec),
+                    "Cannot write [VariableUpdateOnly] component {0} from Fixed-role accessor {1} (template {2}{3}). [VariableUpdateOnly] components are render-rate state and can only be touched by Variable-role / Input-system / Unrestricted-role accessors.",
+                    typeof(T),
+                    DebugName,
+                    template.DebugName,
+                    template.VariableUpdateOnly ? " — template-level VUO" : ""
+                );
+            }
+            else
+            {
+                TrecsDebugAssert.That(
+                    template.IsVariableUpdateOnly(dec),
+                    "Cannot write component {0} from {1}-role accessor {2}. Components written outside the Fixed role must be declared [VariableUpdateOnly] on the field or template — they are otherwise treated as simulation state and writing them at render cadence breaks determinism for snapshots and replay.",
+                    typeof(T),
+                    _role,
+                    DebugName
+                );
+            }
+        }
+
+        // While a Fixed-role system is executing, only its own accessor may
+        // touch ECS state. Unrestricted-role accessors and other-system
+        // accessors are both rejected — they scramble debug attribution by
+        // recording access under the wrong DebugName, and Unrestricted-role
+        // accessors smuggle in non-deterministic state. The SystemRunner tracks the
+        // currently-executing Fixed accessor's id; it leaves the tracker
+        // at 0 outside Fixed execute, in which case this assertion is a
+        // no-op.
+        [Conditional("DEBUG")]
+        void AssertIsCurrentlyExecutingAccessor()
+        {
+            var currentId = _systemRunner.CurrentlyExecutingAccessorId;
+            if (currentId == 0)
+            {
+                return;
+            }
+
+            TrecsDebugAssert.That(
+                Id == currentId,
+                "Accessor {0} cannot be used during Fixed-role system execute. Only the currently-executing system's own accessor may touch ECS state — pass the system's WorldAccessor down rather than holding a separate accessor on a service or capturing one from another system.",
+                DebugName
+            );
+        }
+
+        [Conditional("DEBUG")]
+        void AssertCanReadComponent<T>(GroupIndex group)
+            where T : unmanaged, IEntityComponent
+        {
+            // Only Fixed-role gets gated on reads — all other roles
+            // (Variable / None) and input-system accessors read everything.
+            // None implies !IsFixed, so the one check covers both.
+            if (!IsFixed)
+            {
+                return;
+            }
+
+            var template = _worldInfo.GetResolvedTemplateForGroup(group);
+            var dec = template.TryGetComponentDeclaration(typeof(T));
+
+            if (dec == null)
+            {
+                return;
+            }
+
+            TrecsDebugAssert.That(
+                !template.IsVariableUpdateOnly(dec),
+                "Cannot read [VariableUpdateOnly] component {0} from Fixed-role accessor {1} (template {2}{3}). [VariableUpdateOnly] components carry non-deterministic render-rate state, so reading them from Fixed would let that non-determinism leak into the simulation.",
+                typeof(T),
+                DebugName,
+                template.DebugName,
+                template.VariableUpdateOnly ? " — template-level VUO" : ""
             );
         }
 
@@ -894,17 +1138,16 @@ namespace Trecs
         // to compute dependencies and track the job handle instead.
 
         internal (NativeComponentBufferRead<T> buffer, int count) GetBufferReadForJobScheduling<T>(
-            Group group
+            GroupIndex group
         )
             where T : unmanaged, IEntityComponent
         {
+            AssertIsCurrentlyExecutingAccessor();
+            AssertCanReadComponent<T>(group);
             AssertGroupHasComponent<T>(group);
             var (nb, count) = _entitiesDb.QuerySingleBufferWithCount<T>(group);
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            var safety = SafetyManager.GetReadHandle(
-                ResourceId.Component(ComponentTypeId<T>.Value),
-                group
-            );
+            var safety = SafetyManager.GetReadHandle(ResourceId.Component(TypeId<T>.Value), group);
             return (new NativeComponentBufferRead<T>(nb, safety), count);
 #else
             return (new NativeComponentBufferRead<T>(nb), count);
@@ -914,16 +1157,15 @@ namespace Trecs
         internal (
             NativeComponentBufferWrite<T> buffer,
             int count
-        ) GetBufferWriteForJobScheduling<T>(Group group)
+        ) GetBufferWriteForJobScheduling<T>(GroupIndex group)
             where T : unmanaged, IEntityComponent
         {
+            AssertIsCurrentlyExecutingAccessor();
+            AssertCanWriteComponent<T>(group);
             AssertGroupHasComponent<T>(group);
             var (nb, count) = _entitiesDb.QuerySingleBufferWithCount<T>(group);
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            var safety = SafetyManager.GetWriteHandle(
-                ResourceId.Component(ComponentTypeId<T>.Value),
-                group
-            );
+            var safety = SafetyManager.GetWriteHandle(ResourceId.Component(TypeId<T>.Value), group);
             return (new NativeComponentBufferWrite<T>(nb, safety), count);
 #else
             return (new NativeComponentBufferWrite<T>(nb), count);
@@ -931,20 +1173,20 @@ namespace Trecs
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        void SyncAndRecord<T>(Group group)
+        void SyncAndRecord<T>(GroupIndex group)
             where T : unmanaged, IEntityComponent
         {
             if (_systemRunner.JobScheduler.HasOutstandingJobs)
             {
                 var synced = _systemRunner.JobScheduler.SyncMainThread(
-                    ResourceId.Component(ComponentTypeId<T>.Value),
+                    ResourceId.Component(TypeId<T>.Value),
                     group
                 );
 #if DEBUG && !TRECS_IS_PROFILING
                 if (synced && _systemRunner.WarnOnJobSyncPoints)
                 {
-                    _log.Warning(
-                        "Sync point in '{}': main-thread write access to {} in group {} completed outstanding jobs. "
+                    _world.Log.Warning(
+                        "Sync point in '{0}': main-thread write access to {1} in group {2} completed outstanding jobs. "
                             + "Consider reordering systems to avoid this.",
                         _debugName,
                         typeof(T).Name,
@@ -956,26 +1198,26 @@ namespace Trecs
             AccessRecorder?.OnComponentAccess(
                 _debugName,
                 group,
-                ComponentTypeId<T>.Value,
+                TypeId<T>.Value,
                 isReadOnly: false
             );
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        void SyncAndRecordRead<T>(Group group)
+        void SyncAndRecordRead<T>(GroupIndex group)
             where T : unmanaged, IEntityComponent
         {
             if (_systemRunner.JobScheduler.HasOutstandingJobs)
             {
                 var synced = _systemRunner.JobScheduler.SyncMainThreadForRead(
-                    ResourceId.Component(ComponentTypeId<T>.Value),
+                    ResourceId.Component(TypeId<T>.Value),
                     group
                 );
 #if DEBUG && !TRECS_IS_PROFILING
                 if (synced && _systemRunner.WarnOnJobSyncPoints)
                 {
-                    _log.Warning(
-                        "Sync point in '{}': main-thread read access to {} in group {} completed outstanding writer job. "
+                    _world.Log.Warning(
+                        "Sync point in '{0}': main-thread read access to {1} in group {2} completed outstanding writer job. "
                             + "Consider reordering systems to avoid this.",
                         _debugName,
                         typeof(T).Name,
@@ -984,23 +1226,20 @@ namespace Trecs
                 }
 #endif
             }
-            AccessRecorder?.OnComponentAccess(
-                _debugName,
-                group,
-                ComponentTypeId<T>.Value,
-                isReadOnly: true
-            );
+            AccessRecorder?.OnComponentAccess(_debugName, group, TypeId<T>.Value, isReadOnly: true);
         }
 
         internal NativeComponentRead<T> GetComponentRead<T>(EntityIndex entityIndex)
             where T : unmanaged, IEntityComponent
         {
-            SyncAndRecordRead<T>(entityIndex.Group);
+            AssertIsCurrentlyExecutingAccessor();
+            AssertCanReadComponent<T>(entityIndex.GroupIndex);
+            SyncAndRecordRead<T>(entityIndex.GroupIndex);
             var buf = _entitiesDb.QueryEntitiesAndIndex<T>(entityIndex, out var index);
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
             var safety = SafetyManager.GetReadHandle(
-                ResourceId.Component(ComponentTypeId<T>.Value),
-                entityIndex.Group
+                ResourceId.Component(TypeId<T>.Value),
+                entityIndex.GroupIndex
             );
             return new(new NativeComponentBufferRead<T>(buf, safety), (int)index);
 #else
@@ -1011,12 +1250,14 @@ namespace Trecs
         internal NativeComponentWrite<T> GetComponentWrite<T>(EntityIndex entityIndex)
             where T : unmanaged, IEntityComponent
         {
-            SyncAndRecord<T>(entityIndex.Group);
+            AssertIsCurrentlyExecutingAccessor();
+            AssertCanWriteComponent<T>(entityIndex.GroupIndex);
+            SyncAndRecord<T>(entityIndex.GroupIndex);
             var buf = _entitiesDb.QueryEntitiesAndIndex<T>(entityIndex, out var index);
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
             var safety = SafetyManager.GetWriteHandle(
-                ResourceId.Component(ComponentTypeId<T>.Value),
-                entityIndex.Group
+                ResourceId.Component(TypeId<T>.Value),
+                entityIndex.GroupIndex
             );
             return new(new NativeComponentBufferWrite<T>(buf, safety), (int)index);
 #else
@@ -1024,24 +1265,24 @@ namespace Trecs
 #endif
         }
 
-        internal ref EntitySet GetSetDirect(SetDef setDef)
+        internal EntitySetStorage GetSetDirect(EntitySet entitySet)
         {
-            return ref _structuralOps.GetSet(setDef);
+            return _structuralOps.GetSet(entitySet);
         }
 
         /// <summary>
         /// Returns a set reference for job scheduling (no sync).
         /// Used by generated scheduling code to avoid unnecessary sync points.
         /// </summary>
-        internal ref EntitySet GetSetForJobScheduling<T>()
+        internal EntitySetStorage GetSetForJobScheduling<T>()
             where T : struct, IEntitySet
         {
-            return ref _structuralOps.GetSet(EntitySet<T>.Value);
+            return _structuralOps.GetSet(EntitySet<T>.Value);
         }
 
-        internal ref EntitySet GetSetForJobScheduling(SetId setId)
+        internal EntitySetStorage GetSetForJobScheduling(SetId setId)
         {
-            return ref _structuralOps.GetSet(setId);
+            return _structuralOps.GetSet(setId);
         }
 
         /// <summary>
@@ -1050,14 +1291,15 @@ namespace Trecs
         /// </summary>
         internal void SyncSetForRead(SetId setId)
         {
-            ref var setCollection = ref _structuralOps.GetSet(setId);
+            var setCollection = _structuralOps.GetSet(setId);
 
             if (_systemRunner.JobScheduler.HasOutstandingJobs)
             {
                 var resourceId = ResourceId.Set(setId);
-                foreach (var entry in setCollection._entriesPerGroup)
+                var registered = setCollection._registeredGroups;
+                for (int i = 0; i < registered.Length; i++)
                 {
-                    _systemRunner.JobScheduler.SyncMainThreadForRead(resourceId, entry.Key);
+                    _systemRunner.JobScheduler.SyncMainThreadForRead(resourceId, registered[i]);
                 }
             }
 
@@ -1070,23 +1312,25 @@ namespace Trecs
         /// </summary>
         internal void SyncSetForWrite(SetId setId)
         {
-            ref var setCollection = ref _structuralOps.GetSet(setId);
+            AssertCanMakeStructuralChanges();
+            var setCollection = _structuralOps.GetSet(setId);
 
             if (_systemRunner.JobScheduler.HasOutstandingJobs)
             {
                 var resourceId = ResourceId.Set(setId);
-                foreach (var entry in setCollection._entriesPerGroup)
+                var registered = setCollection._registeredGroups;
+                for (int i = 0; i < registered.Length; i++)
                 {
-                    _systemRunner.JobScheduler.SyncMainThread(resourceId, entry.Key);
+                    _systemRunner.JobScheduler.SyncMainThread(resourceId, registered[i]);
                 }
             }
 
             setCollection.FlushJobWrites();
         }
 
-        internal ref EntitySet GetSetCollection(SetId setId)
+        internal EntitySetStorage GetSetCollection(SetId setId)
         {
-            return ref _structuralOps.GetSet(setId);
+            return _structuralOps.GetSet(setId);
         }
 
         internal EntityHandleMap GetEntityHandleMap()
@@ -1094,12 +1338,19 @@ namespace Trecs
             return _entitiesDb.GetEntityHandleMap();
         }
 
-        internal NativeEntityHandleBuffer GetEntityHandleBufferForJobScheduling(Group group)
+        internal NativeEntityHandleBuffer GetEntityHandleBufferForJobScheduling(GroupIndex group)
         {
             var handleMap = GetEntityHandleMap();
-            if (!handleMap._entityIndexToReferenceMap.TryGetValue(group, out var groupList))
+            var groupList = handleMap._entityIndexToReferenceMap[group.Index];
+            if (!groupList.IsCreated)
                 return default;
-            return new NativeEntityHandleBuffer(new NativeBuffer<EntityHandle>(groupList));
+            unsafe
+            {
+                return new NativeEntityHandleBuffer(
+                    new NativeBuffer<int>(groupList.Ptr, groupList.Length),
+                    NativeBuffer<EntityHandleMapElement>.FromNativeList(handleMap._entityHandleMap)
+                );
+            }
         }
 
         internal NativeComponentLookupRead<T> CreateNativeComponentLookupRead<T>(
@@ -1115,7 +1366,7 @@ namespace Trecs
         }
 
         internal unsafe NativeComponentLookupRead<T> CreateNativeComponentLookupRead<T>(
-            ReadOnlyFastList<Group> groups,
+            ReadOnlyList<GroupIndex> groups,
             Allocator allocator
         )
             where T : unmanaged, IEntityComponent
@@ -1142,7 +1393,7 @@ namespace Trecs
         }
 
         internal unsafe NativeComponentLookupWrite<T> CreateNativeComponentLookupWrite<T>(
-            ReadOnlyFastList<Group> groups,
+            ReadOnlyList<GroupIndex> groups,
             Allocator allocator
         )
             where T : unmanaged, IEntityComponent
@@ -1156,60 +1407,308 @@ namespace Trecs
             return new NativeComponentLookupWrite<T>(entries, count, allocator);
         }
 
-        internal bool IsSystemEnabledImpl(int i)
+        /// <summary>
+        /// Returns the registry entry for every system in this world, in registration
+        /// order. The returned list is stable for the lifetime of the world; indices
+        /// match <see cref="SystemEntry.DeclarationIndex"/> and can be used with
+        /// <see cref="SetSystemEnabled"/> / <see cref="SetSystemPaused"/>. Use this to
+        /// build custom groupings (e.g. "all systems matching some game tag") that
+        /// drive enable / pause calls.
+        /// </summary>
+        public IReadOnlyList<SystemEntry> GetSystems()
         {
-            return _systemRunner.IsSystemEnabled(i);
+            return _systemRunner.Systems;
         }
 
-        internal void SetSystemEnabledImpl(int index, bool enabled)
+        /// <summary>
+        /// <b>Deterministic</b> pause / resume. Paused state IS in snapshots and recordings —
+        /// it survives save / restore and replays the same way every time. Use this for
+        /// gameplay pause: pause menus, networked freeze frames, anything that's part of
+        /// "the game state".
+        /// <para>
+        /// For non-deterministic toggles (editor inspector, recording-replay input silencing,
+        /// debug menus), use <see cref="SetSystemEnabled"/> with an
+        /// <see cref="EnableChannel"/> instead.
+        /// </para>
+        /// <para>
+        /// Must be called from a context that can mutate deterministic state — i.e. from a
+        /// fixed-update system, a reactive event handler, or initialization. Calling from a
+        /// variable / input system would change the simulation behind the recording's back.
+        /// </para>
+        /// </summary>
+        public void SetSystemPaused(int systemIndex, bool paused)
         {
-            _systemRunner.SetSystemEnabled(index, enabled);
+            AssertCanMakeStructuralChanges();
+            _systemEnableState.SetSystemPaused(systemIndex, paused);
+        }
+
+        /// <summary>
+        /// Returns whether the system at <paramref name="systemIndex"/> is currently paused
+        /// (deterministic, see <see cref="SetSystemPaused"/>).
+        /// </summary>
+        public bool IsSystemPaused(int systemIndex)
+        {
+            return _systemEnableState.IsSystemPaused(systemIndex);
+        }
+
+        /// <summary>
+        /// <b>Non-deterministic</b> on / off toggle for a system, scoped to a
+        /// <see cref="EnableChannel"/>. Channel state is ephemeral — NOT in snapshots, NOT
+        /// in recordings, NOT replayed. Use this for editor toggles, recording-replay input
+        /// silencing, debug menus, and anything else that's host-side configuration rather
+        /// than game state.
+        /// <para>
+        /// A system runs only when ALL channels have it enabled AND it is not paused via
+        /// <see cref="SetSystemPaused"/>. Multiple channels are AND-combined so independent
+        /// callers (editor inspector + replay system) can disable the same system without
+        /// stepping on each other's state.
+        /// </para>
+        /// </summary>
+        public void SetSystemEnabled(int systemIndex, EnableChannel channel, bool enabled)
+        {
+            AssertCanAccessVariableData();
+            _systemEnableState.SetSystemEnabled(systemIndex, channel, enabled);
+        }
+
+        /// <summary>
+        /// Returns whether the given <paramref name="channel"/> currently has the system
+        /// enabled (non-deterministic, see <see cref="SetSystemEnabled"/>).
+        /// </summary>
+        public bool IsSystemEnabled(int systemIndex, EnableChannel channel)
+        {
+            return _systemEnableState.IsSystemEnabled(systemIndex, channel);
+        }
+
+        /// <summary>
+        /// Returns true iff the system would run on the next tick — i.e. no
+        /// <see cref="EnableChannel"/> has it disabled and it is not paused.
+        /// Convenience for debug UIs and tests that want a single "is this system
+        /// actually live" query.
+        /// </summary>
+        public bool IsSystemEffectivelyEnabled(int systemIndex)
+        {
+            return _systemEnableState.IsSystemEffectivelyEnabled(systemIndex);
+        }
+
+        // ── Heap properties ─────────────────────────────────────────
+        // Formerly on HeapAccessor; folded in so pointer types can take
+        // WorldAccessor directly without an intermediate accessor class.
+
+        internal bool CanMutateHeap => IsUnrestricted || IsFixed;
+
+        internal UniqueHeap UniqueHeap => _heapAllocator.UniqueHeap;
+
+        internal SharedHeap SharedHeap => _heapAllocator.SharedHeap;
+
+        /// <summary>
+        /// The world's shared <see cref="Trecs.BlobCache"/>. Most game code reaches the
+        /// cache through <see cref="SharedPtr{T}"/> / <see cref="NativeSharedPtr{T}"/>;
+        /// this accessor is for code that needs to talk to the cache directly — async
+        /// preload, non-ECS anchoring.
+        /// </summary>
+        public BlobCache BlobCache => _heapAllocator.SharedHeap.BlobCache;
+
+        internal NativeSharedHeap NativeSharedHeap => _heapAllocator.NativeSharedHeap;
+
+        internal InputNativeUniqueHeap InputNativeUniqueHeap =>
+            _heapAllocator.InputNativeUniqueHeap;
+
+        internal InputNativeSharedHeap InputNativeSharedHeap =>
+            _heapAllocator.InputNativeSharedHeap;
+
+        internal InputSharedHeap InputSharedHeap => _heapAllocator.InputSharedHeap;
+
+        internal InputUniqueHeap InputUniqueHeap => _heapAllocator.InputUniqueHeap;
+
+        internal NativeHeap NativeUniqueChunkStore => _heapAllocator.NativeUniqueChunkStore;
+
+        /// <summary>
+        /// Job-safe resolver for <see cref="NativeSharedPtr{T}"/> dereferences inside
+        /// Burst-compiled job structs. Copy by-value into the job's fields; the resolver
+        /// stays valid for the duration of the job.
+        /// </summary>
+        internal ref NativeSharedPtrResolver NativeSharedPtrResolver
+        {
+            get { return ref _heapAllocator.NativeSharedHeap.Resolver; }
+        }
+
+        /// <summary>
+        /// Job-safe resolver for <see cref="NativeUniquePtr{T}"/> and
+        /// <see cref="TrecsList{T}"/> dereferences inside Burst-compiled job structs.
+        /// Backed by the shared <see cref="NativeHeap"/>; the per-allocation
+        /// TypeId tag carries which heap owns the slot, so a single resolver covers
+        /// every native-heap pointer type.
+        ///
+        /// <para>Carries this accessor's role: a Variable-role resolver fails fast
+        /// at Write-open time inside Burst jobs (Read access is unaffected).</para>
+        /// </summary>
+        internal ref NativeHeapResolver NativeHeapResolver
+        {
+            get { return ref _chunkStoreResolver; }
+        }
+
+        // ── Heap assertions ────────────────────────────────────────
+        // Centralized main-thread gate for managed heap operations. Every
+        // Alloc / Write-open path on a pointer type routes through
+        // AssertCanAddInputsHeap or AssertCanMutateHeap below, both of which
+        // call into this.
+        [Conditional("DEBUG")]
+        internal void AssertHeapMainThread()
+        {
+            TrecsDebugAssert.That(
+                UnityThreadHelper.IsMainThread,
+                "Heap entry points must be called from the main thread; " + "Accessor {0}",
+                _debugName
+            );
+        }
+
+        [Conditional("DEBUG")]
+        internal void AssertCanMutateHeap()
+        {
+            AssertHeapMainThread();
+
+            if (IsUnrestricted || IsFixed)
+            {
+                return;
+            }
+
+            if (IsInput)
+            {
+                TrecsDebugAssert.That(
+                    false,
+                    "Cannot mutate the persistent heap from input-system accessor {0}. Use an Input pointer type (InputSharedPtr.Alloc, InputNativeSharedPtr.Alloc, InputUniquePtr.Alloc, InputNativeUniquePtr.Alloc) for input-side allocations; mutating persistent heap entries from an input system would land in the deterministic snapshot but not in the input replay log, producing desyncs.",
+                    _debugName
+                );
+            }
+            else
+            {
+                TrecsDebugAssert.That(
+                    false,
+                    "Cannot mutate the heap from Variable-role accessor {0}. The Trecs heap is simulation state — Alloc, Write, Set, Clone, Acquire, Dispose, and EnsureCapacity are only allowed from Fixed-role or Unrestricted-role accessors. Read access is always allowed. See Accessor Roles in the docs.",
+                    _debugName
+                );
+            }
+        }
+
+        [Conditional("DEBUG")]
+        internal void AssertCanAddInputsHeap()
+        {
+            AssertHeapMainThread();
+            TrecsDebugAssert.That(
+                IsUnrestricted || IsInput,
+                "Attempted to use input-only functionality from a non-Input accessor {0}",
+                _debugName
+            );
         }
 
         [Conditional("DEBUG")]
         void AssertCanAddInputsSystem()
         {
-            Assert.That(
-                !_systemRunner.IsExecutingSystems || _isInputSystem,
-                "Attempted to use input system only functionality from a non-input system {}",
+            TrecsDebugAssert.That(
+                IsUnrestricted || IsInput,
+                "Attempted to use input-only functionality from a non-Input accessor {0}",
                 DebugName
             );
         }
 
         [Conditional("DEBUG")]
-        void AssertCanMakeStructuralChanges()
+        internal void AssertCanMakeStructuralChanges()
         {
-            // Note here that we allow structural changes when not executing systems since
-            // this is often needed and does not break determinism
-            //
-            // Valid examples are:
-            //
-            // - Reactive event handlers (via Events.OnAdded/OnRemoved/OnMoved)
-            //      * Since these are called deterministically
-            // - Initialize methods
-            //      * It's common to add entities before InitialEntitiesSubmitter
-            //        and this also doesn't break determinism, because we only
-            //        need determinism to be preserved from the starting snapshot
-            //        of recordings, and recordings don't start until after initialization
-            //
-            // So really the only place this is not allowed is in variable systems or input systems
+            AssertIsCurrentlyExecutingAccessor();
 
-            Assert.That(
-                CanMakeStructuralChanges,
-                "Attempted to modify fixed state from a non-fixed context {}.  This is only possible before the first submission, or from inside a fixed system execute.",
-                DebugName
+            // Unrestricted-role accessors bypass; otherwise structural changes
+            // require a Fixed-role accessor regardless of whether systems
+            // are currently executing. Fixed services that init/teardown
+            // world state run their structural ops at construction or in
+            // Initialize and stay deterministic; reactive observers fire
+            // during submission with the registering system's accessor;
+            // both are Fixed-role so this rule lets them through. Variable
+            // and input-system service accessors don't get a "we're
+            // between frames" loophole — that's a footgun. Init-time
+            // setup that touches mixed state should use AccessorRole.Unrestricted.
+            TrecsDebugAssert.That(
+                CanMutateSimulation,
+                "Attempted to modify fixed state from {0} (role {1}). Structural changes require a Fixed-role or Unrestricted-role accessor.",
+                DebugName,
+                _role
+            );
+        }
+
+        // A Fixed-role accessor that resolves a query to one or more
+        // VUO-template groups is leaking render-cadence state into the
+        // simulation. Reject at query construction time rather than
+        // silently filtering — silent filters hide the underlying bug
+        // (the predicate was wrong, not the iteration count). Shared
+        // between QueryBuilder and SparseQueryBuilder.
+        [Conditional("DEBUG")]
+        internal void AssertNoVariableUpdateOnlyGroupsForFixedRole(ReadOnlyList<GroupIndex> groups)
+        {
+            if (!IsFixed)
+            {
+                return;
+            }
+
+            for (int i = 0; i < groups.Count; i++)
+            {
+                var group = groups[i];
+                var template = _worldInfo.GetResolvedTemplateForGroup(group);
+                TrecsDebugAssert.That(
+                    !template.VariableUpdateOnly,
+                    "Query from Fixed-role accessor {0} resolved to [VariableUpdateOnly] template {1} (group {2}). VUO templates are render-cadence state and must not be queried from Fixed — narrow the predicate (e.g. add a WithoutTags constraint) or move the query to a Variable / Input system.",
+                    DebugName,
+                    template.DebugName,
+                    group
+                );
+            }
+        }
+
+        // Per-group structural-change rule. The "default" group is sim
+        // state and Fixed/Unrestricted-only (per AssertCanMakeStructuralChanges
+        // above). A [VariableUpdateOnly] template flips that: its groups
+        // are render-cadence so Variable-role, input-system, and
+        // Unrestricted-role accessors may add / remove / move entities there,
+        // while Fixed
+        // is rejected outright (Fixed must not touch VUO state at all).
+        [Conditional("DEBUG")]
+        internal void AssertCanMakeStructuralChangesToGroup(GroupIndex group)
+        {
+            AssertIsCurrentlyExecutingAccessor();
+
+            if (IsUnrestricted)
+            {
+                return;
+            }
+
+            var template = _worldInfo.GetResolvedTemplateForGroup(group);
+
+            if (template.VariableUpdateOnly)
+            {
+                TrecsDebugAssert.That(
+                    !IsFixed,
+                    "Cannot modify VUO template {0} from Fixed-role accessor {1}. The template is declared [VariableUpdateOnly], so structural changes (add/remove/move) must come from Variable-role / input-system / Unrestricted-role accessors.",
+                    template.DebugName,
+                    DebugName
+                );
+                return;
+            }
+
+            TrecsDebugAssert.That(
+                IsFixed,
+                "Attempted to modify fixed-template state from {0} (role {1}, template {2}). Structural changes on non-VUO templates require a Fixed-role or Unrestricted-role accessor.",
+                DebugName,
+                _role,
+                template.DebugName
             );
         }
 
         [Conditional("DEBUG")]
         void AssertCanAccessEvents()
         {
-            // Don't allow subscribing to events during execute since this creates
-            // unserializable state
-            // Subscribes should always occur during initialize
-            Assert.That(
+            // Subscriptions must happen during initialize, not execute
+            // (execute-time subscriptions create unserializable state)
+            TrecsDebugAssert.That(
                 !_systemRunner.IsExecutingSystems,
-                "Attempted to use event functionality from system execute method {}",
+                "Attempted to use event functionality from system execute method {0}",
                 DebugName
             );
         }
@@ -1217,19 +1716,19 @@ namespace Trecs
         [Conditional("DEBUG")]
         void AssertCanAccessVariableData()
         {
-            Assert.That(
-                !_systemRunner.IsExecutingSystems || !_isFixedSystem,
-                "Attempted to use variable update only functionality from fixed context {}",
+            TrecsDebugAssert.That(
+                IsUnrestricted || !IsFixed,
+                "Attempted to use variable-update functionality from Fixed-role accessor {0}",
                 DebugName
             );
         }
 
         void AssertTimeAccessAllowedInFixedPhase(string memberName)
         {
-            Assert.That(
+            TrecsDebugAssert.That(
                 !_systemRunner.AssertNoTimeInFixedPhase,
-                "Cannot access {} in the fixed-update phase when WorldSettings.AssertNoTimeInFixedPhase is enabled. "
-                    + "Wall-time values are not part of the deterministic simulation contract - use FixedFrame as a tick counter instead. (Context: {})",
+                "Cannot access {0} in the fixed-update phase when WorldSettings.AssertNoTimeInFixedPhase is enabled. "
+                    + "Wall-time values are not part of the deterministic simulation contract - use FixedFrame as a tick counter instead. (Context: {1})",
                 memberName,
                 DebugName
             );
@@ -1250,7 +1749,7 @@ namespace Trecs
                 return PhaseDefault.None;
             }
 
-            if (_isFixedSystem)
+            if (IsFixed)
             {
                 return PhaseDefault.Fixed;
             }
@@ -1272,6 +1771,12 @@ namespace Trecs.Internal // Unsupported internal APIs
     [EditorBrowsable(EditorBrowsableState.Never)]
     public static class WorldAccessorBaseExtensions
     {
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public static ref NativeHeapResolver GetNativeHeapResolver(this WorldAccessor world)
+        {
+            return ref world.NativeHeapResolver;
+        }
+
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static SystemRunner GetSystemRunner(this WorldAccessor world)
         {
@@ -1303,21 +1808,9 @@ namespace Trecs.Internal // Unsupported internal APIs
         }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public static IReadOnlyList<ExecutableSystemInfo> GetSystems(this WorldAccessor world)
-        {
-            return world.Systems;
-        }
-
-        [EditorBrowsable(EditorBrowsableState.Never)]
         public static IReadOnlyList<int> GetSortedFixedSystems(this WorldAccessor world)
         {
             return world.SortedFixedSystems;
-        }
-
-        [EditorBrowsable(EditorBrowsableState.Never)]
-        public static IReadOnlyList<int> GetSortedVariableSystems(this WorldAccessor world)
-        {
-            return world.SortedVariableSystems;
         }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
@@ -1327,28 +1820,28 @@ namespace Trecs.Internal // Unsupported internal APIs
         }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public static IReadOnlyList<int> GetSortedLateVariableSystems(this WorldAccessor world)
+        public static IReadOnlyList<int> GetSortedEarlyPresentationSystems(this WorldAccessor world)
         {
-            return world.SortedLateVariableSystems;
+            return world.SortedEarlyPresentationSystems;
         }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public static bool IsSystemEnabled(this WorldAccessor world, int systemIndex)
+        public static IReadOnlyList<int> GetSortedPresentationSystems(this WorldAccessor world)
         {
-            return world.IsSystemEnabledImpl(systemIndex);
+            return world.SortedPresentationSystems;
         }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public static void SetSystemEnabled(this WorldAccessor world, int systemIndex, bool enabled)
+        public static IReadOnlyList<int> GetSortedLatePresentationSystems(this WorldAccessor world)
         {
-            world.SetSystemEnabledImpl(systemIndex, enabled);
+            return world.SortedLatePresentationSystems;
         }
 
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static bool SyncMainThread(
             this WorldAccessor world,
-            ComponentId componentId,
-            Group group
+            TypeId componentId,
+            GroupIndex group
         )
         {
             return world.JobScheduler.SyncMainThread(ResourceId.Component(componentId), group);

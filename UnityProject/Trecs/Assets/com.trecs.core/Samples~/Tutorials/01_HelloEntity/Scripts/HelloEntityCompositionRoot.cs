@@ -2,13 +2,17 @@
 
 using System;
 using System.Collections.Generic;
+using UnityEngine;
 
 namespace Trecs.Samples.HelloEntity
 {
     public class HelloEntityCompositionRoot : CompositionRootBase
     {
         public float RotationSpeed = 2f;
+        public Transform SpinnerCube;
 
+        // All we do here is call constructors and set up dependencies
+        // between classes.  No initialization logic otherwise
         public override void Construct(
             out List<Action> initializables,
             out List<Action> tickables,
@@ -16,26 +20,21 @@ namespace Trecs.Samples.HelloEntity
             out List<Action> disposables
         )
         {
-            // Note that GameObjectRegistry is from sample code and not a built
-            // in trecs concept
-            var gameObjectRegistry = new GameObjectRegistry();
-
             var world = new WorldBuilder()
-                .AddEntityType(SampleTemplates.SpinnerEntity.Template)
+                .AddTemplate(SampleTemplates.SpinnerEntity.Template)
                 .Build();
 
             world.AddSystems(
                 new ISystem[]
                 {
                     new SpinnerSystem(RotationSpeed),
-                    new SpinnerGameObjectUpdater(gameObjectRegistry),
+                    new SpinnerGameObjectUpdater(SpinnerCube),
                 }
             );
 
-            var sceneInitializer = new SceneInitializer(world, gameObjectRegistry);
+            var sceneInitializer = new SceneInitializer(world);
 
             initializables = new() { world.Initialize, sceneInitializer.Initialize };
-
             tickables = new() { world.Tick };
             lateTickables = new() { world.LateTick };
             disposables = new() { world.Dispose };

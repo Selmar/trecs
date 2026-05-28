@@ -17,12 +17,12 @@ namespace Trecs.SourceGen.Shared
         NativeComponentWrite,
         NativeComponentLookupRead,
         NativeComponentLookupWrite,
-        NativeSetWrite,
+        NativeSetCommandBuffer,
         NativeEntitySetIndices,
         NativeSetRead,
         NativeFactory,
         NativeWorldAccessor,
-        Group,
+        GroupIndex,
         NativeEntityHandleBuffer,
     }
 
@@ -31,7 +31,7 @@ namespace Trecs.SourceGen.Shared
         public string FieldName { get; }
         public FromWorldFieldKind Kind { get; }
         public INamedTypeSymbol FieldType { get; }
-        public ITypeSymbol? GenericArgument { get; } // null for non-generic types (NativeWorldAccessor, Group)
+        public ITypeSymbol? GenericArgument { get; } // null for non-generic types (NativeWorldAccessor, GroupIndex)
 
         /// <summary>
         /// Pre-parsed aspect data, populated only for <see cref="FromWorldFieldKind.NativeFactory"/>
@@ -97,7 +97,7 @@ namespace Trecs.SourceGen.Shared
         /// The expression that resolves to the final TagSet for this field's group(s).
         /// For fields with inline tags, this is a local variable that holds the combined result.
         /// For runtime-only fields, this is the schedule parameter name.
-        /// Empty for fields that don't use TagSets (NativeComponentRead/Write, NativeSetWrite, NativeSetRead).
+        /// Empty for fields that don't use TagSets (NativeComponentRead/Write, NativeSetCommandBuffer, NativeSetRead).
         /// </summary>
         public string TagSetExpression { get; }
 
@@ -129,10 +129,10 @@ namespace Trecs.SourceGen.Shared
             NeedsHoistedSingleGroup = needsHoistedSingleGroup;
             NeedsHoistedGroups = needsHoistedGroups;
             HoistedSingleGroupLocal = needsHoistedSingleGroup
-                ? "_trecs_" + LowerFirst(fieldName) + "_group"
+                ? FromWorldEmitter.GenPrefix + LowerFirst(fieldName) + "_group"
                 : "";
             HoistedGroupsLocal = needsHoistedGroups
-                ? "_trecs_" + LowerFirst(fieldName) + "_groups"
+                ? FromWorldEmitter.GenPrefix + LowerFirst(fieldName) + "_groups"
                 : "";
             InlineTagSetExpression = inlineTagSetExpression;
             TagSetExpression = tagSetExpression;
@@ -190,7 +190,9 @@ namespace Trecs.SourceGen.Shared
             // When inline tags are present, the resolved TagSet is computed in a
             // local variable by EmitFromWorldHoistedSetup (combining inline + optional
             // runtime tags). Otherwise it's just the schedule param name.
-            var resolvedTagsLocal = hasInlineTags ? "_trecs_" + lower + "_tags" : lower + "Tags";
+            var resolvedTagsLocal = hasInlineTags
+                ? FromWorldEmitter.GenPrefix + lower + "_tags"
+                : lower + "Tags";
             switch (info.Kind)
             {
                 case FromWorldFieldKind.NativeComponentBufferRead:
@@ -280,7 +282,7 @@ namespace Trecs.SourceGen.Shared
                         inlineTagSetExpression: inlineExpr,
                         tagSetExpression: resolvedTagsLocal
                     );
-                case FromWorldFieldKind.NativeSetWrite:
+                case FromWorldFieldKind.NativeSetCommandBuffer:
                     // No schedule param: set type is on the field's generic arg, the writer
                     // is constructed unconditionally from the world.
                     return new(
@@ -318,7 +320,7 @@ namespace Trecs.SourceGen.Shared
                     );
                 case FromWorldFieldKind.NativeWorldAccessor:
                     // No schedule param, no groups, no deps, no tracking.
-                    // Emits: _trecs_job.{field} = _trecs_world.ToNative();
+                    // Emits: __trecs_job.{field} = __trecs_world.ToNative();
                     return new(
                         info.Kind,
                         info.FieldName,
@@ -334,8 +336,8 @@ namespace Trecs.SourceGen.Shared
                         inlineTagSetExpression: "",
                         tagSetExpression: ""
                     );
-                case FromWorldFieldKind.Group:
-                    // Group resolves to a single group via GetSingleGroupWithTags.
+                case FromWorldFieldKind.GroupIndex:
+                    // GroupIndex resolves to a single group via GetSingleGroupWithTags.
                     // With inline tags: optional TagSet? schedule parameter.
                     // Without inline tags: mandatory TagSet schedule parameter.
                     return new(
@@ -355,7 +357,7 @@ namespace Trecs.SourceGen.Shared
                     );
                 case FromWorldFieldKind.NativeEntityHandleBuffer:
                     // Resolves to a single group's entity handle buffer.
-                    // Same tag resolution pattern as Group/ComponentBuffer.
+                    // Same tag resolution pattern as GroupIndex/ComponentBuffer.
                     return new(
                         info.Kind,
                         info.FieldName,
@@ -414,7 +416,7 @@ namespace Trecs.SourceGen.Shared
                 return typeSymbol.Name switch
                 {
                     "NativeWorldAccessor" => FromWorldFieldKind.NativeWorldAccessor,
-                    "Group" => FromWorldFieldKind.Group,
+                    "GroupIndex" => FromWorldFieldKind.GroupIndex,
                     "NativeEntityHandleBuffer" => FromWorldFieldKind.NativeEntityHandleBuffer,
                     _ => FromWorldFieldKind.Unsupported,
                 };
@@ -432,7 +434,7 @@ namespace Trecs.SourceGen.Shared
                 "NativeComponentWrite" => FromWorldFieldKind.NativeComponentWrite,
                 "NativeComponentLookupRead" => FromWorldFieldKind.NativeComponentLookupRead,
                 "NativeComponentLookupWrite" => FromWorldFieldKind.NativeComponentLookupWrite,
-                "NativeSetWrite" => FromWorldFieldKind.NativeSetWrite,
+                "NativeSetCommandBuffer" => FromWorldFieldKind.NativeSetCommandBuffer,
                 "NativeEntitySetIndices" => FromWorldFieldKind.NativeEntitySetIndices,
                 "NativeSetRead" => FromWorldFieldKind.NativeSetRead,
                 _ => FromWorldFieldKind.Unsupported,

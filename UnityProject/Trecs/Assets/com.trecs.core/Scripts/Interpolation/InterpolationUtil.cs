@@ -8,12 +8,8 @@ namespace Trecs
     /// </summary>
     public static class InterpolationUtil
     {
-        static readonly TrecsLog _log = new(nameof(InterpolationUtil));
-
         public static float CalculatePercentThroughFixedFrame(WorldAccessor world)
         {
-            var endOfFrameTime = world.VariableElapsedTime + world.VariableDeltaTime;
-
             var fixedCurrentTime = world.FixedElapsedTime;
             var fixedPreviousTime = fixedCurrentTime - world.FixedDeltaTime;
 
@@ -22,28 +18,25 @@ namespace Trecs
                 return 0f;
             }
 
+            var endOfFrameTime = world.VariableElapsedTime + world.VariableDeltaTime;
+
             if (fixedCurrentTime <= fixedPreviousTime)
             {
-                throw Assert.CreateException(
-                    "Unexpected state when calculating percent through fixed frame. fixedCurrentTime: {}, fixedPreviousTime: {}",
+                throw TrecsDebugAssert.CreateException(
+                    "Unexpected state when calculating percent through fixed frame. fixedCurrentTime: {0}, fixedPreviousTime: {1}",
                     fixedCurrentTime,
                     fixedPreviousTime
                 );
             }
 
-            Assert.That(fixedCurrentTime > 0);
-            Assert.That(fixedPreviousTime >= 0f);
-            Assert.That(fixedCurrentTime > fixedPreviousTime);
+            TrecsDebugAssert.That(fixedCurrentTime > 0);
+            TrecsDebugAssert.That(fixedPreviousTime >= 0f);
+            TrecsDebugAssert.That(fixedCurrentTime > fixedPreviousTime);
 
             if (fixedCurrentTime < endOfFrameTime)
             {
-                // This warning is annoying since we often pause only fixed update
-                // _log.WarningThrottled(
-                //     1f, "Fixed update failed to catch up to variable update - interpolations will be incorrect");
-
-                // Could extrapolate instead but many places assume value between 0 and 1
-                // Also, extrapolation would break debugging logic where we pause only fixed update but continue
-                // to let variable update run
+                // Clamp instead of extrapolating: callers assume [0,1], and extrapolation
+                // would break the debugging workflow of pausing only fixed update
                 return 0.999f;
             }
 

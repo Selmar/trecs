@@ -6,10 +6,10 @@ namespace Trecs.Internal
     static class EntityFactory
     {
         public static (
-            DenseDictionary<ComponentId, IComponentArray> group,
+            IterableDictionary<TypeId, IComponentArray> group,
             int insertionIndex
         ) BuildGroupedEntities(
-            Group groupId,
+            GroupIndex groupId,
             DoubleBufferedEntitiesToAdd groupEntitiesToAdd,
             IComponentBuilder[] componentsToBuild
 #if DEBUG
@@ -18,12 +18,8 @@ namespace Trecs.Internal
 #endif
         )
         {
-            var group = groupEntitiesToAdd.currentComponentsToAddPerGroup.GetOrAdd(
-                groupId,
-                () => new DenseDictionary<ComponentId, IComponentArray>()
-            );
+            var group = groupEntitiesToAdd.GetOrCreateCurrentComponentsForGroup(groupId);
 
-            //track the number of entities created so far in the group.
             groupEntitiesToAdd.IncrementEntityCount(groupId);
 
             BuildEntitiesAndAddToGroup(group, componentsToBuild
@@ -45,7 +41,7 @@ namespace Trecs.Internal
         }
 
         static void BuildEntitiesAndAddToGroup(
-            DenseDictionary<ComponentId, IComponentArray> @group,
+            IterableDictionary<TypeId, IComponentArray> @group,
             IComponentBuilder[] componentBuilders
 #if DEBUG
             ,
@@ -54,22 +50,24 @@ namespace Trecs.Internal
         )
         {
 #if DEBUG
-            Assert.That(componentBuilders != null, "Invalid Entity Descriptor {}", descriptorName);
+            TrecsDebugAssert.That(
+                componentBuilders != null,
+                "Invalid Entity Descriptor {0}",
+                descriptorName
+            );
 #endif
             var numberOfComponents = componentBuilders.Length;
 
 #if DEBUG
-            var types = new NativeHashSet<int>(numberOfComponents, Allocator.Temp);
+            var types = new NativeHashSet<TypeId>(numberOfComponents, Allocator.Temp);
 
             for (var index = 0; index < numberOfComponents; ++index)
             {
-                var entityComponentType = TypeIdProvider.GetTypeId(
-                    componentBuilders[index].ComponentType
-                );
+                var entityComponentType = TypeId.FromType(componentBuilders[index].ComponentType);
 
-                Assert.That(
+                TrecsDebugAssert.That(
                     !types.Contains(entityComponentType),
-                    "EntityBuilders must be unique inside a Template. Descriptor Type {} Component Type: {}",
+                    "EntityBuilders must be unique inside a Template. Descriptor Type {0} Component Type: {1}",
                     descriptorName,
                     entityComponentType
                 );
@@ -87,17 +85,16 @@ namespace Trecs.Internal
         }
 
         static void AddEntity(
-            DenseDictionary<ComponentId, IComponentArray> group,
+            IterableDictionary<TypeId, IComponentArray> group,
             IComponentBuilder componentBuilder
         )
         {
             IComponentArray safeDictionary = group.GetOrAdd(
-                componentBuilder.ComponentId,
+                componentBuilder.TypeId,
                 (ref IComponentBuilder cb) => cb.CreateDictionary(1),
                 ref componentBuilder
             );
 
-            //   if the safeDictionary hasn't been created yet, it will be created inside this method.
             componentBuilder.BuildEntityAndAddToList(safeDictionary);
         }
     }

@@ -39,7 +39,7 @@ namespace Trecs.Tests
                     .Set(new TestVec())
                     .AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(999, a.GlobalComponent<TestGlobalInt>().Read.Value);
             NAssert.AreEqual(3.14f, a.GlobalComponent<TestGlobalFloat>().Read.Value, 0.001f);
@@ -64,14 +64,14 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             a.GlobalComponent<TestGlobalInt>().Write.Value = 42;
 
             // Remove scattered entities causing multiple swap-backs
             for (int i = 0; i < 20; i += 3)
                 a.RemoveEntity(handles[i]);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(42, a.GlobalComponent<TestGlobalInt>().Read.Value);
         }
@@ -89,12 +89,12 @@ namespace Trecs.Tests
                     .Set(new TestVec())
                     .AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             a.GlobalComponent<TestGlobalInt>().Write.Value = 77;
 
             a.RemoveEntitiesWithTags(PartitionA);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(0, a.CountEntitiesWithTags(PartitionA));
             NAssert.AreEqual(77, a.GlobalComponent<TestGlobalInt>().Read.Value);
@@ -119,13 +119,13 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             a.GlobalComponent<TestGlobalInt>().Write.Value = 123;
 
             for (int i = 0; i < 5; i++)
-                a.MoveTo(handles[i].ToIndex(a), PartitionB);
-            a.SubmitEntities();
+                a.SetTag<TestPartitionB>(handles[i].ToIndex(a));
+            a.Submit();
 
             NAssert.AreEqual(123, a.GlobalComponent<TestGlobalInt>().Read.Value);
         }
@@ -149,14 +149,14 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             a.GlobalComponent<TestGlobalInt>().Write.Value = 555;
             a.GlobalComponent<TestGlobalFloat>().Write.Value = 2.718f;
 
             // Mix: move 0-2, remove 3-5, add 3 new
             for (int i = 0; i < 3; i++)
-                a.MoveTo(handles[i].ToIndex(a), PartitionB);
+                a.SetTag<TestPartitionB>(handles[i].ToIndex(a));
             for (int i = 3; i < 6; i++)
                 a.RemoveEntity(handles[i]);
             for (int i = 0; i < 3; i++)
@@ -166,7 +166,7 @@ namespace Trecs.Tests
                     .Set(new TestVec())
                     .AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(555, a.GlobalComponent<TestGlobalInt>().Read.Value);
             NAssert.AreEqual(2.718f, a.GlobalComponent<TestGlobalFloat>().Read.Value, 0.001f);
@@ -191,13 +191,13 @@ namespace Trecs.Tests
                     .AssertComplete();
             }
             a.GlobalComponent<TestGlobalInt>().Write.Value = 10;
-            a.SubmitEntities();
+            a.Submit();
             NAssert.AreEqual(10, a.GlobalComponent<TestGlobalInt>().Read.Value);
 
             // Frame 2: remove some, update global
             a.RemoveEntitiesWithTags(PartitionA);
             a.GlobalComponent<TestGlobalInt>().Write.Value = 20;
-            a.SubmitEntities();
+            a.Submit();
             NAssert.AreEqual(20, a.GlobalComponent<TestGlobalInt>().Read.Value);
 
             // Frame 3: add more, update global again
@@ -209,7 +209,7 @@ namespace Trecs.Tests
                     .AssertComplete();
             }
             a.GlobalComponent<TestGlobalInt>().Write.Value = 30;
-            a.SubmitEntities();
+            a.Submit();
             NAssert.AreEqual(30, a.GlobalComponent<TestGlobalInt>().Read.Value);
         }
 
@@ -224,7 +224,7 @@ namespace Trecs.Tests
             var a = env.Accessor;
 
             var globalHandle = a.GlobalEntityHandle;
-            NAssert.IsTrue(a.EntityExists(globalHandle));
+            NAssert.IsTrue(globalHandle.Exists(a));
 
             // Add, submit, remove, submit, move, submit — global handle should be stable
             var handles = new EntityHandle[5];
@@ -236,21 +236,18 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
-            NAssert.IsTrue(a.EntityExists(globalHandle), "After adds");
+            a.Submit();
+            NAssert.IsTrue(globalHandle.Exists(a), "After adds");
 
-            a.MoveTo(handles[0].ToIndex(a), PartitionB);
+            a.SetTag<TestPartitionB>(handles[0].ToIndex(a));
             a.RemoveEntity(handles[1]);
-            a.SubmitEntities();
-            NAssert.IsTrue(a.EntityExists(globalHandle), "After move+remove");
+            a.Submit();
+            NAssert.IsTrue(globalHandle.Exists(a), "After move+remove");
 
             a.RemoveEntitiesWithTags(PartitionA);
             a.RemoveEntitiesWithTags(PartitionB);
-            a.SubmitEntities();
-            NAssert.IsTrue(
-                a.EntityExists(globalHandle),
-                "After bulk remove of all regular entities"
-            );
+            a.Submit();
+            NAssert.IsTrue(globalHandle.Exists(a), "After bulk remove of all regular entities");
         }
 
         #endregion
@@ -270,7 +267,7 @@ namespace Trecs.Tests
                 .Set(new TestVec())
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             int globalValueInCallback = -1;
             var sub = a
@@ -283,7 +280,7 @@ namespace Trecs.Tests
                 );
 
             a.RemoveEntity(handle);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(
                 88,
@@ -317,7 +314,7 @@ namespace Trecs.Tests
                     .Set(new TestVec())
                     .AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(
                 5,

@@ -18,6 +18,8 @@ namespace Trecs.Samples.JobSystem
         public Color ParticleColor = new(0.2f, 0.8f, 1f);
         public TMP_Text StatusText;
 
+        // All we do here is call constructors and set up dependencies
+        // between classes.  No initialization logic otherwise
         public override void Construct(
             out List<Action> initializables,
             out List<Action> tickables,
@@ -25,7 +27,11 @@ namespace Trecs.Samples.JobSystem
             out List<Action> disposables
         )
         {
-            var renderer = new RendererSystem();
+            // Benchmark sample: uncap frame rate so the overhead of our systems,
+            // not vsync, determines throughput.
+            Application.targetFrameRate = 2000;
+
+            var renderer = new IndirectRenderer();
 
             renderer.RegisterRenderable(
                 TagSet<SampleTags.Particle>.Value,
@@ -35,7 +41,7 @@ namespace Trecs.Samples.JobSystem
             );
 
             var world = new WorldBuilder()
-                .AddEntityTypes(
+                .AddTemplates(
                     new[]
                     {
                         SampleTemplates.Globals.Template,
@@ -44,10 +50,13 @@ namespace Trecs.Samples.JobSystem
                 )
                 .Build();
 
+            var inputSystem = new InputSystem();
+
             world.AddSystems(
                 new ISystem[]
                 {
-                    new InputSystem(MinParticleCount, MaxParticleCount),
+                    inputSystem,
+                    new ApplyControlInputSystem(MinParticleCount, MaxParticleCount),
                     new ParticleSpawnerSystem(
                         AreaSize,
                         MaxSpeed,
@@ -63,9 +72,9 @@ namespace Trecs.Samples.JobSystem
             );
 
             initializables = new() { world.Initialize };
-            tickables = new() { world.Tick };
+            tickables = new() { inputSystem.Tick, world.Tick };
             lateTickables = new() { world.LateTick };
-            disposables = new() { renderer.Dispose, world.Dispose };
+            disposables = new() { world.Dispose };
         }
     }
 }

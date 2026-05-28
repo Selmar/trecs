@@ -4,7 +4,7 @@ namespace Trecs
     /// Configuration options passed to <see cref="WorldBuilder.SetSettings"/> that control
     /// simulation timing, determinism, diagnostics, and lifecycle behavior.
     /// </summary>
-    public class WorldSettings
+    public sealed class WorldSettings
     {
         public const float DefaultFixedTimeStep = 1.0f / 60.0f;
         public const float DefaultMaxSecondsForFixedUpdatePerFrame = 1.0f / 3.0f;
@@ -39,22 +39,6 @@ namespace Trecs
         public bool StartPaused { get; init; }
 
         /// <summary>
-        /// When false, you must call World.TriggerAllRemoveEvents manually.
-        /// Useful when you need to run logic after all entities are removed
-        /// but before WorldAccessor is disposed.
-        /// </summary>
-        public bool TriggerRemoveEventsOnDispose { get; init; } = true;
-
-        /// <summary>
-        /// When true, native operations (adds, removes, moves) are sorted before processing
-        /// to ensure fully deterministic submission order regardless of thread scheduling.
-        /// Required for deterministic replay/recording. When false, native operations are
-        /// processed in bag order (per-thread FIFO), which is faster but not deterministic
-        /// across runs with different thread counts or scheduling.
-        /// </summary>
-        public bool RequireDeterministicSubmission { get; init; }
-
-        /// <summary>
         /// When true, logs a warning if fixed updates fall behind and the simulation
         /// has to skip forward (when <see cref="MaxSecondsForFixedUpdatePerFrame"/> is set)
         /// or is at risk of entering the spiral of death (when it is null).
@@ -78,6 +62,24 @@ namespace Trecs
         /// Each iteration processes structural changes that may trigger further changes via callbacks.
         /// </summary>
         public int MaxSubmissionIterations { get; init; } = 10;
+
+        /// <summary>
+        /// Minimum severity at which Warning/Info/Debug/Trace messages from Trecs emit
+        /// to the console. Defaults to <see cref="LogLevel.Warning"/>, so users see
+        /// Trecs's warnings and errors out of the box but no Info noise.
+        /// <para>
+        /// <b>Error</b> messages always emit regardless of this setting — they cannot
+        /// be suppressed. Use <see cref="LogLevel.None"/> to silence everything except
+        /// errors.
+        /// </para>
+        /// <para>
+        /// In non-development release builds, Warning/Info/Debug calls are compiled
+        /// out entirely unless <c>TRECS_LOGGING_ENABLED</c> is defined, so this
+        /// setting only takes effect in the editor, in development builds, or when
+        /// that define is set.
+        /// </para>
+        /// </summary>
+        public LogLevel MinLogLevel { get; set; } = LogLevel.Warning;
 
         /// <summary>
         /// When true, accessing <see cref="WorldAccessor.DeltaTime"/>, <see cref="WorldAccessor.ElapsedTime"/>,

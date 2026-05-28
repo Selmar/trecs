@@ -8,11 +8,9 @@ namespace Trecs
     {
         Type ComponentType { get; }
 
-        bool? FixedUpdateOnly { get; }
         bool? VariableUpdateOnly { get; }
         bool? IsInput { get; }
-        MissingInputFrameBehaviour? MissingInputFrameBehaviour { get; }
-        bool? WarnOnMissingInput { get; }
+        MissingInputBehavior? MissingInputBehavior { get; }
         bool? IsConstant { get; }
         bool HasDefault { get; }
 
@@ -26,38 +24,32 @@ namespace Trecs
 namespace Trecs.Internal
 {
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public class ComponentDeclaration<T> : IComponentDeclaration
+    public sealed class ComponentDeclaration<T> : IComponentDeclaration
         where T : unmanaged, IEntityComponent
     {
         static readonly Type _componentType = typeof(T);
 
         public ComponentDeclaration(
-            bool? fixedUpdateOnly,
             bool? variableUpdateOnly,
             bool? isInput,
-            MissingInputFrameBehaviour? inputFrameBehaviour,
-            bool? warnOnMissingInput,
+            MissingInputBehavior? inputFrameBehaviour,
             bool? isConstant,
             bool? isInterpolated,
             T? defaultValue
         )
         {
-            FixedUpdateOnly = fixedUpdateOnly;
             VariableUpdateOnly = variableUpdateOnly;
             IsInput = isInput;
-            MissingInputFrameBehaviour = inputFrameBehaviour;
-            WarnOnMissingInput = warnOnMissingInput;
+            MissingInputBehavior = inputFrameBehaviour;
             IsConstant = isConstant;
             IsInterpolated = isInterpolated;
             Default = defaultValue;
         }
 
-        public bool? FixedUpdateOnly { get; }
         public bool? VariableUpdateOnly { get; }
         public bool? IsInput { get; }
         public T? Default { get; }
-        public MissingInputFrameBehaviour? MissingInputFrameBehaviour { get; }
-        public bool? WarnOnMissingInput { get; }
+        public MissingInputBehavior? MissingInputBehavior { get; }
         public bool? IsConstant { get; }
         public bool? IsInterpolated { get; }
         public Type ComponentType => _componentType;
@@ -72,45 +64,26 @@ namespace Trecs.Internal
             string templateContext
         )
         {
-            Assert.That(declarations.Contains(this));
+            TrecsDebugAssert.That(declarations.Contains(this));
 
-            bool? fixedUpdateOnly = null;
             bool? variableUpdateOnly = null;
             bool? isInput = null;
             bool? isConstant = null;
             bool? isInterpolated = null;
-            MissingInputFrameBehaviour? inputFrameBehaviour = null;
-            bool? warnOnMissingInput = null;
+            MissingInputBehavior? inputFrameBehaviour = null;
             T? defaultValue = null;
 
             foreach (var baseDec in declarations)
             {
                 var dec = (ComponentDeclaration<T>)baseDec;
 
-                if (dec.FixedUpdateOnly.HasValue)
-                {
-                    if (fixedUpdateOnly.HasValue)
-                    {
-                        Assert.That(
-                            fixedUpdateOnly.Value == dec.FixedUpdateOnly.Value,
-                            "Found conflicting FixedUpdateOnly declarations for component type {} while processing template {}",
-                            _componentType,
-                            templateContext
-                        );
-                    }
-                    else
-                    {
-                        fixedUpdateOnly = dec.FixedUpdateOnly;
-                    }
-                }
-
                 if (dec.VariableUpdateOnly.HasValue)
                 {
                     if (variableUpdateOnly.HasValue)
                     {
-                        Assert.That(
+                        TrecsDebugAssert.That(
                             variableUpdateOnly.Value == dec.VariableUpdateOnly.Value,
-                            "Found conflicting VariableUpdateOnly declarations for component type {} while processing template {}",
+                            "Found conflicting VariableUpdateOnly declarations for component type {0} while processing template {1}",
                             _componentType,
                             templateContext
                         );
@@ -125,9 +98,9 @@ namespace Trecs.Internal
                 {
                     if (isInput.HasValue)
                     {
-                        Assert.That(
+                        TrecsDebugAssert.That(
                             isInput.Value == dec.IsInput.Value,
-                            "Found conflicting IsInput declarations for component type {} while processing template {}",
+                            "Found conflicting IsInput declarations for component type {0} while processing template {1}",
                             _componentType,
                             templateContext
                         );
@@ -142,9 +115,9 @@ namespace Trecs.Internal
                 {
                     if (isConstant.HasValue)
                     {
-                        Assert.That(
+                        TrecsDebugAssert.That(
                             isConstant.Value == dec.IsConstant.Value,
-                            "Found conflicting IsConstant declarations for component type {} while processing template {}",
+                            "Found conflicting IsConstant declarations for component type {0} while processing template {1}",
                             _componentType,
                             templateContext
                         );
@@ -159,9 +132,9 @@ namespace Trecs.Internal
                 {
                     if (isInterpolated.HasValue)
                     {
-                        Assert.That(
+                        TrecsDebugAssert.That(
                             isInterpolated.Value == dec.IsInterpolated.Value,
-                            "Found conflicting IsInterpolated declarations for component type {} while processing template {}",
+                            "Found conflicting IsInterpolated declarations for component type {0} while processing template {1}",
                             _componentType,
                             templateContext
                         );
@@ -172,37 +145,20 @@ namespace Trecs.Internal
                     }
                 }
 
-                if (dec.MissingInputFrameBehaviour.HasValue)
+                if (dec.MissingInputBehavior.HasValue)
                 {
                     if (inputFrameBehaviour.HasValue)
                     {
-                        Assert.That(
-                            inputFrameBehaviour.Value == dec.MissingInputFrameBehaviour.Value,
-                            "Found conflicting MissingInputFrameBehaviour declarations for component type {} while processing template {}",
+                        TrecsDebugAssert.That(
+                            inputFrameBehaviour.Value == dec.MissingInputBehavior.Value,
+                            "Found conflicting MissingInputBehavior declarations for component type {0} while processing template {1}",
                             _componentType,
                             templateContext
                         );
                     }
                     else
                     {
-                        inputFrameBehaviour = dec.MissingInputFrameBehaviour;
-                    }
-                }
-
-                if (dec.WarnOnMissingInput.HasValue)
-                {
-                    if (warnOnMissingInput.HasValue)
-                    {
-                        Assert.That(
-                            warnOnMissingInput.Value == dec.WarnOnMissingInput.Value,
-                            "Found conflicting WarnOnMissingInput declarations for component type {} while processing template {}",
-                            _componentType,
-                            templateContext
-                        );
-                    }
-                    else
-                    {
-                        warnOnMissingInput = dec.WarnOnMissingInput;
+                        inputFrameBehaviour = dec.MissingInputBehavior;
                     }
                 }
 
@@ -210,9 +166,9 @@ namespace Trecs.Internal
                 {
                     if (defaultValue.HasValue)
                     {
-                        Assert.That(
+                        TrecsDebugAssert.That(
                             UnmanagedUtil.BlittableEquals(dec.Default.Value, defaultValue.Value),
-                            "Found multiple non-equal default values for component type {} while processing template {}",
+                            "Found multiple non-equal default values for component type {0} while processing template {1}",
                             _componentType,
                             templateContext
                         );
@@ -224,47 +180,34 @@ namespace Trecs.Internal
                 }
             }
 
-            bool fixedUpdateOnlyChoice = fixedUpdateOnly ?? false;
             bool variableUpdateOnlyChoice = variableUpdateOnly ?? false;
             bool isInputChoice = isInput ?? false;
             bool isConstantChoice = isConstant ?? false;
             bool isInterpolatedChoice = isInterpolated ?? false;
-            bool warnOnMissingInputChoice = warnOnMissingInput ?? false;
 
-            Assert.That(
-                !fixedUpdateOnlyChoice || !variableUpdateOnlyChoice,
-                "Component type {} cannot be both FixedUpdateOnly and VariableUpdateOnly while processing template {}",
-                _componentType,
-                templateContext
-            );
-
-            Assert.That(
+            TrecsDebugAssert.That(
                 !isInterpolatedChoice || !isConstantChoice,
-                "Component type {} cannot be both Interpolated and Constant while processing template {}",
+                "Component type {0} cannot be both Interpolated and Constant while processing template {1}",
                 _componentType,
                 templateContext
             );
 
             if (isInputChoice)
             {
-                Assert.That(inputFrameBehaviour.HasValue);
-                Assert.That(
+                TrecsDebugAssert.That(inputFrameBehaviour.HasValue);
+                TrecsDebugAssert.That(
                     !isConstantChoice,
-                    "Component type {} cannot be both Input and Constant while processing template {}",
+                    "Component type {0} cannot be both Input and Constant while processing template {1}",
                     _componentType,
                     templateContext
                 );
 
-                // This actually is valid sometimes
-                // In one case - we send camera transform as input, but then we want interpolated values for it which we
-                // use when playing recording
-                // Assert.That(
-                //     !isInterpolatedChoice,
-                //     "Component type {} cannot be both Input and Interpolated while processing template {}", _componentType, templateContext);
+                // Input + Interpolated is valid (e.g. camera transform sent as input
+                // but interpolated during recording playback)
 
-                Assert.That(
+                TrecsDebugAssert.That(
                     !variableUpdateOnlyChoice,
-                    "Component type {} cannot be both Input and VariableUpdateOnly while processing template {}",
+                    "Component type {0} cannot be both Input and VariableUpdateOnly while processing template {1}",
                     _componentType,
                     templateContext
                 );
@@ -273,11 +216,9 @@ namespace Trecs.Internal
             var result = new List<IResolvedComponentDeclaration>
             {
                 new ResolvedComponentDeclaration<T>(
-                    fixedUpdateOnly: fixedUpdateOnlyChoice,
                     variableUpdateOnly: variableUpdateOnlyChoice,
                     isInput: isInputChoice,
                     inputFrameBehaviour: inputFrameBehaviour,
-                    warnOnMissingInput: warnOnMissingInputChoice,
                     isConstant: isConstantChoice,
                     defaultValue: defaultValue,
                     isInterpolated: isInterpolatedChoice
@@ -286,27 +227,18 @@ namespace Trecs.Internal
 
             if (isInterpolatedChoice)
             {
-                Assert.That(
-                    !fixedUpdateOnlyChoice,
-                    "Component type {} cannot be both Interpolated and FixedUpdateOnly while processing template {}",
-                    _componentType,
-                    templateContext
-                );
-
-                Assert.That(
+                TrecsDebugAssert.That(
                     !variableUpdateOnlyChoice,
-                    "Component type {} cannot be both Interpolated and VariableUpdateOnly while processing template {}",
+                    "Component type {0} cannot be both Interpolated and VariableUpdateOnly while processing template {1}",
                     _componentType,
                     templateContext
                 );
 
                 result.Add(
                     new ResolvedComponentDeclaration<Interpolated<T>>(
-                        fixedUpdateOnly: false,
                         variableUpdateOnly: true,
                         isInput: false,
                         inputFrameBehaviour: null,
-                        warnOnMissingInput: false,
                         isConstant: false,
                         defaultValue: new(),
                         isInterpolated: false
@@ -315,11 +247,9 @@ namespace Trecs.Internal
 
                 result.Add(
                     new ResolvedComponentDeclaration<InterpolatedPrevious<T>>(
-                        fixedUpdateOnly: false,
                         variableUpdateOnly: false,
                         isInput: false,
                         inputFrameBehaviour: null,
-                        warnOnMissingInput: false,
                         isConstant: false,
                         defaultValue: defaultValue.HasValue ? new(defaultValue.Value) : null,
                         isInterpolated: false

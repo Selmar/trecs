@@ -8,7 +8,7 @@ namespace Trecs.Collections
     /// Reference: https://prng.di.unimi.it/ (public domain / CC0)
     /// Seeded via SplitMix64 to expand a single ulong seed into 128-bit state.
     /// </summary>
-    public class Rng
+    public sealed class Rng
     {
         uint _s0,
             _s1,
@@ -34,7 +34,7 @@ namespace Trecs.Collections
 
         Rng(uint s0, uint s1, uint s2, uint s3)
         {
-            Assert.That((s0 | s1 | s2 | s3) != 0, "Rng state must not be all-zero");
+            TrecsDebugAssert.That((s0 | s1 | s2 | s3) != 0, "Rng state must not be all-zero");
             _s0 = s0;
             _s1 = s1;
             _s2 = s2;
@@ -53,7 +53,7 @@ namespace Trecs.Collections
 
         public void SetState(uint s0, uint s1, uint s2, uint s3)
         {
-            Assert.That((s0 | s1 | s2 | s3) != 0, "Rng state must not be all-zero");
+            TrecsDebugAssert.That((s0 | s1 | s2 | s3) != 0, "Rng state must not be all-zero");
             _s0 = s0;
             _s1 = s1;
             _s2 = s2;
@@ -104,7 +104,7 @@ namespace Trecs.Collections
 
         public float NextFloat(float minValue, float maxValue)
         {
-            Assert.That(maxValue >= minValue);
+            TrecsDebugAssert.That(maxValue >= minValue);
             return minValue + (maxValue - minValue) * Next();
         }
 
@@ -129,7 +129,7 @@ namespace Trecs.Collections
 
         public uint NextUint(uint exclusiveMax)
         {
-            Assert.That(exclusiveMax > 0);
+            TrecsDebugAssert.That(exclusiveMax > 0);
 
             // Debiased modulo reduction
             uint threshold = ((uint)-exclusiveMax) % exclusiveMax;
@@ -152,7 +152,7 @@ namespace Trecs.Collections
 
         public int NextInt(int minValue, int maxValueExclusive)
         {
-            Assert.That(maxValueExclusive > minValue);
+            TrecsDebugAssert.That(maxValueExclusive > minValue);
 
             long range = (long)maxValueExclusive - (long)minValue;
             uint boundedRange = range <= uint.MaxValue ? (uint)range : uint.MaxValue - 1;
@@ -162,7 +162,7 @@ namespace Trecs.Collections
 
         public int NextInt()
         {
-            return NextInt(int.MinValue + 1, int.MaxValue - 1);
+            return unchecked((int)NextUint());
         }
     }
 }

@@ -8,11 +8,9 @@ namespace Trecs
     {
         Type ComponentType { get; }
 
-        bool FixedUpdateOnly { get; }
         bool VariableUpdateOnly { get; }
         bool IsInput { get; }
-        MissingInputFrameBehaviour? MissingInputFrameBehaviour { get; }
-        bool WarnOnMissingInput { get; }
+        MissingInputBehavior? MissingInputBehavior { get; }
         bool IsConstant { get; }
         bool IsInterpolated { get; }
         bool HasDefault { get; }
@@ -26,39 +24,33 @@ namespace Trecs
 namespace Trecs.Internal
 {
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public class ResolvedComponentDeclaration<T> : IResolvedComponentDeclaration
+    internal sealed class ResolvedComponentDeclaration<T> : IResolvedComponentDeclaration
         where T : unmanaged, IEntityComponent
     {
         static readonly Type _componentType = typeof(T);
 
         public ResolvedComponentDeclaration(
-            bool fixedUpdateOnly,
             bool variableUpdateOnly,
             bool isInput,
-            MissingInputFrameBehaviour? inputFrameBehaviour,
-            bool warnOnMissingInput,
+            MissingInputBehavior? inputFrameBehaviour,
             bool isConstant,
             T? defaultValue,
             bool isInterpolated
         )
         {
-            FixedUpdateOnly = fixedUpdateOnly;
             VariableUpdateOnly = variableUpdateOnly;
             IsInput = isInput;
-            MissingInputFrameBehaviour = inputFrameBehaviour;
-            WarnOnMissingInput = warnOnMissingInput;
+            MissingInputBehavior = inputFrameBehaviour;
             IsConstant = isConstant;
             IsInterpolated = isInterpolated;
             Default = defaultValue;
             Builder = new ComponentBuilder<T>(defaultValue);
         }
 
-        public bool FixedUpdateOnly { get; }
         public bool VariableUpdateOnly { get; }
         public bool IsInput { get; }
         public T? Default { get; }
-        public MissingInputFrameBehaviour? MissingInputFrameBehaviour { get; }
-        public bool WarnOnMissingInput { get; }
+        public MissingInputBehavior? MissingInputBehavior { get; }
         public bool IsConstant { get; }
         public bool IsInterpolated { get; }
         public IComponentBuilder Builder { get; }

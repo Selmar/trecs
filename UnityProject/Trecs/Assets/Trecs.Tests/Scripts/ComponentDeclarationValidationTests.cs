@@ -13,15 +13,13 @@ namespace Trecs.Tests
     [TestFixture]
     public class ComponentDeclarationValidationTests
     {
-        #region Conflicting FixedUpdateOnly
+        #region Conflicting VariableUpdateOnly
 
         [Test]
-        public void ComponentDeclaration_ConflictingFixedUpdateOnly_Throws()
+        public void ComponentDeclaration_ConflictingVariableUpdateOnly_Throws()
         {
             var dec1 = new ComponentDeclaration<ConflictTestComp>(
-                fixedUpdateOnly: true,
-                null,
-                null,
+                variableUpdateOnly: true,
                 null,
                 null,
                 null,
@@ -29,9 +27,7 @@ namespace Trecs.Tests
                 null
             );
             var dec2 = new ComponentDeclaration<ConflictTestComp>(
-                fixedUpdateOnly: false,
-                null,
-                null,
+                variableUpdateOnly: false,
                 null,
                 null,
                 null,
@@ -57,19 +53,15 @@ namespace Trecs.Tests
         {
             var dec1 = new ComponentDeclaration<ConflictTestComp>(
                 null,
-                null,
                 isInput: true,
-                MissingInputFrameBehaviour.ResetToDefault,
-                null,
+                MissingInputBehavior.Reset,
                 null,
                 null,
                 null
             );
             var dec2 = new ComponentDeclaration<ConflictTestComp>(
                 null,
-                null,
                 isInput: false,
-                null,
                 null,
                 null,
                 null,
@@ -96,15 +88,11 @@ namespace Trecs.Tests
                 null,
                 null,
                 null,
-                null,
-                null,
                 isConstant: true,
                 null,
                 null
             );
             var dec2 = new ComponentDeclaration<ConflictTestComp>(
-                null,
-                null,
                 null,
                 null,
                 null,
@@ -124,30 +112,6 @@ namespace Trecs.Tests
 
         #endregion
 
-        #region FixedUpdateOnly + VariableUpdateOnly Conflict
-
-        [Test]
-        public void ComponentDeclaration_FixedAndVariable_Throws()
-        {
-            var dec = new ComponentDeclaration<ConflictTestComp>(
-                fixedUpdateOnly: true,
-                variableUpdateOnly: true,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null
-            );
-
-            NAssert.Catch(() =>
-            {
-                dec.MergeAsConcrete(new List<IComponentDeclaration> { dec }, "TestTemplate");
-            });
-        }
-
-        #endregion
-
         #region Interpolated + Constant Conflict
 
         [Test]
@@ -157,15 +121,11 @@ namespace Trecs.Tests
                 null,
                 null,
                 null,
-                null,
-                null,
                 isConstant: true,
                 isInterpolated: null,
                 null
             );
             var dec2 = new ComponentDeclaration<ConflictTestComp>(
-                null,
-                null,
                 null,
                 null,
                 null,
@@ -192,17 +152,13 @@ namespace Trecs.Tests
         {
             var dec1 = new ComponentDeclaration<ConflictTestComp>(
                 null,
-                null,
                 isInput: true,
-                MissingInputFrameBehaviour.ResetToDefault,
-                null,
+                MissingInputBehavior.Reset,
                 null,
                 null,
                 null
             );
             var dec2 = new ComponentDeclaration<ConflictTestComp>(
-                null,
-                null,
                 null,
                 null,
                 null,
@@ -228,9 +184,7 @@ namespace Trecs.Tests
         public void ComponentDeclaration_CompatibleMerge_Succeeds()
         {
             var dec1 = new ComponentDeclaration<ConflictTestComp>(
-                fixedUpdateOnly: true,
-                null,
-                null,
+                variableUpdateOnly: true,
                 null,
                 null,
                 null,
@@ -238,9 +192,7 @@ namespace Trecs.Tests
                 new ConflictTestComp { Value = 42 }
             );
             var dec2 = new ComponentDeclaration<ConflictTestComp>(
-                fixedUpdateOnly: true,
-                null,
-                null,
+                variableUpdateOnly: true,
                 null,
                 null,
                 null,
@@ -270,13 +222,9 @@ namespace Trecs.Tests
                 null,
                 null,
                 null,
-                null,
-                null,
                 new ConflictTestComp { Value = 10 }
             );
             var dec2 = new ComponentDeclaration<ConflictTestComp>(
-                null,
-                null,
                 null,
                 null,
                 null,

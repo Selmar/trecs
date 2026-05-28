@@ -1,16 +1,13 @@
 using System;
-using Trecs.Internal;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Mathematics;
 
 namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
 {
-    [ExecutesAfter(typeof(ILookingForMeal))]
+    [ExecuteAfter(typeof(ILookingForMeal))]
     public partial class ConsumingMealSystem : IConsumingMeal, ISystem
     {
-        static readonly TrecsLog _log = new(nameof(ConsumingMealSystem));
-
         public void Execute()
         {
             ref readonly var config = ref World.GlobalComponent<FrenzyConfig>().Read;
@@ -49,42 +46,42 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
             }
         }
 
-        [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
-        void RunForEachMethodAspect(in Fish fish, EntityIndex entityIndex)
+        [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
+        void RunForEachMethodAspect(in Fish fish, EntityHandle entityHandle)
         {
             var distanceSqr = math.lengthsq(fish.DestinationPosition - fish.Position);
 
             if (distanceSqr < EatDistanceSqr)
             {
-                World.RemoveEntity(fish.TargetMeal.ToIndex(World));
+                fish.TargetMeal.Remove(World);
                 fish.TargetMeal = EntityHandle.Null;
 
-                World.SetRemove<FrenzySets.Eating>(entityIndex);
-                World.SetAdd<FrenzySets.NotEating>(entityIndex);
+                World.Set<FrenzySets.Eating>().DeferredRemove(entityHandle);
+                World.Set<FrenzySets.NotEating>().DeferredAdd(entityHandle);
             }
         }
 
-        [ForEachEntity(Tags = new[] { typeof(FrenzyTags.Fish) }, Set = typeof(FrenzySets.Eating))]
+        [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
         void RunForEachMethodComponents(
             in Position position,
             in DestinationPosition destinationPosition,
             ref TargetMeal fishMeal,
-            EntityIndex entityIndex
+            EntityHandle entityHandle
         )
         {
             var distanceSqr = math.lengthsq(destinationPosition.Value - position.Value);
 
             if (distanceSqr < EatDistanceSqr)
             {
-                World.RemoveEntity(fishMeal.Value.ToIndex(World));
+                fishMeal.Value.Remove(World);
                 fishMeal.Value = EntityHandle.Null;
 
-                World.SetRemove<FrenzySets.Eating>(entityIndex);
-                World.SetAdd<FrenzySets.NotEating>(entityIndex);
+                World.Set<FrenzySets.Eating>().DeferredRemove(entityHandle);
+                World.Set<FrenzySets.NotEating>().DeferredAdd(entityHandle);
             }
         }
 
-        [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
+        [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
         [WrapAsJob]
         static void RunWrapAsJobAspect(in Fish fish, in NativeWorldAccessor world)
         {
@@ -92,22 +89,20 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
 
             if (distanceSqr < EatDistanceSqr)
             {
-                var mealIndex = fish.TargetMeal.ToIndex(world);
-
-                world.RemoveEntity(mealIndex);
+                fish.TargetMeal.Remove(world);
                 fish.TargetMeal = EntityHandle.Null;
-                world.SetRemove<FrenzySets.Eating>(fish.EntityIndex);
-                world.SetAdd<FrenzySets.NotEating>(fish.EntityIndex);
+                world.Set<FrenzySets.Eating>().DeferredRemove(fish.EntityIndex);
+                world.Set<FrenzySets.NotEating>().DeferredAdd(fish.EntityIndex);
             }
         }
 
-        [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
+        [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
         [WrapAsJob]
         static void RunWrapAsJobComponents(
             in Position position,
             in DestinationPosition destinationPosition,
             ref TargetMeal fishMeal,
-            EntityIndex entityIndex,
+            EntityHandle entityHandle,
             in NativeWorldAccessor world
         )
         {
@@ -115,12 +110,10 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
 
             if (distanceSqr < EatDistanceSqr)
             {
-                var mealIndex = fishMeal.Value.ToIndex(world);
-
-                world.RemoveEntity(mealIndex);
+                fishMeal.Value.Remove(world);
                 fishMeal.Value = EntityHandle.Null;
-                world.SetRemove<FrenzySets.Eating>(entityIndex);
-                world.SetAdd<FrenzySets.NotEating>(entityIndex);
+                world.Set<FrenzySets.Eating>().DeferredRemove(entityHandle);
+                world.Set<FrenzySets.NotEating>().DeferredAdd(entityHandle);
             }
         }
 
@@ -134,11 +127,12 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
 
                 if (distanceSqr < EatDistanceSqr)
                 {
-                    World.RemoveEntity(fish.TargetMeal.ToIndex(World));
+                    var fishHandle = fish.Handle(World);
+                    fish.TargetMeal.Remove(World);
                     fish.TargetMeal = EntityHandle.Null;
 
-                    World.SetRemove<FrenzySets.Eating>(fish.EntityIndex);
-                    World.SetAdd<FrenzySets.NotEating>(fish.EntityIndex);
+                    World.Set<FrenzySets.Eating>().DeferredRemove(fishHandle);
+                    World.Set<FrenzySets.NotEating>().DeferredAdd(fishHandle);
                 }
             }
         }
@@ -157,9 +151,11 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
                     .GroupSlices()
             )
             {
-                var positions = World.ComponentBuffer<Position>(slice.Group).Read;
-                var destPositions = World.ComponentBuffer<DestinationPosition>(slice.Group).Read;
-                var meals = World.ComponentBuffer<TargetMeal>(slice.Group).Write;
+                var positions = World.ComponentBuffer<Position>(slice.GroupIndex).Read;
+                var destPositions = World
+                    .ComponentBuffer<DestinationPosition>(slice.GroupIndex)
+                    .Read;
+                var meals = World.ComponentBuffer<TargetMeal>(slice.GroupIndex).Write;
                 foreach (var idx in slice.Indices)
                 {
                     var distanceSqr = math.lengthsq(
@@ -167,17 +163,17 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
                     );
                     if (distanceSqr < EatDistanceSqr)
                     {
-                        World.RemoveEntity(meals[idx].Value.ToIndex(World));
+                        meals[idx].Value.Remove(World);
                         meals[idx].Value = EntityHandle.Null;
-                        toMoveToNotEating.Add(new EntityIndex(idx, slice.Group));
+                        toMoveToNotEating.Add(new EntityIndex(idx, slice.GroupIndex));
                     }
                 }
             }
 
             foreach (var entityIndex in toMoveToNotEating)
             {
-                eatingSet.Write.RemoveImmediate(entityIndex);
-                notEatingSet.Write.AddImmediate(entityIndex);
+                eatingSet.Write.Remove(entityIndex);
+                notEatingSet.Write.Add(entityIndex);
             }
         }
 
@@ -210,19 +206,17 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
             [FromWorld]
             public NativeWorldAccessor World;
 
-            [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
+            [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
             public void Execute(in Fish fish)
             {
                 var distanceSqr = math.lengthsq(fish.DestinationPosition - fish.Position);
 
                 if (distanceSqr < EatDistanceSqr)
                 {
-                    var mealIndex = fish.TargetMeal.ToIndex(World);
-
-                    World.RemoveEntity(mealIndex);
+                    fish.TargetMeal.Remove(World);
                     fish.TargetMeal = EntityHandle.Null;
-                    World.SetRemove<FrenzySets.Eating>(fish.EntityIndex);
-                    World.SetAdd<FrenzySets.NotEating>(fish.EntityIndex);
+                    World.Set<FrenzySets.Eating>().DeferredRemove(fish.EntityIndex);
+                    World.Set<FrenzySets.NotEating>().DeferredAdd(fish.EntityIndex);
                 }
             }
         }
@@ -233,24 +227,22 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
             [FromWorld]
             public NativeWorldAccessor World;
 
-            [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
+            [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
             public void Execute(
                 in Position position,
                 in DestinationPosition destinationPosition,
                 ref TargetMeal fishMeal,
-                EntityIndex entityIndex
+                EntityHandle entityHandle
             )
             {
                 var distanceSqr = math.lengthsq(destinationPosition.Value - position.Value);
 
                 if (distanceSqr < EatDistanceSqr)
                 {
-                    var mealIndex = fishMeal.Value.ToIndex(World);
-
-                    World.RemoveEntity(mealIndex);
+                    fishMeal.Value.Remove(World);
                     fishMeal.Value = EntityHandle.Null;
-                    World.SetRemove<FrenzySets.Eating>(entityIndex);
-                    World.SetAdd<FrenzySets.NotEating>(entityIndex);
+                    World.Set<FrenzySets.Eating>().DeferredRemove(entityHandle);
+                    World.Set<FrenzySets.NotEating>().DeferredAdd(entityHandle);
                 }
             }
         }
@@ -258,23 +250,23 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
         [BurstCompile]
         partial struct ConsumeMealRawBuffersJob
         {
-            [FromWorld(Tag = typeof(FrenzyTags.Fish))]
-            public Group FishGroup;
+            [FromWorld(typeof(FrenzyTags.Fish))]
+            public GroupIndex FishGroup;
 
             [FromWorld]
             public NativeWorldAccessor World;
 
-            [FromWorld(Tag = typeof(FrenzyTags.Fish))]
+            [FromWorld(typeof(FrenzyTags.Fish))]
             public NativeEntitySetIndices<FrenzySets.Eating> FilterIndices;
 
-            [FromWorld(Tag = typeof(FrenzyTags.Fish))]
+            [FromWorld(typeof(FrenzyTags.Fish))]
             public NativeComponentBufferRead<Position> Positions;
 
-            [FromWorld(Tag = typeof(FrenzyTags.Fish))]
+            [FromWorld(typeof(FrenzyTags.Fish))]
             public NativeComponentBufferRead<DestinationPosition> DestinationPositions;
 
             [NativeDisableParallelForRestriction]
-            [FromWorld(Tag = typeof(FrenzyTags.Fish))]
+            [FromWorld(typeof(FrenzyTags.Fish))]
             public NativeComponentBufferWrite<TargetMeal> Meals;
 
             public void Execute(int i)
@@ -286,14 +278,12 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
 
                 if (distanceSqr < EatDistanceSqr)
                 {
-                    var mealIndex = Meals[idx].Value.ToIndex(World);
-
-                    World.RemoveEntity(mealIndex);
+                    Meals[idx].Value.Remove(World);
                     Meals[idx] = new TargetMeal { Value = EntityHandle.Null };
 
                     var fishEntityIndex = new EntityIndex(idx, FishGroup);
-                    World.SetRemove<FrenzySets.Eating>(fishEntityIndex);
-                    World.SetAdd<FrenzySets.NotEating>(fishEntityIndex);
+                    World.Set<FrenzySets.Eating>().DeferredRemove(fishEntityIndex);
+                    World.Set<FrenzySets.NotEating>().DeferredAdd(fishEntityIndex);
                 }
             }
         }

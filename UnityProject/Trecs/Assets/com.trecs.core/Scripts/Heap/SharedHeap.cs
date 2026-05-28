@@ -8,38 +8,45 @@ namespace Trecs
 {
     /// <summary>
     /// Manages reference-counted managed (class) allocations backing <see cref="SharedPtr{T}"/>.
-    /// Accessed internally through <see cref="HeapAccessor"/>; not typically used directly.
+    /// Accessed internally through <see cref="WorldAccessor"/>; not typically used directly.
     /// </summary>
-    public class SharedHeap
+    public sealed class SharedHeap
     {
-        static readonly TrecsLog _log = new(nameof(SharedHeap));
+        readonly TrecsLog _log;
 
         readonly BlobCache _store;
-        readonly DenseDictionary<BlobId, PtrHandle> _blobCacheHandles = new();
-        readonly DenseDictionary<BlobId, BlobInfo> _activeBlobs = new();
-        readonly DenseDictionary<PtrHandle, BlobId> _activeHandles = new();
+        readonly IterableDictionary<BlobId, PtrHandle> _blobCacheHandles = new();
+        readonly IterableDictionary<BlobId, BlobInfo> _activeBlobs = new();
+        readonly IterableDictionary<PtrHandle, BlobId> _activeHandles = new();
         readonly List<PtrHandle> _tempBuffer1 = new();
 
-        readonly HeapIdCounter _idCounter = new(1, 2);
+        // Skip 0 — PtrHandle reserves 0 as the null sentinel.
+        uint _nextHandleId = 1;
         bool _isDisposed;
 
-        public SharedHeap(BlobCache store)
+        public SharedHeap(TrecsLog log, BlobCache store)
         {
+            _log = log;
             _store = store;
         }
+
+        // Exposed so WorldAccessor (which already references SharedHeap) can surface
+        // the cache without a separate plumbing path. The same instance is shared
+        // with NativeSharedHeap and the frame-scoped heaps.
+        internal BlobCache BlobCache => _store;
 
         public int NumEntries
         {
             get
             {
-                Assert.That(!_isDisposed);
+                TrecsDebugAssert.That(!_isDisposed);
                 return _activeBlobs.Count;
             }
         }
 
         public bool CanGetBlob(PtrHandle handle)
         {
-            Assert.That(!_isDisposed);
+            TrecsDebugAssert.That(!_isDisposed);
 
             if (!_activeHandles.TryGetValue(handle, out var blobId))
             {
@@ -54,15 +61,15 @@ namespace Trecs
         {
             var containsBlob = _activeBlobs.ContainsKey(blobId);
 #if TRECS_INTERNAL_CHECKS && DEBUG
-            Assert.That(
+            TrecsDebugAssert.That(
                 _activeHandles.TryGetValue(handle, out var debugBlobId) == containsBlob,
-                "SharedPtr Handle/BlobId mismatch for handle {} and blobId {}",
+                "SharedPtr Handle/BlobId mismatch for handle {0} and blobId {1}",
                 handle,
                 blobId
             );
-            Assert.That(
+            TrecsDebugAssert.That(
                 !containsBlob || debugBlobId == blobId,
-                "SharedPtr Handle maps to different BlobId: expected {}, got {}",
+                "SharedPtr Handle maps to different BlobId: expected {0}, got {1}",
                 blobId,
                 debugBlobId
             );
@@ -80,15 +87,15 @@ namespace Trecs
         {
             var containsBlob = _activeBlobs.ContainsKey(blobId);
 #if TRECS_INTERNAL_CHECKS && DEBUG
-            Assert.That(
+            TrecsDebugAssert.That(
                 _activeHandles.TryGetValue(handle, out var debugBlobId) == containsBlob,
-                "SharedPtr Handle/BlobId mismatch for handle {} and blobId {}",
+                "SharedPtr Handle/BlobId mismatch for handle {0} and blobId {1}",
                 handle,
                 blobId
             );
-            Assert.That(
+            TrecsDebugAssert.That(
                 !containsBlob || debugBlobId == blobId,
-                "SharedPtr Handle maps to different BlobId: expected {}, got {}",
+                "SharedPtr Handle maps to different BlobId: expected {0}, got {1}",
                 blobId,
                 debugBlobId
             );
@@ -99,8 +106,8 @@ namespace Trecs
         public bool TryGetBlob<T>(PtrHandle handle, out T blob)
             where T : class
         {
-            Assert.That(!_isDisposed);
-            Assert.That(!handle.IsNull);
+            TrecsDebugAssert.That(!_isDisposed);
+            TrecsDebugAssert.That(!handle.IsNull);
 
             if (!_activeHandles.TryGetValue(handle, out var blobId))
             {
@@ -110,7 +117,7 @@ namespace Trecs
 
             if (_activeBlobs.TryGetValue(blobId, out var info))
             {
-                Assert.That(info.TypeHash == TypeIdProvider.GetTypeId<T>());
+                TrecsDebugAssert.That(info.TypeHash == TypeId<T>.Value);
                 return _store.TryGetManagedBlob<T>(blobId, out blob, updateAccessTime: true);
             }
 
@@ -121,25 +128,25 @@ namespace Trecs
         public T GetBlob<T>(PtrHandle handle)
             where T : class
         {
-            Assert.That(!_isDisposed);
-            Assert.That(!handle.IsNull);
+            TrecsDebugAssert.That(!_isDisposed);
+            TrecsDebugAssert.That(!handle.IsNull);
 
             if (!_activeHandles.TryGetValue(handle, out var blobId))
             {
-                throw Assert.CreateException(
-                    "Attempted to get an unrecognized blob handle with id {}",
+                throw TrecsDebugAssert.CreateException(
+                    "Attempted to get an unrecognized blob handle with id {0}",
                     handle.Value
                 );
             }
 
             if (_activeBlobs.TryGetValue(blobId, out var info))
             {
-                Assert.That(info.TypeHash == TypeIdProvider.GetTypeId<T>());
+                TrecsDebugAssert.That(info.TypeHash == TypeId<T>.Value);
                 return _store.GetManagedBlob<T>(blobId, updateAccessTime: true);
             }
 
-            throw Assert.CreateException(
-                "Attempted to get a disposed blob handle with id {}",
+            throw TrecsDebugAssert.CreateException(
+                "Attempted to get a disposed blob handle with id {0}",
                 blobId
             );
         }
@@ -147,34 +154,24 @@ namespace Trecs
         SharedPtr<T> AddBlobEntry<T>(BlobId blobId, PtrHandle blobCacheHandleId)
             where T : class
         {
-            _activeBlobs.Add(
-                blobId,
-                new BlobInfo { RefCount = 0, TypeHash = TypeIdProvider.GetTypeId<T>() }
-            );
+            _activeBlobs.Add(blobId, new BlobInfo { RefCount = 0, TypeHash = TypeId<T>.Value });
             _blobCacheHandles.Add(blobId, blobCacheHandleId);
-            _log.Trace("Added new blob {}", blobId);
+            _log.Trace("Added new blob {0}", blobId);
             return AddBlobHandle<T>(blobId);
-        }
-
-        public SharedPtr<T> CreateBlob<T>(T blob)
-            where T : class
-        {
-            var handle = _store.CreateBlobPtr<T>(blob);
-            return AddBlobEntry<T>(handle.BlobId, handle.Handle);
         }
 
         public SharedPtr<T> CreateBlob<T>(BlobId blobId, T blob)
             where T : class
         {
-            Assert.That(!_isDisposed);
-            var handle = _store.CreateBlobPtr<T>(blobId, blob);
+            TrecsDebugAssert.That(!_isDisposed);
+            var handle = _store.AllocManagedBlob<T>(blobId, blob);
             return AddBlobEntry<T>(blobId, handle.Handle);
         }
 
         public bool TryGetBlob<T>(BlobId blobId, out SharedPtr<T> ptr)
             where T : class
         {
-            Assert.That(!_isDisposed);
+            TrecsDebugAssert.That(!_isDisposed);
 
             if (_activeBlobs.ContainsKey(blobId))
             {
@@ -182,7 +179,7 @@ namespace Trecs
                 return true;
             }
 
-            if (_store.HasManagedBlob<T>(blobId, updateAccessTime: true))
+            if (_store.ContainsManagedBlob<T>(blobId, updateAccessTime: true))
             {
                 var blobCacheHandleId = _store.CreateHandle(blobId);
                 ptr = AddBlobEntry<T>(blobId, blobCacheHandleId);
@@ -198,7 +195,10 @@ namespace Trecs
         {
             if (!TryGetBlob<T>(blobId, out var ptr))
             {
-                throw Assert.CreateException("Attempted to get an unrecognized blob {}", blobId);
+                throw TrecsDebugAssert.CreateException(
+                    "Attempted to get an unrecognized blob {0}",
+                    blobId
+                );
             }
 
             return ptr;
@@ -208,12 +208,12 @@ namespace Trecs
             where T : class
         {
             ref var info = ref _activeBlobs.GetValueByRef(blobId);
-            Assert.That(info.TypeHash == TypeIdProvider.GetTypeId<T>());
+            TrecsDebugAssert.That(info.TypeHash == TypeId<T>.Value);
             info.RefCount += 1;
 
-            var newHandle = new PtrHandle(_idCounter.Alloc());
+            var newHandle = new PtrHandle(_nextHandleId++);
             _activeHandles.Add(newHandle, blobId);
-            _log.Trace("Added blob handle {}", newHandle);
+            _log.Trace("Added blob handle {0}", newHandle);
 
             return new SharedPtr<T>(newHandle, blobId);
         }
@@ -221,7 +221,7 @@ namespace Trecs
         public bool TryClone<T>(PtrHandle handle, out SharedPtr<T> result)
             where T : class
         {
-            Assert.That(!_isDisposed);
+            TrecsDebugAssert.That(!_isDisposed);
 
             if (!_activeHandles.TryGetValue(handle, out var blobId))
             {
@@ -235,7 +235,7 @@ namespace Trecs
 
         public void ClearAll(bool warnUndisposed)
         {
-            Assert.That(!_isDisposed);
+            TrecsDebugAssert.That(!_isDisposed);
 
             if (_activeHandles.Count > 0)
             {
@@ -253,7 +253,7 @@ namespace Trecs
                         }
 
                         _log.Warning(
-                            "Found {} managed blob handles that were not disposed, with types: {l}",
+                            "Found {0} managed blob handles that were not disposed, with types: {1}",
                             _activeHandles.Count,
                             debugStrings.Select(x => x.GetPrettyName()).Join(", ")
                         );
@@ -276,34 +276,36 @@ namespace Trecs
                 _tempBuffer1.Clear();
             }
 
-            Assert.That(_activeBlobs.Count == 0);
-            Assert.That(_activeHandles.Count == 0);
-            Assert.That(_blobCacheHandles.Count == 0);
+            TrecsDebugAssert.That(_activeBlobs.Count == 0);
+            TrecsDebugAssert.That(_activeHandles.Count == 0);
+            TrecsDebugAssert.That(_blobCacheHandles.Count == 0);
         }
 
         public void Dispose()
         {
-            Assert.That(!_isDisposed);
+            TrecsDebugAssert.That(!_isDisposed);
             ClearAll(warnUndisposed: true);
             _isDisposed = true;
         }
 
         public void DisposeHandle(PtrHandle id)
         {
-            Assert.That(!_isDisposed);
+            TrecsDebugAssert.That(!_isDisposed);
 
             if (!_activeHandles.TryGetValue(id, out var blobId))
             {
-                throw Assert.CreateException("Attempted to dispose an unrecognized blob handle");
+                throw TrecsDebugAssert.CreateException(
+                    "Attempted to dispose an unrecognized blob handle"
+                );
             }
 
             _activeHandles.RemoveMustExist(id);
-            _log.Trace("Disposed blob handle {}", id);
+            _log.Trace("Disposed blob handle {0}", id);
 
             ref var info = ref _activeBlobs.GetValueByRef(blobId);
             info.RefCount -= 1;
 
-            Assert.That(info.RefCount >= 0);
+            TrecsDebugAssert.That(info.RefCount >= 0);
 
             if (info.RefCount == 0)
             {
@@ -314,14 +316,18 @@ namespace Trecs
             }
         }
 
-        public void Deserialize(ITrecsSerializationReader reader)
+        public void Deserialize(ISerializationReader reader)
         {
-            Assert.That(_activeBlobs.Count == 0);
-            Assert.That(_activeHandles.Count == 0);
+            TrecsDebugAssert.That(!_isDisposed);
+            // Defensive: callers contract is ClearAll() before Deserialize, but
+            // a wrong-order call would silently corrupt state — warn-then-clean
+            // so the contract violation is observable in dev builds while still
+            // recoverable in release.
+            ClearAll(warnUndisposed: true);
 
-            _idCounter.Value = reader.Read<uint>("_handleCounter");
-            reader.ReadInPlace<DenseDictionary<BlobId, BlobInfo>>("_activeBlobs", _activeBlobs);
-            reader.ReadInPlace<DenseDictionary<PtrHandle, BlobId>>(
+            _nextHandleId = reader.Read<uint>("HandleCounter");
+            reader.ReadInPlace<IterableDictionary<BlobId, BlobInfo>>("_activeBlobs", _activeBlobs);
+            reader.ReadInPlace<IterableDictionary<PtrHandle, BlobId>>(
                 "_activeHandles",
                 _activeHandles
             );
@@ -332,17 +338,17 @@ namespace Trecs
             }
         }
 
-        public void Serialize(ITrecsSerializationWriter writer)
+        public void Serialize(ISerializationWriter writer)
         {
-            writer.Write<uint>("_handleCounter", _idCounter.Value);
-            writer.Write<DenseDictionary<BlobId, BlobInfo>>("_activeBlobs", _activeBlobs);
-            writer.Write<DenseDictionary<PtrHandle, BlobId>>("_activeHandles", _activeHandles);
+            writer.Write<uint>("HandleCounter", _nextHandleId);
+            writer.Write<IterableDictionary<BlobId, BlobInfo>>("_activeBlobs", _activeBlobs);
+            writer.Write<IterableDictionary<PtrHandle, BlobId>>("_activeHandles", _activeHandles);
         }
 
         public struct BlobInfo
         {
             public int RefCount;
-            public int TypeHash;
+            public TypeId TypeHash;
         }
     }
 }

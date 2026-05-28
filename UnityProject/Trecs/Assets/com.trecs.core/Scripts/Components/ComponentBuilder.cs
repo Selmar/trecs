@@ -10,17 +10,17 @@ namespace Trecs.Internal
         void Preallocate(IComponentArray dictionary, int size);
         IComponentArray CreateDictionary(int size);
 
-        void ResetInputs(EntityInputQueue inputManager, Group group);
+        void ResetInputs(EntityInputQueue inputManager, GroupIndex group);
 
         bool HasUserProvidedPrototype { get; }
 
-        ComponentId ComponentId { get; }
+        ComponentTypeId TypeId { get; }
 
         Type ComponentType { get; }
     }
 
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public class ComponentBuilder<T> : IComponentBuilder
+    public sealed class ComponentBuilder<T> : IComponentBuilder
         where T : unmanaged, IEntityComponent
     {
         static readonly Type _componentType;
@@ -32,7 +32,7 @@ namespace Trecs.Internal
             _ = TypeMeta<T>.IsUnmanaged;
             if (TypeMeta<T>.IsUnmanaged)
                 EntityComponentIdMap.Register<T>(new Filler<T>());
-            ComponentTypeId<T>.Init();
+            TypeId<T>.Warmup();
         }
 
         public ComponentBuilder(T? prototype)
@@ -54,7 +54,7 @@ namespace Trecs.Internal
             get { return _hasUserProvidedPrototype; }
         }
 
-        public ComponentId ComponentId => ComponentTypeId<T>.Value;
+        public ComponentTypeId TypeId => ComponentTypeId<T>.Value;
 
         public void BuildEntityAndAddToList(IComponentArray dictionary)
         {
@@ -73,7 +73,7 @@ namespace Trecs.Internal
             return new ComponentArray<T>(size);
         }
 
-        public void ResetInputs(EntityInputQueue inputQueue, Group group)
+        public void ResetInputs(EntityInputQueue inputQueue, GroupIndex group)
         {
             inputQueue.ResetInputs<T>(group);
         }

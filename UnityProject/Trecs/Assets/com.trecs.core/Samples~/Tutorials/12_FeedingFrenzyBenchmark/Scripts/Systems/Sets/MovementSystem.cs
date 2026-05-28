@@ -1,15 +1,12 @@
 using System;
-using Trecs.Internal;
 using Unity.Burst;
 using Unity.Collections;
 
 namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
 {
-    [ExecutesAfter(typeof(IConsumingMeal))]
+    [ExecuteAfter(typeof(IConsumingMeal))]
     public partial class MovementSystem : IMovement, ISystem
     {
-        static readonly TrecsLog _log = new(nameof(MovementSystem));
-
         public void Execute()
         {
             ref readonly var config = ref World.GlobalComponent<FrenzyConfig>().Read;
@@ -47,13 +44,13 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
             }
         }
 
-        [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
+        [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
         void RunForEachMethodAspect(in Fish fish)
         {
             fish.Position += World.DeltaTime * fish.Velocity;
         }
 
-        [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
+        [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
         void RunForEachMethodComponents(in Velocity velocity, ref Position position)
         {
             position.Value += World.DeltaTime * velocity.Value;
@@ -79,8 +76,8 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
                     .GroupSlices()
             )
             {
-                var velocities = World.ComponentBuffer<Velocity>(slice.Group).Read;
-                var positions = World.ComponentBuffer<Position>(slice.Group).Write;
+                var velocities = World.ComponentBuffer<Velocity>(slice.GroupIndex).Read;
+                var positions = World.ComponentBuffer<Position>(slice.GroupIndex).Write;
 
                 foreach (var i in slice.Indices)
                 {
@@ -89,14 +86,14 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
             }
         }
 
-        [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
+        [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
         [WrapAsJob]
         static void RunWrapAsJobAspect(in Fish fish, in NativeWorldAccessor world)
         {
             fish.Position += world.DeltaTime * fish.Velocity;
         }
 
-        [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
+        [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
         [WrapAsJob]
         static void RunWrapAsJobComponents(
             in Velocity velocity,
@@ -138,7 +135,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
         {
             public float DeltaTime;
 
-            [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
+            [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
             public readonly void Execute(in Fish fish)
             {
                 fish.Position += DeltaTime * fish.Velocity;
@@ -150,7 +147,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
         {
             public float DeltaTime;
 
-            [ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
+            [ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.Eating))]
             public readonly void Execute(in Velocity velocity, ref Position position)
             {
                 position.Value += DeltaTime * velocity.Value;
@@ -162,14 +159,14 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Sets
         {
             public float DeltaTime;
 
-            [FromWorld(Tag = typeof(FrenzyTags.Fish))]
+            [FromWorld(typeof(FrenzyTags.Fish))]
             public NativeEntitySetIndices<FrenzySets.Eating> FilterIndices;
 
-            [FromWorld(Tag = typeof(FrenzyTags.Fish))]
+            [FromWorld(typeof(FrenzyTags.Fish))]
             public NativeComponentBufferRead<Velocity> Velocities;
 
             [NativeDisableParallelForRestriction]
-            [FromWorld(Tag = typeof(FrenzyTags.Fish))]
+            [FromWorld(typeof(FrenzyTags.Fish))]
             public NativeComponentBufferWrite<Position> Positions;
 
             public void Execute(int i)

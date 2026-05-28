@@ -20,7 +20,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 0 })
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             inputQueue.AddInput(frame: 0, handle, new TestInt { Value = 42 });
 
@@ -40,7 +40,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 0 })
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             inputQueue.AddInput(frame: 5, handle, new TestInt { Value = 99 });
 
@@ -60,7 +60,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 0 })
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             bool found = inputQueue.TryGetInput<TestInt>(0, handle, out _);
             NAssert.IsFalse(found);
@@ -81,7 +81,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 0 })
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             inputQueue.AddInput(frame: 0, handle, new TestInt { Value = 10 });
             inputQueue.SetInput(frame: 0, handle, new TestInt { Value = 20 });
@@ -101,7 +101,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 0 })
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             inputQueue.SetInput(frame: 0, handle, new TestInt { Value = 55 });
 
@@ -124,7 +124,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 0 })
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             inputQueue.AddInput(frame: 0, handle, new TestInt { Value = 100 });
             inputQueue.AddInput(frame: 1, handle, new TestInt { Value = 200 });
@@ -158,7 +158,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 0 })
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             inputQueue.AddInput(frame: 0, h1, new TestInt { Value = 10 });
             inputQueue.AddInput(frame: 0, h2, new TestInt { Value = 20 });
@@ -185,7 +185,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 0 })
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             inputQueue.AddInput(frame: 5, handle, new TestInt { Value = 50 });
             inputQueue.AddInput(frame: 10, handle, new TestInt { Value = 100 });
@@ -219,7 +219,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 0 })
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             inputQueue.AddInput(frame: 5, handle, new TestInt { Value = 50 });
             inputQueue.AddInput(frame: 10, handle, new TestInt { Value = 100 });
@@ -253,7 +253,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 0 })
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             inputQueue.AddInput(frame: 0, handle, new TestInt { Value = 10 });
             inputQueue.AddInput(frame: 1, handle, new TestInt { Value = 20 });
@@ -279,7 +279,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 0 })
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             inputQueue.AddInput(frame: 0, handle, new TestInt { Value = 10 });
 
@@ -287,51 +287,6 @@ namespace Trecs.Tests
             {
                 inputQueue.AddInput(frame: 0, handle, new TestInt { Value = 20 });
             });
-        }
-
-        #endregion
-
-        #region RemapFrameOffsets
-
-        [Test]
-        public void InputQueue_RemapFrameOffsets_ShiftsAllFrames()
-        {
-            using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
-            var a = env.Accessor;
-            var inputQueue = env.World.GetEntityInputQueue();
-
-            var handle = a.AddEntity(TestTags.Alpha)
-                .Set(new TestInt { Value = 0 })
-                .AssertComplete()
-                .Handle;
-            a.SubmitEntities();
-
-            inputQueue.AddInput(frame: 0, handle, new TestInt { Value = 10 });
-            inputQueue.AddInput(frame: 5, handle, new TestInt { Value = 50 });
-
-            inputQueue.RemapFrameOffsets(100);
-
-            NAssert.IsFalse(
-                inputQueue.HasInputFrame<TestInt>(0, handle),
-                "Original frame 0 should be gone"
-            );
-            NAssert.IsFalse(
-                inputQueue.HasInputFrame<TestInt>(5, handle),
-                "Original frame 5 should be gone"
-            );
-            NAssert.IsTrue(
-                inputQueue.HasInputFrame<TestInt>(100, handle),
-                "Frame 0+100 should exist"
-            );
-            NAssert.IsTrue(
-                inputQueue.HasInputFrame<TestInt>(105, handle),
-                "Frame 5+100 should exist"
-            );
-
-            inputQueue.TryGetInput<TestInt>(100, handle, out var r0);
-            inputQueue.TryGetInput<TestInt>(105, handle, out var r5);
-            NAssert.AreEqual(10, r0.Value);
-            NAssert.AreEqual(50, r5.Value);
         }
 
         #endregion

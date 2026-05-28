@@ -1,231 +1,81 @@
-using System.Diagnostics;
-using System.Runtime.CompilerServices;
-using Trecs.Collections;
-using Unity.Collections;
+using System;
 
 namespace Trecs
 {
     /// <summary>
-    /// Generic cache for SetDef values derived from IEntitySet struct types.
-    /// Provides zero-allocation access to pre-computed SetDef instances.
-    /// Works for all sets.
+    /// Runtime identity for an entity set, analogous to <see cref="Tag"/> for tag types.
+    /// Holds a stable ID (for serialization), the associated tag scope, and debug name.
+    /// Obtained per-type via <see cref="EntitySet{T}.Value"/>, or enumerated via
+    /// <see cref="WorldInfo.AllSets"/>.
+    /// </summary>
+    public readonly struct EntitySet : IEquatable<EntitySet>
+    {
+        public readonly SetId Id;
+
+        /// <summary>
+        /// The tag scope this set is restricted to — i.e. only entities whose group
+        /// tag set is a superset of this <see cref="TagSet"/> can be members. Set from
+        /// the type arguments to <c>IEntitySet&lt;...&gt;</c>; for a "global" set
+        /// declared as <c>IEntitySet</c> with no type arguments (any entity is eligible),
+        /// this is <see cref="TagSet.Null"/>.
+        /// </summary>
+        public readonly TagSet Tags;
+        public readonly string DebugName;
+
+        // The IEntitySet struct type the set was registered with via
+        // WorldBuilder.AddSet&lt;T&gt;(). Reflection-only — runtime never
+        // touches it — but useful for editor tooling that wants to show
+        // FullName / Namespace alongside the debug name.
+        public readonly Type SetType;
+
+        public EntitySet(SetId id, TagSet tags, string debugName, Type setType)
+        {
+            Id = id;
+            Tags = tags;
+            DebugName = debugName;
+            SetType = setType;
+        }
+
+        public override bool Equals(object obj)
+        {
+            return obj is EntitySet other && Equals(other);
+        }
+
+        public bool Equals(EntitySet other)
+        {
+            return Id == other.Id;
+        }
+
+        // Stable hash across sessions.
+        public override int GetHashCode()
+        {
+            return Id.Value;
+        }
+
+        public override string ToString()
+        {
+            return DebugName;
+        }
+
+        public static bool operator ==(EntitySet a, EntitySet b)
+        {
+            return a.Equals(b);
+        }
+
+        public static bool operator !=(EntitySet a, EntitySet b)
+        {
+            return !a.Equals(b);
+        }
+    }
+
+    /// <summary>
+    /// Generic per-type cache for <see cref="EntitySet"/> values derived from
+    /// <see cref="IEntitySet"/> struct types. Provides zero-allocation access to
+    /// pre-computed identity instances.
     /// </summary>
     public static class EntitySet<T>
         where T : struct, IEntitySet
     {
-        public static readonly SetDef Value = SetFactory.CreateSet(typeof(T));
-    }
-}
-
-namespace Trecs.Internal
-{
-    /// <summary>
-    /// A collection of entity indices organized by group, representing a subset of entities
-    /// that match some user-defined criteria.
-    ///
-    /// Supports immediate mutations via <see cref="AddImmediate"/>/<see cref="RemoveImmediate"/>
-    /// (main thread only). Deferred mutations are handled externally via
-    /// <see cref="WorldAccessor.SetAdd{T}"/> / <see cref="NativeWorldAccessor.SetAdd{TSet}"/>.
-    ///
-    /// All valid group entries are pre-populated at registration so <see cref="AddImmediate"/> never
-    /// mutates the shared group dictionary, making concurrent job reads of different groups safe.
-    /// </summary>
-    internal readonly struct EntitySet
-    {
-        internal readonly NativeDenseDictionary<Group, SetGroupEntry> _entriesPerGroup;
-        internal readonly AtomicNativeBags _jobAddQueue;
-        internal readonly AtomicNativeBags _jobRemoveQueue;
-        readonly SetId _setId;
-
-        internal EntitySet(SetId setId, DenseHashSet<Group> validGroups)
-        {
-            _setId = setId;
-            _entriesPerGroup = new NativeDenseDictionary<Group, SetGroupEntry>(
-                validGroups.Count,
-                Allocator.Persistent
-            );
-            _jobAddQueue = AtomicNativeBags.Create();
-            _jobRemoveQueue = AtomicNativeBags.Create();
-
-            // Pre-populate all valid group entries so AddImmediate() never mutates the
-            // dictionary structure, making concurrent job reads of different groups safe.
-            foreach (var group in validGroups)
-            {
-                _entriesPerGroup.Add(group, new SetGroupEntry(group));
-            }
-        }
-
-        internal int GroupCount => _entriesPerGroup.Count;
-
-        public SetId SetId => _setId;
-
-        public EntitySetIterator GetEnumerator() => new(this);
-
-        // ── Immediate operations (main thread only) ────────────────────
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void AddImmediate(EntityIndex entityIndex)
-        {
-            AssertValidGroup(entityIndex.Group);
-            _entriesPerGroup[entityIndex.Group].Add(entityIndex.Index);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void RemoveImmediate(EntityIndex entityIndex)
-        {
-            AssertValidGroup(entityIndex.Group);
-            _entriesPerGroup[entityIndex.Group].Remove(entityIndex.Index);
-        }
-
-        // ── Internal immediate operations (structural updates) ─────────
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal void AddImmediateUnchecked(EntityIndex entityIndex)
-        {
-            _entriesPerGroup[entityIndex.Group].Add(entityIndex.Index);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal void RemoveImmediateUnchecked(EntityIndex entityIndex)
-        {
-            if (_entriesPerGroup.TryGetValue(entityIndex.Group, out var groupEntry))
-            {
-                groupEntry.Remove(entityIndex.Index);
-            }
-        }
-
-        // ── Queries ────────────────────────────────────────────────────
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool Exists(EntityIndex entityIndex)
-        {
-            if (_entriesPerGroup.TryGetValue(entityIndex.Group, out var groupEntry))
-            {
-                return groupEntry.Exists(entityIndex.Index);
-            }
-            return false;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool TryGetGroupEntry(Group group, out SetGroupEntry groupEntry)
-        {
-            return _entriesPerGroup.TryGetValue(group, out groupEntry);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public SetGroupEntry GetSetGroupEntry(Group group)
-        {
-            if (_entriesPerGroup.TryGetValue(group, out var groupEntry))
-                return groupEntry;
-
-            throw new TrecsException($"no set linked to group {group}");
-        }
-
-        // ── Job write support ──────────────────────────────────────────
-
-        internal NativeSetWrite<TSet> CreateWriter<TSet>()
-            where TSet : struct, IEntitySet => new(_jobAddQueue, _jobRemoveQueue);
-
-        /// <summary>
-        /// Drain all pending job writes into the actual group entries.
-        /// Called on the main thread after outstanding writer jobs have completed.
-        /// Removes are processed before adds so that re-add-after-remove works correctly.
-        /// </summary>
-        internal void FlushJobWrites()
-        {
-            for (int i = 0; i < _jobRemoveQueue.Count; i++)
-            {
-                ref var bag = ref _jobRemoveQueue.GetBag(i);
-                while (!bag.IsEmpty())
-                {
-                    var entityIndex = bag.Dequeue<EntityIndex>();
-                    _entriesPerGroup[entityIndex.Group].Remove(entityIndex.Index);
-                }
-            }
-
-            for (int i = 0; i < _jobAddQueue.Count; i++)
-            {
-                ref var bag = ref _jobAddQueue.GetBag(i);
-                while (!bag.IsEmpty())
-                {
-                    var entityIndex = bag.Dequeue<EntityIndex>();
-                    _entriesPerGroup[entityIndex.Group].Add(entityIndex.Index);
-                }
-            }
-        }
-
-        // ── Bulk operations ────────────────────────────────────────────
-
-        /// <summary>
-        /// Clear all entries and drain pending job write queues.
-        /// Deferred queues are drained separately by the caller.
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void Clear()
-        {
-            DrainBags(_jobAddQueue);
-            DrainBags(_jobRemoveQueue);
-
-            var groupEntries = _entriesPerGroup.GetValuesWrite(out var count);
-            for (var i = 0; i < count; i++)
-            {
-                groupEntries[i].Clear();
-            }
-        }
-
-        static void DrainBags(AtomicNativeBags bags)
-        {
-            for (int i = 0; i < bags.Count; i++)
-            {
-                ref var bag = ref bags.GetBag(i);
-                while (!bag.IsEmpty())
-                    bag.Dequeue<EntityIndex>();
-            }
-        }
-
-        public int ComputeFinalCount()
-        {
-            int count = 0;
-            var groupEntries = _entriesPerGroup.GetValuesRead(out var groupCount);
-            for (int i = 0; i < groupCount; i++)
-            {
-                count += groupEntries[i].Count;
-            }
-            return count;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal SetGroupEntry GetGroup(int indexGroup)
-        {
-            Assert.That(indexGroup < _entriesPerGroup.Count);
-            return _entriesPerGroup.GetValuesWrite(out _)[indexGroup];
-        }
-
-        public void Dispose()
-        {
-            var groupEntries = _entriesPerGroup.GetValuesWrite(out var count);
-            for (var i = 0; i < count; i++)
-            {
-                groupEntries[i].Dispose();
-            }
-
-            _entriesPerGroup.Dispose();
-            _jobAddQueue.Dispose();
-            _jobRemoveQueue.Dispose();
-        }
-
-        // ── Validation ─────────────────────────────────────────────────
-
-        [Conditional("DEBUG")]
-        void AssertValidGroup(Group group)
-        {
-#if DEBUG
-            Assert.That(
-                _entriesPerGroup.ContainsKey(group),
-                "Group {} does not belong to this set's template",
-                group
-            );
-#endif
-        }
+        public static readonly EntitySet Value = SetFactory.CreateSet(typeof(T));
     }
 }

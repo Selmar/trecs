@@ -20,7 +20,7 @@ namespace Trecs.Samples.FeedingFrenzy101
 
         public RemoveCleanupHandler(World world)
         {
-            World = world.CreateAccessor();
+            World = world.CreateAccessor(AccessorRole.Fixed);
 
             World
                 .Events.EntitiesWithTags<FrenzyTags.Fish>()
@@ -40,7 +40,7 @@ namespace Trecs.Samples.FeedingFrenzy101
         {
             if (targetMeal.Value.Exists(World))
             {
-                World.RemoveEntity(targetMeal.Value);
+                targetMeal.Value.Remove(World);
             }
         }
 
@@ -49,7 +49,7 @@ namespace Trecs.Samples.FeedingFrenzy101
         {
             if (fish.Value.Exists(World))
             {
-                World.RemoveEntity(fish.Value);
+                fish.Value.Remove(World);
             }
         }
 

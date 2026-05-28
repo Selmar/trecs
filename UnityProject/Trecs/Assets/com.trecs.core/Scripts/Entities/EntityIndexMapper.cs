@@ -4,18 +4,15 @@ using System.Runtime.CompilerServices;
 
 namespace Trecs.Internal
 {
-    /// <summary>
-    /// </summary>
-    /// <typeparam name="T"></typeparam>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public readonly struct EntityIndexMapper<T> : IEntityIndexMapper
+    public readonly struct EntityIndexMapper<T>
         where T : unmanaged, IEntityComponent
     {
         public int Count => _map.Count;
-        public Group GroupId { get; }
+        public GroupIndex GroupId { get; }
         public Type Template => TypeMeta<T>.Type;
 
-        internal EntityIndexMapper(Group groupStructId, IComponentArray<T> dic)
+        internal EntityIndexMapper(GroupIndex groupStructId, IComponentArray<T> dic)
             : this()
         {
             GroupId = groupStructId;
@@ -26,12 +23,12 @@ namespace Trecs.Internal
         public ref T Entity(int index)
         {
 #if DEBUG
-            if (_map == null)
-                throw new TrecsException(
-                    $"Not initialized EntityIndexMapper in this group {typeof(T)}"
-                );
-            if (index >= _map.Count)
-                throw new TrecsException($"Entity not found in this group {typeof(T)}");
+            TrecsAssert.That(
+                _map != null,
+                "Not initialized EntityIndexMapper in this group {0}",
+                typeof(T)
+            );
+            TrecsAssert.That(index < _map.Count, "Entity not found in this group {0}", typeof(T));
 #endif
             return ref _map.GetValueAtIndexByRef(index);
         }
@@ -68,16 +65,5 @@ namespace Trecs.Internal
         }
 
         internal readonly IComponentArray<T> _map;
-    }
-
-    [EditorBrowsable(EditorBrowsableState.Never)]
-    public interface IEntityIndexMapper
-    {
-        bool FindIndex(int valueKey, out int index);
-        int GetIndex(int index);
-        bool Exists(int index);
-
-        Group GroupId { get; }
-        Type Template { get; }
     }
 }

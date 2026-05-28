@@ -9,6 +9,8 @@ namespace Trecs.Samples.PredatorPrey
     {
         public SampleSettings Settings;
 
+        // All we do here is call constructors and set up dependencies
+        // between classes.  No initialization logic otherwise
         public override void Construct(
             out List<Action> initializables,
             out List<Action> tickables,
@@ -16,10 +18,8 @@ namespace Trecs.Samples.PredatorPrey
             out List<Action> disposables
         )
         {
-            var gameObjectRegistry = new GameObjectRegistry();
-
             var world = new WorldBuilder()
-                .AddEntityTypes(
+                .AddTemplates(
                     new[]
                     {
                         SampleTemplates.PredatorEntity.Template,
@@ -28,30 +28,26 @@ namespace Trecs.Samples.PredatorPrey
                 )
                 .Build();
 
+            var goManager = new RenderableGameObjectManager(world);
+
             world.AddSystems(
                 new ISystem[]
                 {
                     new PredatorChoosePreySystem(),
                     new MovementSystem(),
                     new PredatorChaseSystem(),
-                    new PreyRespawnSystem(Settings, gameObjectRegistry),
-                    new EntityRendererSystem(gameObjectRegistry),
+                    new PreyRespawnSystem(Settings),
+                    new MoverPresenter(goManager),
                 }
             );
 
-            var cleanupHandlers = new CleanupHandlers(world, gameObjectRegistry);
-            var sceneInitializer = new SceneInitializer(world, gameObjectRegistry, Settings);
+            var sceneInitializer = new SceneInitializer(world, Settings, goManager);
 
-            initializables = new()
-            {
-                world.Initialize,
-                sceneInitializer.Initialize,
-                world.SubmitEntities,
-            };
+            initializables = new() { world.Initialize, sceneInitializer.Initialize, world.Submit };
 
             tickables = new() { world.Tick };
             lateTickables = new() { world.LateTick };
-            disposables = new() { cleanupHandlers.Dispose, world.Dispose };
+            disposables = new() { goManager.Dispose, world.Dispose };
         }
     }
 

@@ -1,24 +1,32 @@
 # Aspects
 
-Aspects bundle related component access into a single reusable struct. Instead of declaring individual component parameters, you declare which components you read and write, and the source generator creates the access properties.
+An aspect is a `partial struct` that bundles related component access into one reusable view. Declare which components it reads and writes; the source generator emits the access properties.
 
-## Defining an Aspect
+## Defining an aspect
 
 ```csharp
 partial struct Boid : IAspect, IRead<Velocity, Speed>, IWrite<Position> { }
 ```
 
-This generates properties:
+Assuming these components are marked `[Unwrap]` (single-field structs), this generates properties:
 
-- `ref readonly float3 Velocity` (read-only, unwrapped)
-- `ref readonly float Speed` (read-only, unwrapped)
-- `ref float3 Position` (read-write, unwrapped)
-- `EntityIndex EntityIndex`
+- `ref readonly float3 Velocity` (read-only, unwrapped inner type)
+- `ref readonly float Speed` (read-only, unwrapped inner type)
+- `ref float3 Position` (read-write, unwrapped inner type)
 
-!!! note
-    Components marked with `[Unwrap]` expose their inner field type directly (e.g., `float3` instead of `Position`). Non-unwrapped components expose the struct itself.
+Without `[Unwrap]`, the property returns the wrapping struct itself (`ref Position` instead of `ref float3`).
 
-## Using Aspects in ForEachEntity
+Beyond component properties, the source generator emits:
+
+- **`Remove(WorldAccessor)` / `Remove(NativeWorldAccessor)`** — schedules entity removal.
+- **`SetTag<T>(WorldAccessor)` / `SetTag<T>(NativeWorldAccessor)`** — sets a tag on the entity.
+- **`UnsetTag<T>(WorldAccessor)` / `UnsetTag<T>(NativeWorldAccessor)`** — unsets a tag.
+- **`static Query(WorldAccessor)`** — returns a builder for manual iteration (see [below](#manual-aspect-queries)).
+- **`Handle(WorldAccessor)` / `Handle(NativeWorldAccessor)`** — resolves to a stable `EntityHandle`.
+- **`Boid(WorldAccessor, EntityHandle)` / `Boid(WorldAccessor, EntityIndex)`** — constructors for building an aspect view directly
+- **`NativeFactory`** — nested struct for cross-entity aspect lookups in Burst jobs. Declare as a `[FromWorld]` field; call `factory.Create(entityIndex)` to construct the aspect. See [Advanced Jobs](../advanced/advanced-jobs.md).
+
+## Using an aspect in `[ForEachEntity]`
 
 ```csharp
 public partial class BoidMovementSystem : ISystem
@@ -33,11 +41,11 @@ public partial class BoidMovementSystem : ISystem
 }
 ```
 
-The aspect parameter is passed as `in` — the struct itself is read-only, but `IWrite` properties still provide mutable refs to the underlying components.
+The aspect is passed `in`. The struct is read-only, but `IWrite` properties still return mutable refs to the underlying components.
 
-## Multiple IRead/IWrite Interfaces
+## Multiple `IRead` / `IWrite` interfaces
 
-Each `IRead` or `IWrite` interface supports up to 8 type parameters. If you need more, stack multiple interfaces:
+`IRead` and `IWrite` come in 1- to 8-arg generic overloads. To declare more, stack interfaces:
 
 ```csharp
 partial struct ComplexView : IAspect,
@@ -46,45 +54,41 @@ partial struct ComplexView : IAspect,
     IWrite<UniformScale, Damage> { }
 ```
 
-## Aspect Queries (Manual Iteration)
+## Manual aspect queries
 
-Every aspect gets a generated `Query()` method for manual iteration:
+Every aspect gets a generated `Query()` method for iteration outside `[ForEachEntity]`:
 
 ```csharp
 partial struct ParticleView : IAspect, IRead<Position>, IWrite<Lifetime> { }
 
-// Iterate with tag scope
 foreach (var particle in ParticleView.Query(World).WithTags<SampleTags.Particle>())
 {
-    float3 pos = particle.Position;
     particle.Lifetime -= World.DeltaTime;
 }
 
-// Iterate all entities that have the aspect's components (regardless of tags)
+// Scope by the aspect's declared component types
 foreach (var boid in Boid.Query(World).MatchByComponents())
 {
     boid.Position += World.DeltaTime * boid.Speed * boid.Velocity;
 }
 ```
 
-This is useful when you need iteration logic in `Execute()` beyond what `[ForEachEntity]` supports (e.g., iterating multiple queries at once) or if you just prefer this kind of style.
+Aspect queries don't auto-filter by the aspect's declared components. **Always supply scope**: `WithTags<…>()`, `MatchByComponents()`, or `InSet<…>()`.
 
-## Single Entity Access
+`Single()` / `TrySingle(out ...)` / `Count()` work too:
 
 ```csharp
-// Get aspect for a single entity from a query
 var player = PlayerView.Query(World).WithTags<GameTags.Player>().Single();
 ```
 
-## Aspects in Multiple Systems
+## Where to define aspects
 
-Define aspects inside each system or share them. Since aspects are just partial structs, they can be defined wherever is most convenient:
+Aspects are partial structs and can live anywhere. Samples nest them as private `partial struct`s inside the system that uses them, since most aspects pair one-to-one with one system:
 
 ```csharp
-// Defined inside a system
 public partial class PhysicsSystem : ISystem
 {
-    [ForEachEntity(Tags = new[] { typeof(BallTags.Ball), typeof(BallTags.Active) })]
+    [ForEachEntity(typeof(BallTags.Ball), typeof(BallTags.Active))]
     void Execute(in ActiveBall ball)
     {
         ball.Velocity += Gravity * World.DeltaTime;
@@ -92,37 +96,12 @@ public partial class PhysicsSystem : ISystem
 
     partial struct ActiveBall : IAspect, IWrite<Position, Velocity, RestTimer> { }
 }
-
-// Same system can have multiple aspects for different queries
-public partial class RenderSystem : ISystem
-{
-    [ForEachEntity(Tags = new[] { typeof(BallTags.Ball), typeof(BallTags.Active) })]
-    void RenderActive(in ActiveView ball) { ... }
-
-    [ForEachEntity(Tags = new[] { typeof(BallTags.Ball), typeof(BallTags.Resting) })]
-    void RenderResting(in RestingView ball) { ... }
-
-    public void Execute()
-    {
-        RenderActive();
-        RenderResting();
-    }
-
-    partial struct ActiveView : IAspect, IRead<Position, GameObjectId> { }
-    partial struct RestingView : IAspect, IRead<Position, GameObjectId> { }
-}
 ```
 
-However, it is most common to define aspects as nested private structs inside the system that uses them, since they are typically specific to that system's logic.
+A system can declare multiple aspects — typically one per query.
 
-## AspectInterface
+## See also
 
-Use `[AspectInterface]` to define shared component access contracts that multiple aspects can implement:
-
-```csharp
-[AspectInterface]
-public interface IMoveable : IRead<Position>, IWrite<Velocity> { }
-```
-
-This can be useful if you need to pass aspects around to different service classes.
-
+- [Sample 03 — Aspects](../samples/03-aspects.md): a minimal aspect with `IRead` / `IWrite` parameters.
+- [Aspect Interfaces](../advanced/aspect-interfaces.md): polymorphic helpers across multiple aspects sharing the same access surface.
+- [Sample 13 — Aspect Interfaces](../samples/13-aspect-interfaces.md): complete example.

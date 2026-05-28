@@ -2,12 +2,27 @@ namespace Trecs.Samples
 {
     public static partial class CommonTemplates
     {
-        public partial class Renderable : ITemplate, IHasTags<CommonTags.Renderable>
+        // `abstract` because every concrete template that needs visuals declares
+        // `IExtends<IndirectRenderable>` — this base is never registered directly.
+        // Trying to do so produces TRECS039 at the call site.
+        public abstract partial class IndirectRenderable
+            : ITemplate,
+                ITagged<CommonTags.IndirectRenderable>
         {
-            public Position Position;
-            public Rotation Rotation;
-            public UniformScale Scale;
-            public ColorComponent Color = new(UnityEngine.Color.white);
+            Position Position;
+            Rotation Rotation;
+            UniformScale Scale;
+            ColorComponent Color = new(UnityEngine.Color.white);
+        }
+
+        // GameObject-per-entity binding for samples that use
+        // `RenderableGameObjectManager`. Concrete templates set `PrefabId` to
+        // the constant matching the factory they registered; the manager fills
+        // `GameObjectId` reactively on entity add.
+        public abstract partial class RenderableGameObject : ITemplate
+        {
+            PrefabId PrefabId;
+            GameObjectId GameObjectId = default;
         }
     }
 }

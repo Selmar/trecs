@@ -16,6 +16,8 @@ namespace Trecs.Samples.Sets
     {
         public SampleSettings Settings = new();
 
+        // All we do here is call constructors and set up dependencies
+        // between classes.  No initialization logic otherwise
         public override void Construct(
             out List<Action> initializables,
             out List<Action> tickables,
@@ -23,13 +25,13 @@ namespace Trecs.Samples.Sets
             out List<Action> disposables
         )
         {
-            var gameObjectRegistry = new GameObjectRegistry();
-
             var world = new WorldBuilder()
-                .AddEntityType(SampleTemplates.ParticleEntity.Template)
+                .AddTemplate(SampleTemplates.ParticleEntity.Template)
                 .AddSet<SampleSets.WaveX>()
                 .AddSet<SampleSets.WaveZ>()
                 .Build();
+
+            var goManager = new RenderableGameObjectManager(world);
 
             world.AddSystems(
                 new ISystem[]
@@ -37,22 +39,17 @@ namespace Trecs.Samples.Sets
                     new WaveMembershipSystem(Settings),
                     new WaveXEffectSystem(Settings),
                     new WaveZEffectSystem(Settings),
-                    new ParticleRendererSystem(Settings, gameObjectRegistry),
+                    new ParticlePresenter(Settings, goManager),
                 }
             );
 
-            var sceneInitializer = new SceneInitializer(world, gameObjectRegistry, Settings);
+            var sceneInitializer = new SceneInitializer(world, Settings, goManager);
 
-            initializables = new()
-            {
-                world.Initialize,
-                sceneInitializer.Initialize,
-                world.SubmitEntities,
-            };
+            initializables = new() { world.Initialize, sceneInitializer.Initialize, world.Submit };
 
             tickables = new() { world.Tick };
             lateTickables = new() { world.LateTick };
-            disposables = new() { world.Dispose };
+            disposables = new() { goManager.Dispose, world.Dispose };
         }
     }
 }

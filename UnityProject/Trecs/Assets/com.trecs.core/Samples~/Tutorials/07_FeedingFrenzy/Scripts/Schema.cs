@@ -95,6 +95,13 @@ namespace Trecs.Samples.FeedingFrenzy101
         public int Value;
     }
 
+    // -1 for halve, +1 for double, 0 for no change this frame.
+    [Unwrap]
+    public partial struct FishCountAdjustInput : IEntityComponent
+    {
+        public int Direction;
+    }
+
     // ─── Templates ──────────────────────────────────────────────────
     public static partial class SampleTemplates
     {
@@ -105,18 +112,26 @@ namespace Trecs.Samples.FeedingFrenzy101
         /// </summary>
         public partial class FishEntity
             : ITemplate,
-                IExtends<CommonTemplates.Renderable>,
-                IHasTags<FrenzyTags.Fish>,
-                IHasPartition<FrenzyTags.NotEating>,
-                IHasPartition<FrenzyTags.Eating>
+                IExtends<CommonTemplates.IndirectRenderable>,
+                ITagged<FrenzyTags.Fish>,
+                IPartitionedBy<FrenzyTags.NotEating, FrenzyTags.Eating>
         {
-            public Rotation Rotation = new(quaternion.identity);
-            public SimPosition SimPosition = default;
-            public SimRotation SimRotation = new() { Value = quaternion.identity };
-            public Velocity Velocity = default;
-            public Speed Speed;
-            public TargetMeal TargetMeal = default;
-            public DestinationPosition DestinationPosition = default;
+            // Position/Rotation are render-only — VisualSmoothingSystem chases
+            // SimPosition/SimRotation each variable frame. Marking them
+            // [VariableUpdateOnly] keeps fixed-phase code from accidentally
+            // touching them.
+            [VariableUpdateOnly]
+            Position Position;
+
+            [VariableUpdateOnly]
+            Rotation Rotation = new(quaternion.identity);
+
+            SimPosition SimPosition = default;
+            SimRotation SimRotation = new() { Value = quaternion.identity };
+            Velocity Velocity = default;
+            Speed Speed;
+            TargetMeal TargetMeal = default;
+            DestinationPosition DestinationPosition = default;
         }
 
         /// <summary>
@@ -125,14 +140,13 @@ namespace Trecs.Samples.FeedingFrenzy101
         /// </summary>
         public partial class MealEntity
             : ITemplate,
-                IExtends<CommonTemplates.Renderable>,
-                IHasTags<FrenzyTags.Meal>,
-                IHasPartition<FrenzyTags.NotEating>,
-                IHasPartition<FrenzyTags.Eating>
+                IExtends<CommonTemplates.IndirectRenderable>,
+                ITagged<FrenzyTags.Meal>,
+                IPartitionedBy<FrenzyTags.NotEating, FrenzyTags.Eating>
         {
-            public Rotation Rotation = new(quaternion.identity);
-            public MealNutrition Nutrition;
-            public ApproachingFish ApproachingFish = default;
+            Rotation Rotation = new(quaternion.identity);
+            MealNutrition Nutrition;
+            ApproachingFish ApproachingFish = default;
         }
 
         /// <summary>
@@ -141,8 +155,11 @@ namespace Trecs.Samples.FeedingFrenzy101
         /// </summary>
         public partial class Globals : ITemplate, IExtends<TrecsTemplates.Globals>
         {
-            public DesiredFishCount DesiredFishCount = new() { Value = 1000 };
-            public DesiredMealCount DesiredMealCount = default;
+            DesiredFishCount DesiredFishCount = new() { Value = 1000 };
+            DesiredMealCount DesiredMealCount = default;
+
+            [Input(MissingInputBehavior.Reset)]
+            FishCountAdjustInput FishCountAdjustInput = default;
         }
     }
 }

@@ -64,13 +64,13 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 10 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
 
             var setA = a.Set<QTestSetA>();
-            setA.Write.AddImmediate(new EntityIndex(0, group));
-            a.SubmitEntities(); // Flush deferred set ops
+            setA.Write.Add(new EntityIndex(0, group));
+            a.Submit(); // Flush deferred set ops
 
             var results = new List<int>();
             foreach (var view in QFilterTagView.Query(a).WithTags<QCatA>().InSet<QTestSetA>())
@@ -96,14 +96,14 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 2 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
 
             var setA = a.Set<QTestSetA>();
             // Only entity 1 is in the set
-            setA.Write.AddImmediate(new EntityIndex(1, group));
-            a.SubmitEntities(); // Flush deferred set ops
+            setA.Write.Add(new EntityIndex(1, group));
+            a.Submit(); // Flush deferred set ops
 
             var results = new List<int>();
             foreach (var view in QFilterTagView.Query(a).WithTags<QCatA>().InSet<QTestSetA>())
@@ -132,7 +132,7 @@ namespace Trecs.Tests
                 .AssertComplete();
             // EntityB has only TestInt — should be skipped
             a.AddEntity(Tag<QId3>.Value).Set(new TestInt { Value = 200 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var results = new List<int>();
             foreach (var view in QComponentFilterView.Query(a).MatchByComponents())
@@ -163,7 +163,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 20 })
                 .Set(new TestFloat { Value = 2.0f })
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var results = new List<int>();
             foreach (var view in QComponentFilterView.Query(a).MatchByComponents())
@@ -182,7 +182,7 @@ namespace Trecs.Tests
 
         #endregion
 
-        #region Multiple IHasTags
+        #region Multiple ITagged
 
         [Test]
         public void MultiTag_Query_RequiresBothTags()
@@ -202,7 +202,7 @@ namespace Trecs.Tests
                 .AssertComplete();
             // EntityB has QCatB only (no TestFloat)
             a.AddEntity(Tag<QId3>.Value).Set(new TestInt { Value = 3 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var results = new List<int>();
             foreach (var view in QMultiTagView.Query(a).WithTags<QCatA, QCatB>())
@@ -220,9 +220,9 @@ namespace Trecs.Tests
 
         #endregion
 
-        #region ForEachAspect Attribute + Aspect Tag Merging
+        #region ForEachEntity Attribute + Aspect Tag Merging
 
-        // QSingleTagView no longer has IHasTags — attribute specifies both tags
+        // QSingleTagView no longer has ITagged — attribute specifies both tags
         // Should only find entities with BOTH tags
         [ForEachEntity(Tags = new[] { typeof(QCatA), typeof(QCatB) })]
         void ProcessMergedTags(in QSingleTagView view)
@@ -233,7 +233,7 @@ namespace Trecs.Tests
         List<int> _forEachResults = new List<int>();
 
         [Test]
-        public void ForEachAspect_MergesAttributeAndAspectTags()
+        public void ForEachEntity_AspectMode_MergesAttributeAndAspectTags()
         {
             using var env = CreateMultiTagEnv();
             var a = env.Accessor;
@@ -248,7 +248,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 2 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             _forEachResults.Clear();
             ProcessMergedTags(a);
@@ -263,7 +263,7 @@ namespace Trecs.Tests
 
         #endregion
 
-        #region ForEachAspect Set
+        #region ForEachEntity Set
 
         [ForEachEntity(Tags = new[] { typeof(QCatA) }, Set = typeof(QTestSetA))]
         void ProcessFilterForEach(in QFilterTagView view)
@@ -274,7 +274,7 @@ namespace Trecs.Tests
         List<int> _forEachFilterResults = new List<int>();
 
         [Test]
-        public void ForEachAspect_Filter_RespectsTagsAndFilter()
+        public void ForEachEntity_AspectMode_Filter_RespectsTagsAndFilter()
         {
             using var env = CreateSetEnv();
             var a = env.Accessor;
@@ -287,13 +287,13 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 20 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
 
             var setA = a.Set<QTestSetA>();
-            setA.Write.AddImmediate(new EntityIndex(0, group));
-            a.SubmitEntities(); // Flush deferred set ops
+            setA.Write.Add(new EntityIndex(0, group));
+            a.Submit(); // Flush deferred set ops
 
             _forEachFilterResults.Clear();
             ProcessFilterForEach(a);
@@ -304,7 +304,7 @@ namespace Trecs.Tests
 
         #endregion
 
-        #region ForEachAspect Dynamic Criteria Composition
+        #region ForEachEntity Dynamic Criteria Composition
 
         // Method with attribute-baked tags. Callers can pass an arbitrary
         // QueryBuilder/SparseQueryBuilder; the attribute tags are merged additively.
@@ -317,7 +317,7 @@ namespace Trecs.Tests
         List<int> _dynamicResults = new List<int>();
 
         [Test]
-        public void ForEachAspect_QueryBuilderArg_MergesAttributeTags()
+        public void ForEachEntity_AspectMode_QueryBuilderArg_MergesAttributeTags()
         {
             // Attribute has Tags=[QCatA]. Pass an extra WithTags<QCatB> at the call site.
             // Should iterate entities matching BOTH QCatA AND QCatB.
@@ -334,7 +334,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 2 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             _dynamicResults.Clear();
             ProcessQCatADynamic(a.Query().WithTags<QCatB>());
@@ -344,7 +344,7 @@ namespace Trecs.Tests
         }
 
         [Test]
-        public void ForEachAspect_SparseQueryBuilderArg_MergesAttributeTagsWithRuntimeSet()
+        public void ForEachEntity_AspectMode_SparseQueryBuilderArg_MergesAttributeTagsWithRuntimeSet()
         {
             // Attribute has Tags=[QCatA]. Pass a SparseQueryBuilder with InSet at the call site.
             // Should iterate entities in QCatA AND in the specified set.
@@ -359,12 +359,12 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 20 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var setA = a.Set<QTestSetA>();
-            setA.Write.AddImmediate(new EntityIndex(0, group));
-            a.SubmitEntities();
+            setA.Write.Add(new EntityIndex(0, group));
+            a.Submit();
 
             _dynamicResults.Clear();
             ProcessQCatADynamic(a.Query().InSet<QTestSetA>());
@@ -381,7 +381,7 @@ namespace Trecs.Tests
         }
 
         [Test]
-        public void ForEachAspect_NoAttribute_QueryBuilderArg_FiltersByCallSiteTagsOnly()
+        public void ForEachEntity_AspectMode_NoAttribute_QueryBuilderArg_FiltersByCallSiteTagsOnly()
         {
             using var env = CreateMultiTagEnv();
             var a = env.Accessor;
@@ -394,7 +394,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 2 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             _dynamicResults.Clear();
             ProcessOpen(a.Query().WithTags<QCatB>());
@@ -424,9 +424,9 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 2 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
-            // QSingleTagView no longer has IHasTags<QCatA> — tags moved to call site
+            // QSingleTagView no longer has ITagged<QCatA> — tags moved to call site
             // WithTags<QCatA, QCatB> requires both — should only match entities with BOTH
             var results = new List<int>();
             foreach (var view in QSingleTagView.Query(a).WithTags<QCatA, QCatB>())
@@ -460,10 +460,10 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 2 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var results = new List<int>();
-            foreach (var ei in a.Query().WithTags<QCatA, QCatB>().EntityIndices())
+            foreach (var ei in a.Query().WithTags<QCatA, QCatB>().Indices())
             {
                 results.Add(a.Component<TestInt>(ei).Read.Value);
             }
@@ -487,7 +487,7 @@ namespace Trecs.Tests
                 .Set(new TestFloat())
                 .AssertComplete();
             a.AddEntity(Tag<QId3>.Value).Set(new TestInt { Value = 3 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(
                 2,
@@ -525,11 +525,11 @@ namespace Trecs.Tests
                 .Set(new TestFloat())
                 .AssertComplete();
             a.AddEntity(Tag<QId3>.Value).Set(new TestInt { Value = 3 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             // QCatA without QCatB => only EntityA (has QCatA but not QCatB)
             var results = new List<int>();
-            foreach (var ei in a.Query().WithTags<QCatA>().WithoutTags<QCatB>().EntityIndices())
+            foreach (var ei in a.Query().WithTags<QCatA>().WithoutTags<QCatB>().Indices())
             {
                 results.Add(a.Component<TestInt>(ei).Read.Value);
             }
@@ -555,10 +555,10 @@ namespace Trecs.Tests
                 .AssertComplete();
             // EntityB has only TestInt
             a.AddEntity(Tag<QId3>.Value).Set(new TestInt { Value = 200 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var results = new List<int>();
-            foreach (var ei in a.Query().WithComponents<TestInt, TestFloat>().EntityIndices())
+            foreach (var ei in a.Query().WithComponents<TestInt, TestFloat>().Indices())
             {
                 results.Add(a.Component<TestInt>(ei).Read.Value);
             }
@@ -578,7 +578,7 @@ namespace Trecs.Tests
                 .Set(new TestFloat { Value = 1.0f })
                 .AssertComplete();
             a.AddEntity(Tag<QId3>.Value).Set(new TestInt { Value = 200 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             // Entities with TestInt but WITHOUT TestFloat => only EntityB
             var results = new List<int>();
@@ -586,7 +586,7 @@ namespace Trecs.Tests
                 var ei in a.Query()
                     .WithComponents<TestInt>()
                     .WithoutComponents<TestFloat>()
-                    .EntityIndices()
+                    .Indices()
             )
             {
                 results.Add(a.Component<TestInt>(ei).Read.Value);
@@ -614,15 +614,15 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 20 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var setA = a.Set<QTestSetA>();
-            setA.Write.AddImmediate(new EntityIndex(0, group));
-            a.SubmitEntities(); // Flush deferred set ops
+            setA.Write.Add(new EntityIndex(0, group));
+            a.Submit(); // Flush deferred set ops
 
             var results = new List<int>();
-            foreach (var ei in a.Query().InSet<QTestSetA>().EntityIndices())
+            foreach (var ei in a.Query().InSet<QTestSetA>().Indices())
             {
                 results.Add(a.Component<TestInt>(ei).Read.Value);
             }
@@ -645,15 +645,15 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 20 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var setA = a.Set<QTestSetA>();
-            setA.Write.AddImmediate(new EntityIndex(1, group));
-            a.SubmitEntities(); // Flush deferred set ops
+            setA.Write.Add(new EntityIndex(1, group));
+            a.Submit(); // Flush deferred set ops
 
             var results = new List<int>();
-            foreach (var ei in a.Query().WithTags<QCatA>().InSet<QTestSetA>().EntityIndices())
+            foreach (var ei in a.Query().WithTags<QCatA>().InSet<QTestSetA>().Indices())
             {
                 results.Add(a.Component<TestInt>(ei).Read.Value);
             }
@@ -676,10 +676,10 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 42 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
-            var entity = a.Query().WithTags<QCatA, QCatB>().Single();
-            NAssert.AreEqual(42, entity.Get<TestInt>().Read.Value);
+            var entity = a.Query().WithTags<QCatA, QCatB>().SingleHandle();
+            NAssert.AreEqual(42, entity.Component<TestInt>(a).Read.Value);
         }
 
         [Test]
@@ -689,7 +689,7 @@ namespace Trecs.Tests
             var a = env.Accessor;
             // No entities added
 
-            bool found = a.Query().WithTags<QCatA, QCatB>().TrySingle(out _);
+            bool found = a.Query().WithTags<QCatA, QCatB>().TrySingleHandle(out _);
             NAssert.IsFalse(found);
         }
 
@@ -703,11 +703,11 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 99 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
-            bool found = a.Query().WithTags<QCatA, QCatB>().TrySingle(out var entity);
+            bool found = a.Query().WithTags<QCatA, QCatB>().TrySingleHandle(out var entity);
             NAssert.IsTrue(found);
-            NAssert.AreEqual(99, entity.Get<TestInt>().Read.Value);
+            NAssert.AreEqual(99, entity.Component<TestInt>(a).Read.Value);
         }
 
         #endregion
@@ -728,7 +728,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 2 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var groups = a.Query().WithTags<QCatA>().Groups();
             // Both EntityA (QCatA) and EntityAB (QCatA+QCatB) groups match
@@ -750,13 +750,13 @@ namespace Trecs.Tests
         }
 
         [Test]
-        public void FluentQuery_WithTags_NoMatches_EntityIndicesEmpty()
+        public void FluentQuery_WithTags_NoMatches_IndicesEmpty()
         {
             using var env = CreateMultiTagEnv();
             var a = env.Accessor;
 
             int count = 0;
-            foreach (var _ in a.Query().WithTags<QCatA>().EntityIndices())
+            foreach (var _ in a.Query().WithTags<QCatA>().Indices())
             {
                 count++;
             }
@@ -788,12 +788,12 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 1 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             // Query for QCatA without QCatA - should return nothing (contradictory but exercises code path)
             // Actually query for QCatB without QCatA should exclude EntityAB
             var results = new List<int>();
-            foreach (var ei in a.Query().WithTags<QCatB>().WithoutTags<QCatA>().EntityIndices())
+            foreach (var ei in a.Query().WithTags<QCatB>().WithoutTags<QCatA>().Indices())
             {
                 results.Add(a.Component<TestInt>(ei).Read.Value);
             }
@@ -826,7 +826,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 20 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             int count = 0;
             foreach (var view in QWithoutTagView.Query(a).WithTags<QCatA>().WithoutTags<QCatB>())
@@ -852,12 +852,10 @@ namespace Trecs.Tests
                 .Set(new TestFloat())
                 .AssertComplete();
             a.AddEntity(Tag<QId3>.Value).Set(new TestInt { Value = 30 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             int count = 0;
-            foreach (
-                var ei in a.Query().WithTags<QCatB>().WithoutComponents<TestFloat>().EntityIndices()
-            )
+            foreach (var ei in a.Query().WithTags<QCatB>().WithoutComponents<TestFloat>().Indices())
             {
                 var view = new QWithoutCompView(a, ei);
                 NAssert.AreEqual(30, view.TestInt.Value);
@@ -868,7 +866,7 @@ namespace Trecs.Tests
 
         #endregion
 
-        #region ForEachAspect EntityIndex Parameter
+        #region ForEachEntity EntityIndex Parameter
 
         [ForEachEntity(Tags = new[] { typeof(QCatA) })]
         void ProcessWithEntityIndex(in QSingleTagView view, EntityIndex entityIndex)
@@ -879,7 +877,7 @@ namespace Trecs.Tests
         List<EntityIndex> _entityIndexResults = new List<EntityIndex>();
 
         [Test]
-        public void ForEachAspect_EntityIndex_ReceivesCorrectIndices()
+        public void ForEachEntity_AspectMode_EntityIndex_ReceivesCorrectIndices()
         {
             using var env = CreateMultiTagEnv();
             var a = env.Accessor;
@@ -892,7 +890,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 2 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             _entityIndexResults.Clear();
             ProcessWithEntityIndex(a);
@@ -904,7 +902,7 @@ namespace Trecs.Tests
             NAssert.AreEqual(0, _entityIndexResults[0].Index);
             NAssert.AreEqual(1, _entityIndexResults[1].Index);
             // Both should be in the same group
-            NAssert.AreEqual(_entityIndexResults[0].Group, _entityIndexResults[1].Group);
+            NAssert.AreEqual(_entityIndexResults[0].GroupIndex, _entityIndexResults[1].GroupIndex);
         }
 
         #endregion
@@ -927,7 +925,7 @@ namespace Trecs.Tests
                 .Set(new TestBool { Value = true })
                 .Set(new TestShort { Value = 7 })
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             int count = 0;
             foreach (var view in QMultiInterfaceView.Query(a).WithTags<QCatA>())
@@ -963,7 +961,7 @@ namespace Trecs.Tests
                 .Set(new TestBool { Value = false })
                 .Set(new TestShort { Value = 0 })
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             // Modify IWrite components through the aspect
             foreach (var view in QMultiInterfaceView.Query(a).WithTags<QCatA>())

@@ -1,16 +1,13 @@
 using System;
-using Trecs.Internal;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Mathematics;
 
 namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
 {
-    [ExecutesAfter(typeof(IConsumingMeal))]
+    [ExecuteAfter(typeof(IConsumingMeal))]
     public partial class IdleBobSystem : IIdleBob, ISystem
     {
-        static readonly TrecsLog _log = new(nameof(IdleBobSystem));
-
         const float GoldenRatio = 1.61803f;
 
         readonly IdleBobSystemSettings _settings;
@@ -58,7 +55,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
             }
         }
 
-        [ForEachEntity(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+        [ForEachEntity(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
         void RunForEachMethodAspect(in Fish fish)
         {
             float baseY = _settings.BobBaseY * fish.UniformScale;
@@ -70,15 +67,15 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
                     * math.sin(_settings.BobFrequency * World.ElapsedTime + phaseOffset);
         }
 
-        [ForEachEntity(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+        [ForEachEntity(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
         void RunForEachMethodComponents(
             in UniformScale uniformScale,
             ref Position position,
-            EntityIndex entityIndex
+            EntityHandle entityHandle
         )
         {
             float baseY = _settings.BobBaseY * uniformScale.Value;
-            float phaseOffset = entityIndex.Index * GoldenRatio;
+            float phaseOffset = entityHandle.Id * GoldenRatio;
             position.Value.y =
                 baseY
                 + _settings.BobAmplitude
@@ -86,7 +83,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
                     * math.sin(_settings.BobFrequency * World.ElapsedTime + phaseOffset);
         }
 
-        [ForEachEntity(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+        [ForEachEntity(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
         [WrapAsJob]
         static void RunWrapAsJobAspect(
             in Fish fish,
@@ -103,18 +100,18 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
                     * math.sin(settings.BobFrequency * world.ElapsedTime + phaseOffset);
         }
 
-        [ForEachEntity(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+        [ForEachEntity(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
         [WrapAsJob]
         static void RunWrapAsJobComponents(
             in UniformScale uniformScale,
             ref Position position,
-            EntityIndex entityIndex,
+            EntityHandle entityHandle,
             in NativeWorldAccessor world,
             [PassThroughArgument] IdleBobSystemSettings settings
         )
         {
             float baseY = settings.BobBaseY * uniformScale.Value;
-            float phaseOffset = entityIndex.Index * GoldenRatio;
+            float phaseOffset = entityHandle.Id * GoldenRatio;
             position.Value.y =
                 baseY
                 + settings.BobAmplitude
@@ -147,8 +144,8 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
                     .GroupSlices()
             )
             {
-                var positions = World.ComponentBuffer<Position>(slice.Group).Write;
-                var scales = World.ComponentBuffer<UniformScale>(slice.Group).Read;
+                var positions = World.ComponentBuffer<Position>(slice.GroupIndex).Write;
+                var scales = World.ComponentBuffer<UniformScale>(slice.GroupIndex).Read;
                 for (int i = 0; i < slice.Count; i++)
                 {
                     float baseY = _settings.BobBaseY * scales[i].Value;
@@ -214,11 +211,11 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
             public float BobFrequency;
             public float BobBaseY;
 
-            [ForEachEntity(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
-            public readonly void Execute(in Fish fish, EntityIndex entityIndex)
+            [ForEachEntity(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
+            public readonly void Execute(in Fish fish, EntityHandle entityHandle)
             {
                 float baseY = BobBaseY * fish.UniformScale;
-                float phaseOffset = entityIndex.Index * GoldenRatio;
+                float phaseOffset = entityHandle.Id * GoldenRatio;
                 fish.Position.y =
                     baseY
                     + BobAmplitude
@@ -235,15 +232,15 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
             public float BobFrequency;
             public float BobBaseY;
 
-            [ForEachEntity(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+            [ForEachEntity(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
             public readonly void Execute(
                 in UniformScale uniformScale,
                 ref Position position,
-                EntityIndex entityIndex
+                EntityHandle entityHandle
             )
             {
                 float baseY = BobBaseY * uniformScale.Value;
-                float phaseOffset = entityIndex.Index * GoldenRatio;
+                float phaseOffset = entityHandle.Id * GoldenRatio;
                 position.Value.y =
                     baseY
                     + BobAmplitude
@@ -260,11 +257,11 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
             public float BobFrequency;
             public float BobBaseY;
 
-            [FromWorld(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+            [FromWorld(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
             public NativeComponentBufferRead<UniformScale> Scales;
 
             [NativeDisableParallelForRestriction]
-            [FromWorld(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+            [FromWorld(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
             public NativeComponentBufferWrite<Position> Positions;
 
             public void Execute(int i)

@@ -1,5 +1,7 @@
 using System.Runtime.CompilerServices;
 using Trecs.Internal;
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 
 namespace Trecs
 {
@@ -12,35 +14,45 @@ namespace Trecs
         where T : struct, IEntitySet
     {
         readonly WorldAccessor _world;
-        readonly NativeDenseDictionary<Group, SetGroupEntry> _entriesPerGroup;
 
-        internal SetRead(
-            WorldAccessor world,
-            NativeDenseDictionary<Group, SetGroupEntry> entriesPerGroup
-        )
+        [NativeDisableContainerSafetyRestriction]
+        readonly NativeList<SetGroupEntry> _entriesPerGroup;
+
+        readonly NativeList<GroupIndex> _registeredGroups;
+
+        internal SetRead(WorldAccessor world, in EntitySetStorage set)
         {
             _world = world;
-            _entriesPerGroup = entriesPerGroup;
+            _entriesPerGroup = set._entriesPerGroup;
+            _registeredGroups = set._registeredGroups;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool Exists(EntityIndex entityIndex)
+        public bool Contains(EntityIndex entityIndex)
         {
-            if (_entriesPerGroup.TryGetValue(entityIndex.Group, out var groupEntry))
-                return groupEntry.Exists(entityIndex.Index);
-            return false;
+            var group = entityIndex.GroupIndex;
+            if (group.IsNull)
+                return false;
+            var entry = _entriesPerGroup[group.Index];
+            return entry.IsValid && entry.Contains(entityIndex.Index);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool Exists(EntityHandle entityHandle)
+        public bool Contains(EntityHandle entityHandle)
         {
-            return Exists(entityHandle.ToIndex(_world));
+            return Contains(entityHandle.ToIndex(_world));
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool TryGetGroupEntry(Group group, out SetGroupEntryRead groupEntry)
+        public bool TryGetGroupEntry(GroupIndex group, out SetGroupEntryRead groupEntry)
         {
-            if (_entriesPerGroup.TryGetValue(group, out var entry))
+            if (group.IsNull)
+            {
+                groupEntry = default;
+                return false;
+            }
+            var entry = _entriesPerGroup[group.Index];
+            if (entry.IsValid)
             {
                 groupEntry = new SetGroupEntryRead(entry);
                 return true;
@@ -55,9 +67,10 @@ namespace Trecs
             get
             {
                 int count = 0;
-                var groupEntries = _entriesPerGroup.GetValuesRead(out var groupCount);
-                for (int i = 0; i < groupCount; i++)
-                    count += groupEntries[i].Count;
+                for (int i = 0; i < _registeredGroups.Length; i++)
+                {
+                    count += _entriesPerGroup[_registeredGroups[i].Index].Count;
+                }
                 return count;
             }
         }
@@ -65,7 +78,7 @@ namespace Trecs
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public EntitySetIterator GetEnumerator()
         {
-            return new EntitySetIterator(_entriesPerGroup);
+            return new EntitySetIterator(_entriesPerGroup, _registeredGroups);
         }
     }
 }

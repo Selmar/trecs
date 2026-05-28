@@ -120,7 +120,7 @@ namespace Trecs
         public SparseQueryBuilder WithComponents<T1>()
             where T1 : unmanaged, IEntityComponent
         {
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T1>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T1>.Value);
             return this;
         }
 
@@ -128,8 +128,8 @@ namespace Trecs
             where T1 : unmanaged, IEntityComponent
             where T2 : unmanaged, IEntityComponent
         {
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T1>.Value);
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T2>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T1>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T2>.Value);
             return this;
         }
 
@@ -138,9 +138,9 @@ namespace Trecs
             where T2 : unmanaged, IEntityComponent
             where T3 : unmanaged, IEntityComponent
         {
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T1>.Value);
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T2>.Value);
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T3>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T1>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T2>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T3>.Value);
             return this;
         }
 
@@ -150,17 +150,17 @@ namespace Trecs
             where T3 : unmanaged, IEntityComponent
             where T4 : unmanaged, IEntityComponent
         {
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T1>.Value);
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T2>.Value);
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T3>.Value);
-            _positiveComps = _positiveComps.Add(ComponentTypeId<T4>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T1>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T2>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T3>.Value);
+            _positiveComps = _positiveComps.Add(TypeId<T4>.Value);
             return this;
         }
 
         public SparseQueryBuilder WithoutComponents<T1>()
             where T1 : unmanaged, IEntityComponent
         {
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T1>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T1>.Value);
             return this;
         }
 
@@ -168,8 +168,8 @@ namespace Trecs
             where T1 : unmanaged, IEntityComponent
             where T2 : unmanaged, IEntityComponent
         {
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T1>.Value);
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T2>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T1>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T2>.Value);
             return this;
         }
 
@@ -178,9 +178,9 @@ namespace Trecs
             where T2 : unmanaged, IEntityComponent
             where T3 : unmanaged, IEntityComponent
         {
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T1>.Value);
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T2>.Value);
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T3>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T1>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T2>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T3>.Value);
             return this;
         }
 
@@ -190,10 +190,10 @@ namespace Trecs
             where T3 : unmanaged, IEntityComponent
             where T4 : unmanaged, IEntityComponent
         {
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T1>.Value);
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T2>.Value);
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T3>.Value);
-            _negativeComps = _negativeComps.Add(ComponentTypeId<T4>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T1>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T2>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T3>.Value);
+            _negativeComps = _negativeComps.Add(TypeId<T4>.Value);
             return this;
         }
 
@@ -216,36 +216,50 @@ namespace Trecs
             return count;
         }
 
-        public readonly EntityAccessor Single()
-        {
-            return new EntityAccessor(_world, SingleEntityIndex());
-        }
+        /// <summary>
+        /// Returns the single matching entity as a stable <see cref="EntityHandle"/>.
+        /// </summary>
+        public readonly EntityHandle SingleHandle() => SingleIndex().ToHandle(_world);
 
-        public readonly bool TrySingle(out EntityAccessor entityRef)
+        /// <summary>
+        /// Resolves the single matching entity to an <see cref="EntityHandle"/>,
+        /// returning false on zero or multiple matches.
+        /// </summary>
+        public readonly bool TrySingleHandle(out EntityHandle entityHandle)
         {
-            if (!TrySingleEntityIndex(out var entityIndex))
+            if (!TrySingleIndex(out var entityIndex))
             {
-                entityRef = default;
+                entityHandle = default;
                 return false;
             }
-            entityRef = new EntityAccessor(_world, entityIndex);
+            entityHandle = entityIndex.ToHandle(_world);
             return true;
         }
 
-        public readonly EntityIndex SingleEntityIndex()
+        /// <summary>
+        /// Hot-loop variant of <see cref="SingleHandle"/> — returns a transient
+        /// <see cref="EntityIndex"/> without the handle conversion.
+        /// </summary>
+        public readonly EntityIndex SingleIndex()
         {
             var iter = CreateIterator();
 
             var movedFirst = iter.MoveNext();
-            Assert.That(movedFirst, "Query matched no entities");
+            TrecsDebugAssert.That(movedFirst, "Query matched no entities");
             var result = iter.Current;
             var movedSecond = iter.MoveNext();
-            Assert.That(!movedSecond, "Query matched multiple entities, expected exactly one");
+            TrecsDebugAssert.That(
+                !movedSecond,
+                "Query matched multiple entities, expected exactly one"
+            );
 
             return result;
         }
 
-        public readonly bool TrySingleEntityIndex(out EntityIndex entityIndex)
+        /// <summary>
+        /// Hot-loop variant of <see cref="TrySingleHandle"/>.
+        /// </summary>
+        public readonly bool TrySingleIndex(out EntityIndex entityIndex)
         {
             var iter = CreateIterator();
 
@@ -267,18 +281,29 @@ namespace Trecs
             return true;
         }
 
-        public readonly QueryIterator EntityIndices()
+        /// <summary>
+        /// Hot-loop iterator yielding transient <see cref="EntityIndex"/> values.
+        /// </summary>
+        public readonly IndexQueryIterator Indices()
         {
             return CreateIterator();
         }
 
-        public readonly QueryIterator CreateIterator()
+        /// <summary>
+        /// Returns an iterator that yields a stable <see cref="EntityHandle"/> per matched entity.
+        /// </summary>
+        public readonly HandleQueryIterator Handles()
         {
-            var groups = ResolveGroups();
-            return new QueryIterator(_world, groups, _set);
+            return new HandleQueryIterator(CreateIterator(), _world);
         }
 
-        readonly ReadOnlyFastList<Group> ResolveGroups()
+        internal readonly IndexQueryIterator CreateIterator()
+        {
+            var groups = ResolveGroups();
+            return new IndexQueryIterator(_world, groups, _set);
+        }
+
+        readonly ReadOnlyList<GroupIndex> ResolveGroups()
         {
             var key = new GroupQueryKey(
                 _positiveTags,
@@ -287,12 +312,16 @@ namespace Trecs
                 _negativeComps
             );
 
-            return _world.WorldInfo.QueryEngine.ResolveGroups(key);
+            var groups = _world.WorldInfo.QueryEngine.ResolveGroups(key);
+
+            _world.AssertNoVariableUpdateOnlyGroupsForFixedRole(groups);
+
+            return groups;
         }
 
         static TagSet MergeTags(TagSet existing, TagSet addition)
         {
-            Assert.That(!addition.IsNull);
+            TrecsDebugAssert.That(!addition.IsNull);
             return existing.IsNull ? addition : existing.CombineWith(addition);
         }
     }

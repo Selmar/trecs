@@ -36,7 +36,7 @@ namespace Trecs.Tests
                     .AssertComplete();
                 entityIds[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
             NAssert.AreEqual(count, a.CountEntitiesWithTags(tags));
 
             // Remove half (scattered indices to stress swap-back)
@@ -48,7 +48,7 @@ namespace Trecs.Tests
             }
 
             var sw = Stopwatch.StartNew();
-            a.SubmitEntities();
+            a.Submit();
             sw.Stop();
 
             NAssert.AreEqual(count - removeCount, a.CountEntitiesWithTags(tags));
@@ -57,7 +57,7 @@ namespace Trecs.Tests
             for (int i = 0; i < removeCount; i++)
             {
                 var oddRef = entityIds[i * 2 + 1];
-                NAssert.IsTrue(a.EntityExists(oddRef));
+                NAssert.IsTrue(oddRef.Exists(a));
                 NAssert.AreEqual(i * 2 + 1, a.Component<TestInt>(oddRef).Read.Value);
             }
 
@@ -91,18 +91,18 @@ namespace Trecs.Tests
                     .AssertComplete();
                 entityIds[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
             NAssert.AreEqual(count, a.CountEntitiesWithTags(partitionA));
 
             // Move half to partition B
             int moveCount = count / 2;
             for (int i = 0; i < moveCount; i++)
             {
-                a.MoveTo(entityIds[i * 2].ToIndex(a), partitionB);
+                a.SetTag<TestPartitionB>(entityIds[i * 2].ToIndex(a));
             }
 
             var sw = Stopwatch.StartNew();
-            a.SubmitEntities();
+            a.Submit();
             sw.Stop();
 
             NAssert.AreEqual(count - moveCount, a.CountEntitiesWithTags(partitionA));
@@ -112,7 +112,7 @@ namespace Trecs.Tests
             for (int i = 0; i < moveCount; i++)
             {
                 var movedRef = entityIds[i * 2];
-                NAssert.IsTrue(a.EntityExists(movedRef));
+                NAssert.IsTrue(movedRef.Exists(a));
                 NAssert.AreEqual(i * 2, a.Component<TestInt>(movedRef).Read.Value);
             }
 
@@ -120,7 +120,7 @@ namespace Trecs.Tests
             for (int i = 0; i < moveCount; i++)
             {
                 var stayedRef = entityIds[i * 2 + 1];
-                NAssert.IsTrue(a.EntityExists(stayedRef));
+                NAssert.IsTrue(stayedRef.Exists(a));
                 NAssert.AreEqual(i * 2 + 1, a.Component<TestInt>(stayedRef).Read.Value);
             }
 
@@ -153,7 +153,7 @@ namespace Trecs.Tests
             }
 
             var sw = Stopwatch.StartNew();
-            a.SubmitEntities();
+            a.Submit();
             sw.Stop();
 
             NAssert.AreEqual(count, a.CountEntitiesWithTags(tags));
@@ -186,7 +186,7 @@ namespace Trecs.Tests
                     .AssertComplete();
                 entityIds[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             // Schedule mixed: remove 25%, move 25%, leave 50%
             int removeCount = count / 4;
@@ -197,7 +197,7 @@ namespace Trecs.Tests
             }
             for (int i = 0; i < moveCount; i++)
             {
-                a.MoveTo(entityIds[removeCount + i].ToIndex(a), partitionB);
+                a.SetTag<TestPartitionB>(entityIds[removeCount + i].ToIndex(a));
             }
             // Also add new entities
             int addCount = count / 4;
@@ -210,7 +210,7 @@ namespace Trecs.Tests
             }
 
             var sw = Stopwatch.StartNew();
-            a.SubmitEntities();
+            a.Submit();
             sw.Stop();
 
             int expectedA = count - removeCount - moveCount + addCount;
@@ -243,7 +243,7 @@ namespace Trecs.Tests
                     .AssertComplete();
                 entityIds[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             // Remove ALL entities (worst case for swap-back chains without descending sort)
             for (int i = 0; i < count; i++)
@@ -252,7 +252,7 @@ namespace Trecs.Tests
             }
 
             var sw = Stopwatch.StartNew();
-            a.SubmitEntities();
+            a.Submit();
             sw.Stop();
 
             NAssert.AreEqual(0, a.CountEntitiesWithTags(tags));
@@ -270,8 +270,10 @@ namespace Trecs.Tests
         [TestCase(5000)]
         public void Stress_NativeAddN_WithSort(int count)
         {
-            var settings = new WorldSettings { RequireDeterministicSubmission = true };
-            using var env = EcsTestHelper.CreateEnvironment(settings, TestTemplates.SimpleAlpha);
+            using var env = EcsTestHelper.CreateEnvironment(
+                new WorldSettings(),
+                TestTemplates.SimpleAlpha
+            );
             var a = env.Accessor;
             var nativeEcs = a.ToNative();
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
@@ -290,7 +292,7 @@ namespace Trecs.Tests
             refs.Dispose();
 
             var sw = Stopwatch.StartNew();
-            a.SubmitEntities();
+            a.Submit();
             sw.Stop();
 
             NAssert.AreEqual(count, a.CountEntitiesWithTags(TestTags.Alpha));
@@ -315,40 +317,12 @@ namespace Trecs.Tests
         [TestCase(500)]
         [TestCase(1000)]
         [TestCase(5000)]
-        public void Stress_NativeAddN_NoSort(int count)
-        {
-            // Same as WithSort but with RequireDeterministicSubmission=false to measure sort overhead
-            var settings = new WorldSettings { RequireDeterministicSubmission = false };
-            using var env = EcsTestHelper.CreateEnvironment(settings, TestTemplates.SimpleAlpha);
-            var a = env.Accessor;
-            var nativeEcs = a.ToNative();
-            var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
-
-            for (int i = 0; i < count; i++)
-            {
-                var init = nativeEcs.AddEntity(TestTags.Alpha, sortKey: (uint)(count - 1 - i));
-                init.Set(new TestInt { Value = count - 1 - i });
-            }
-
-            var sw = Stopwatch.StartNew();
-            a.SubmitEntities();
-            sw.Stop();
-
-            NAssert.AreEqual(count, a.CountEntitiesWithTags(TestTags.Alpha));
-
-            Debug.Log(
-                $"[StressTest] NativeAdd (no sort) {count}: {sw.Elapsed.TotalMilliseconds:F3} ms"
-            );
-        }
-
-        [TestCase(100)]
-        [TestCase(500)]
-        [TestCase(1000)]
-        [TestCase(5000)]
         public void Stress_NativeAddN_MultipleBags_WithSort(int count)
         {
-            var settings = new WorldSettings { RequireDeterministicSubmission = true };
-            using var env = EcsTestHelper.CreateEnvironment(settings, TestTemplates.SimpleAlpha);
+            using var env = EcsTestHelper.CreateEnvironment(
+                new WorldSettings(),
+                TestTemplates.SimpleAlpha
+            );
             var a = env.Accessor;
             var nativeEcs = a.ToNative();
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
@@ -363,7 +337,7 @@ namespace Trecs.Tests
             refs.Dispose();
 
             var sw = Stopwatch.StartNew();
-            a.SubmitEntities();
+            a.Submit();
             sw.Stop();
 
             NAssert.AreEqual(count, a.CountEntitiesWithTags(TestTags.Alpha));

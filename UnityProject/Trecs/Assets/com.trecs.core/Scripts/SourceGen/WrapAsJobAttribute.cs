@@ -17,14 +17,14 @@ namespace Trecs
     /// <item>Aspect (<c>in MyAspect</c>) or component refs (<c>in CPos</c>, <c>ref CVel</c>)</item>
     /// <item><c>EntityIndex</c> — auto-injected from the iteration loop</item>
     /// <item><c>in NativeWorldAccessor</c> — auto-injected via <c>World.ToNative()</c></item>
-    /// <item><c>in NativeSetRead&lt;TSet&gt;</c> / <c>in NativeSetWrite&lt;TSet&gt;</c> — auto-injected set accessors for deferred set operations</item>
+    /// <item><c>in NativeSetRead&lt;TSet&gt;</c> / <c>in NativeSetCommandBuffer&lt;TSet&gt;</c> — auto-injected set accessors for deferred set operations</item>
     /// <item><c>[PassThroughArgument]</c> parameters — become job fields, supplied at call site</item>
     /// </list>
     /// </para>
     /// </summary>
     /// <example>
     /// <code>
-    /// [ForEachEntity(Tags = new[] { typeof(FrenzyTags.Fish) })]
+    /// [ForEachEntity(typeof(FrenzyTags.Fish))]
     /// [WrapAsJob]
     /// static void Move(in Fish fish, in NativeWorldAccessor world)
     /// {

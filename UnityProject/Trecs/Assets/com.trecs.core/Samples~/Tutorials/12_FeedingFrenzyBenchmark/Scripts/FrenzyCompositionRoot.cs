@@ -1,9 +1,9 @@
 // Companion docs: https://svermeulen.github.io/trecs/samples/12-feeding-frenzy-benchmark/
+//
 
 using System;
 using System.Collections.Generic;
 using TMPro;
-using Trecs.Internal;
 using Trecs.Samples.FeedingFrenzyBenchmark.Branching;
 using Unity.Mathematics;
 using UnityEngine;
@@ -12,15 +12,15 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
 {
     public class FrenzyCompositionRoot : CompositionRootBase
     {
-        static readonly TrecsLog _log = new(nameof(FrenzyCompositionRoot));
-
         public FrenzyConfigSettings Config;
         public SampleSettings Settings;
-        public TMP_Text DisplayText;
         public GameObject ProfilerRunner;
+        public TMP_Text DisplayText;
 
         public static FrenzyConfigSettings ConfigOverride;
 
+        // All we do here is call constructors and set up dependencies
+        // between classes.  No initialization logic otherwise
         public override void Construct(
             out List<Action> initializables,
             out List<Action> tickables,
@@ -52,10 +52,9 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
                     new WorldSettings
                     {
                         RandomSeed = config.Deterministic ? 42 : (ulong)DateTime.Now.Ticks,
-                        RequireDeterministicSubmission = config.Deterministic,
                     }
                 )
-                .AddEntityTypes(GetTemplates(config));
+                .AddTemplates(GetTemplates(config));
 
             if (config.SubsetApproach == FrenzySubsetApproach.Sets)
             {
@@ -70,6 +69,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
             var removeCleanupHandler = new RemoveCleanupHandler(world);
             var configInput = new ConfigInputSystem();
             var presetInput = new FishCountPresetInputSystem(fishCountPresets);
+            var configUpdate = new FrenzyConfigUpdateSystem();
             var manageFishCount = new FishAdderAndRemover(
                 Settings.FishAdderAndRemover,
                 Settings.Common,
@@ -90,7 +90,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
 
             var sceneInitializer = new SceneInitializer(Settings.Common, world, config);
 
-            var renderer = new RendererSystem();
+            var renderer = new IndirectRenderer();
 
             var fishMesh = SampleUtil.CreateDartMesh();
             var mealMesh = SampleUtil.CreateScaledCubeMesh();
@@ -113,12 +113,12 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
 
             world.AddSystem(renderer);
 
-            // NOTE: This list determines OnReady call order
             world.AddSystems(
                 new ISystem[]
                 {
                     configInput,
                     presetInput,
+                    configUpdate,
                     manageFishCount,
                     manageMealCount,
                     lookingForMeal,
@@ -141,13 +141,14 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
 
             lateTickables = new() { world.LateTick };
 
+            // Bridge holds subscriptions on the world's EventsManager; must
+            // dispose before world or the EventsManager leak-check warns.
             disposables = new()
             {
                 fishSetInitializer.Dispose,
                 removeCleanupHandler.Dispose,
                 perfStats.Dispose,
                 world.Dispose,
-                renderer.Dispose,
             };
         }
 

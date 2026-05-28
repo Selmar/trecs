@@ -39,6 +39,12 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
     }
 
     [Unwrap]
+    public partial struct DesiredIterationStyle : IEntityComponent
+    {
+        public IterationStyle Value;
+    }
+
+    [Unwrap]
     public partial struct DesiredFishCount : IEntityComponent
     {
         public int Value;
@@ -85,6 +91,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
         public float FrameMs;
     }
 
+    [Copyable]
     public partial struct FrenzyConfig : IEntityComponent
     {
         public FrenzySubsetApproach SubsetApproach;

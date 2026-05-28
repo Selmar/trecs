@@ -12,16 +12,19 @@ namespace Trecs
         readonly RuntimeJobScheduler _scheduler;
         readonly WorldInfo _worldInfo;
         readonly JobHandle _handle;
+        readonly string _name;
 
         internal ExternalJobTracker(
             RuntimeJobScheduler scheduler,
             WorldInfo worldInfo,
-            JobHandle handle
+            JobHandle handle,
+            string name
         )
         {
             _scheduler = scheduler;
             _worldInfo = worldInfo;
             _handle = handle;
+            _name = name;
         }
 
         /// <summary>
@@ -30,10 +33,10 @@ namespace Trecs
         public ExternalJobTracker Writes<TComponent>(TagSet tags)
             where TComponent : unmanaged, IEntityComponent
         {
-            var resourceId = ResourceId.Component(ComponentTypeId<TComponent>.Value);
+            var resourceId = ResourceId.Component(TypeId<TComponent>.Value);
             foreach (var group in _worldInfo.GetGroupsWithTags(tags))
             {
-                _scheduler.TrackJobWrite(_handle, resourceId, group);
+                _scheduler.TrackJobWrite(_handle, resourceId, group, _name);
             }
             return this;
         }
@@ -41,13 +44,14 @@ namespace Trecs
         /// <summary>
         /// Declare that this external job writes to a component in a specific group.
         /// </summary>
-        public ExternalJobTracker Writes<TComponent>(Group group)
+        public ExternalJobTracker Writes<TComponent>(GroupIndex group)
             where TComponent : unmanaged, IEntityComponent
         {
             _scheduler.TrackJobWrite(
                 _handle,
-                ResourceId.Component(ComponentTypeId<TComponent>.Value),
-                group
+                ResourceId.Component(TypeId<TComponent>.Value),
+                group,
+                _name
             );
             return this;
         }
@@ -60,8 +64,9 @@ namespace Trecs
         {
             _scheduler.TrackJobWrite(
                 _handle,
-                ResourceId.Component(ComponentTypeId<TComponent>.Value),
-                _worldInfo.GlobalGroup
+                ResourceId.Component(TypeId<TComponent>.Value),
+                _worldInfo.GlobalGroup,
+                _name
             );
             return this;
         }
@@ -72,10 +77,10 @@ namespace Trecs
         public ExternalJobTracker Reads<TComponent>(TagSet tags)
             where TComponent : unmanaged, IEntityComponent
         {
-            var resourceId = ResourceId.Component(ComponentTypeId<TComponent>.Value);
+            var resourceId = ResourceId.Component(TypeId<TComponent>.Value);
             foreach (var group in _worldInfo.GetGroupsWithTags(tags))
             {
-                _scheduler.TrackJobRead(_handle, resourceId, group);
+                _scheduler.TrackJobRead(_handle, resourceId, group, _name);
             }
             return this;
         }
@@ -83,13 +88,14 @@ namespace Trecs
         /// <summary>
         /// Declare that this external job reads a component in a specific group.
         /// </summary>
-        public ExternalJobTracker Reads<TComponent>(Group group)
+        public ExternalJobTracker Reads<TComponent>(GroupIndex group)
             where TComponent : unmanaged, IEntityComponent
         {
             _scheduler.TrackJobRead(
                 _handle,
-                ResourceId.Component(ComponentTypeId<TComponent>.Value),
-                group
+                ResourceId.Component(TypeId<TComponent>.Value),
+                group,
+                _name
             );
             return this;
         }
@@ -102,8 +108,9 @@ namespace Trecs
         {
             _scheduler.TrackJobRead(
                 _handle,
-                ResourceId.Component(ComponentTypeId<TComponent>.Value),
-                _worldInfo.GlobalGroup
+                ResourceId.Component(TypeId<TComponent>.Value),
+                _worldInfo.GlobalGroup,
+                _name
             );
             return this;
         }

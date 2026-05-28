@@ -2,9 +2,9 @@
 
 Trecs provides phase-aware time and deterministic random number generation.
 
-## Time Properties
+## Time properties
 
-Access time values via the `World` accessor (available in systems as `World`):
+Access time values via the `World` accessor (available in systems):
 
 | Property | Description |
 |----------|-------------|
@@ -18,9 +18,9 @@ Access time values via the `World` accessor (available in systems as `World`):
 | `FixedFrame` | Fixed update frame counter |
 | `VariableFrame` | Variable update frame counter |
 
-### Phase-Aware DeltaTime
+### Phase-aware DeltaTime
 
-`DeltaTime` automatically returns the correct value for the phase your system runs in:
+`DeltaTime` returns the correct value for the system's phase:
 
 ```csharp
 // In a fixed update system: DeltaTime == FixedDeltaTime
@@ -29,29 +29,27 @@ public partial class PhysicsSystem : ISystem
     [ForEachEntity(MatchByComponents = true)]
     void Execute(ref Position pos, in Velocity vel)
     {
-        pos.Value += vel.Value * World.DeltaTime;  // Uses FixedDeltaTime
+        pos.Value += vel.Value * World.DeltaTime;
     }
 }
 
 // In a variable update system: DeltaTime == VariableDeltaTime
-[VariableUpdate]
+[ExecuteIn(SystemPhase.Presentation)]
 public partial class AnimationSystem : ISystem
 {
     [ForEachEntity(MatchByComponents = true)]
     void Execute(ref AnimState state)
     {
-        state.Time += World.DeltaTime;  // Uses VariableDeltaTime
+        state.Time += World.DeltaTime;
     }
 }
 ```
 
-You can also access the fixed time values while in variable update via World.FixedDeltaTime / World.FixedElapsedTime
+Fixed-time values are also accessible from variable update via `World.FixedDeltaTime` / `World.FixedElapsedTime`.
 
 ## Deterministic RNG
 
-Trecs provides a deterministic `Rng` type seeded from `WorldSettings.RandomSeed`.
-
-### Using RNG
+Trecs provides a deterministic `Rng` seeded from `WorldSettings.RandomSeed`.
 
 ```csharp
 // Phase-aware (recommended)
@@ -63,30 +61,23 @@ float fixedRand = World.FixedRng.Next();
 float varRand = World.VariableRng.Next();
 ```
 
-### Forking RNG
-
-Fork the RNG for sub-sequences that don't affect the parent sequence:
+Fork the RNG for independent sub-sequences:
 
 ```csharp
 var forked = World.Rng.Fork();
-// forked produces independent values without advancing the main RNG
+// forked produces an independent stream; the call itself advances the parent
 ```
 
-### Seeding
-
-Set the seed in world settings for reproducible results:
+Set the seed for reproducible results:
 
 ```csharp
-var settings = new WorldSettings
-{
-    RandomSeed = 42
-};
+var settings = new WorldSettings { RandomSeed = 42 };
 ```
 
 !!! warning
     For deterministic replay, always use `World.Rng` — never `UnityEngine.Random` or `System.Random`. External RNG sources are not captured in recordings.
 
-## Time in Jobs
+## Time in jobs
 
 `NativeWorldAccessor` provides time values in Burst jobs:
 

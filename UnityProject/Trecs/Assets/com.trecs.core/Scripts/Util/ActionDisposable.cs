@@ -2,7 +2,7 @@ using System;
 
 namespace Trecs.Internal
 {
-    public class ActionDisposable : IDisposable
+    internal class ActionDisposable : IDisposable
     {
         private readonly Action _action;
         private bool _hasDisposed;
@@ -14,7 +14,7 @@ namespace Trecs.Internal
 
         public void Dispose()
         {
-            Assert.That(!_hasDisposed);
+            TrecsDebugAssert.That(!_hasDisposed);
             _hasDisposed = true;
             _action();
         }

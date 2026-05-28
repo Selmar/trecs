@@ -10,7 +10,12 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
             _settings = settings;
             _config = config;
 
-            World = world.CreateAccessor();
+            // Unrestricted because the initial values for the [Input]-marked
+            // DesiredPreset / DesiredIterationStyle fields come from runtime
+            // settings rather than the template default. World.AddInput is
+            // only callable from Input-phase systems, so pre-tick scene
+            // setup uses the documented escape-hatch role instead.
+            World = world.CreateAccessor(AccessorRole.Unrestricted);
         }
 
         WorldAccessor World { get; }
@@ -20,6 +25,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
             var globals = Globals.Query(World).WithTags<TrecsTags.Globals>().Single();
 
             globals.DesiredPreset = _settings.DefaultPresetIndex;
+            globals.DesiredIterationStyle = _config.IterationStyle;
             globals.FrenzyConfig = new FrenzyConfig
             {
                 SubsetApproach = _config.SubsetApproach,
@@ -28,6 +34,8 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
             };
         }
 
-        partial struct Globals : IAspect, IWrite<DesiredPreset, FrenzyConfig> { }
+        partial struct Globals
+            : IAspect,
+                IWrite<DesiredPreset, DesiredIterationStyle, FrenzyConfig> { }
     }
 }

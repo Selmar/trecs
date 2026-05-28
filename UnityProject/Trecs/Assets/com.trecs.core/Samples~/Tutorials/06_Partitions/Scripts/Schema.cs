@@ -7,8 +7,6 @@ namespace Trecs.Samples.Partitions
         public struct Ball : ITag { }
 
         public struct Active : ITag { }
-
-        public struct Resting : ITag { }
     }
 
     [Unwrap]
@@ -26,20 +24,21 @@ namespace Trecs.Samples.Partitions
     public static partial class SampleTemplates
     {
         /// <summary>
-        /// Ball entity with two partitions: Active (physics simulated) and Resting (idle).
-        /// Entities in the Active partition are stored contiguously in memory, so the
-        /// physics system iterates them with optimal cache performance.
+        /// Ball entity with a presence/absence Active partition: balls that have the
+        /// Active tag are physics-simulated and stored contiguously for cache-friendly
+        /// iteration; balls without it are idle (queryable via
+        /// <c>Without = typeof(BallTags.Active)</c>).
         /// </summary>
         public partial class BallEntity
             : ITemplate,
-                IHasTags<BallTags.Ball>,
-                IHasPartition<BallTags.Active>,
-                IHasPartition<BallTags.Resting>
+                IExtends<CommonTemplates.RenderableGameObject>,
+                ITagged<BallTags.Ball>,
+                IPartitionedBy<BallTags.Active>
         {
-            public Position Position;
-            public Velocity Velocity;
-            public RestTimer RestTimer;
-            public GameObjectId GameObjectId;
+            Position Position;
+            Velocity Velocity;
+            RestTimer RestTimer;
+            PrefabId PrefabId = new(PartitionsPrefabs.Ball);
         }
     }
 }

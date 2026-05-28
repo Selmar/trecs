@@ -1,48 +1,41 @@
 # 01 — Hello Entity
 
-The simplest Trecs sample — a spinning cube. Introduces the fundamental building blocks: components, tags, templates, systems, and world setup.
+A spinning cube. Introduces components, tags, templates, systems, and world setup.
 
-**Source:** `Samples/01_HelloEntity/`
+**Source:** `com.trecs.core/Samples~/Tutorials/01_HelloEntity/`
 
-## What It Does
+## What it does
 
-A cube rotates continuously around the Y axis. The rotation speed is configured when the system is created.
+A single entity holds a `Rotation` component. A fixed-update system advances the rotation each tick; a presentation system applies it to a Unity `Transform`.
 
 ## Schema
 
-### Components
+A schema is the components, tags, and templates that describe your entities:
 
 ```csharp
-[Unwrap]
-public partial struct Rotation : IEntityComponent
+public static class SampleTags
 {
-    public quaternion Value;
+    public struct Spinner : ITag { }
+}
+
+public static partial class SampleTemplates
+{
+    public partial class SpinnerEntity : ITemplate, ITagged<SampleTags.Spinner>
+    {
+        Rotation Rotation = new(quaternion.identity);
+    }
 }
 ```
 
-The `GameObjectId` component (from Common) maps the entity to a Unity GameObject.
+`Rotation` comes from `Common/` and is reused across tutorials.
 
-### Tags
-
-```csharp
-public struct Spinner : ITag { }
-```
-
-### Template
-
-```csharp
-public partial class SpinnerEntity : ITemplate, IHasTags<SampleTags.Spinner>
-{
-    public Rotation Rotation = new(quaternion.identity);
-    public GameObjectId GameObjectId;
-}
-```
+See [Components](../core/components.md), [Tags](../core/tags.md), and [Templates](../core/templates.md).
 
 ## Systems
 
-### SpinnerSystem (Fixed Update)
+### SpinnerSystem (fixed update)
 
-Rotates all entities that have a `Rotation` component:
+Spins anything with a `Rotation` component:
 
 ```csharp
 public partial class SpinnerSystem : ISystem
@@ -63,60 +56,72 @@ public partial class SpinnerSystem : ISystem
 }
 ```
 
-Uses `MatchByComponents = true` to iterate all entities with `Rotation`, regardless of tags.
+`MatchByComponents = true` iterates every entity with a `Rotation` component, regardless of tags. See [Queries & Iteration](../data-access/queries-and-iteration.md).
 
-### SpinnerGameObjectUpdater (Variable Update)
+### SpinnerGameObjectUpdater (presentation)
 
-Syncs the ECS rotation to the Unity transform:
+Syncs the simulation rotation onto a Unity `Transform`. The sample wires a single transform in by constructor; later samples introduce the `RenderableGameObjectManager` pattern for per-entity GameObjects:
 
 ```csharp
-[VariableUpdate]
+[ExecuteIn(SystemPhase.Presentation)]
 public partial class SpinnerGameObjectUpdater : ISystem
 {
-    readonly GameObjectRegistry _gameObjectRegistry;
+    readonly Transform _spinnerCube;
 
-    public SpinnerGameObjectUpdater(GameObjectRegistry gameObjectRegistry)
-    {
-        _gameObjectRegistry = gameObjectRegistry;
-    }
+    public SpinnerGameObjectUpdater(Transform spinnerCube) => _spinnerCube = spinnerCube;
 
     [ForEachEntity(MatchByComponents = true)]
-    void Execute(in GameObjectId id, in Rotation rotation)
+    void Execute(in Rotation rotation)
     {
-        var go = _gameObjectRegistry.Resolve(id);
-        go.transform.rotation = rotation.Value;
+        _spinnerCube.rotation = rotation.Value;
     }
 }
 ```
 
-Marked `[VariableUpdate]` because it touches Unity GameObjects — rendering should happen at the display frame rate, not the fixed timestep.  Though in this case it doesn't matter since rotation is updated in fixed and we aren't using [interpolation](../advanced/interpolation.md) in this sample.
+`[ExecuteIn(SystemPhase.Presentation)]` runs at the variable (display) frame rate rather than the fixed timestep — the right place for anything touching Unity GameObjects. See [Systems](../core/systems.md) and [Accessor Roles](../advanced/accessor-roles.md).
 
-## World Setup
+## Wiring it up
+
+The composition root builds the world, registers the systems, and hands lifecycle callbacks back to `Bootstrap`:
 
 ```csharp
 var world = new WorldBuilder()
-    .AddEntityType(SampleTemplates.SpinnerEntity.Template)
+    .AddTemplate(SampleTemplates.SpinnerEntity.Template)
     .Build();
 
 world.AddSystems(new ISystem[]
 {
-    new SpinnerSystem(rotationSpeed: 2f),
-    new SpinnerGameObjectUpdater(gameObjectRegistry),
+    new SpinnerSystem(RotationSpeed),
+    new SpinnerGameObjectUpdater(spinnerCubeTransform),
 });
-
-// Initialize is called separately (via the initializables list)
-// Entity creation happens in SceneInitializer.Initialize:
-var world = world.CreateAccessor();
-
-world.AddEntity<SampleTags.Spinner>()
-    .Set(gameObjectRegistry.Register(cube.gameObject));
 ```
 
-## Concepts Introduced
+A separate scene initializer creates the entity once during the init phase. The accessor is created up front with `AccessorRole.Unrestricted`, since init code lives outside any system:
 
-- **Components** are unmanaged structs implementing `IEntityComponent`
-- **Tags** are empty structs implementing `ITag` that classify entities
-- **Templates** declare which components and tags an entity has
-- **Systems** implement `ISystem` and use `[ForEachEntity]` for iteration
-- **`[VariableUpdate]`** separates rendering from simulation
-- **`MatchByComponents`** iterates by component presence instead of tags
+```csharp
+public class SceneInitializer
+{
+    readonly WorldAccessor _world;
+
+    public SceneInitializer(World world)
+    {
+        _world = world.CreateAccessor(AccessorRole.Unrestricted);
+    }
+
+    public void Initialize()
+    {
+        _world.AddEntity<SampleTags.Spinner>();
+    }
+}
+```
+
+See [World Setup](../core/world-setup.md) and [Entities](../core/entities.md).
+
+## Concepts introduced
+
+- **Components** — unmanaged structs implementing `IEntityComponent`
+- **Tags** — empty structs implementing `ITag`
+- **Templates** — declare an entity's components and tags
+- **Systems** — `ISystem` + `[ForEachEntity]` for iteration
+- **`MatchByComponents`** — iterate by component presence instead of tags
+- **`[ExecuteIn(SystemPhase.Presentation)]`** — run at the display frame rate

@@ -1,42 +1,56 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Trecs.Collections;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 
 namespace Trecs.Internal
 {
-    class EntitiesOperations
+    class EntitiesOperations : IDisposable
     {
-        static readonly TrecsLog _log = new(nameof(EntitiesOperations));
+        readonly TrecsLog _log;
 
         Info _lastSubmittedInfo;
         Info _thisSubmissionInfo;
 
-        readonly Func<DenseDictionary<Group, DenseDictionary<int, MoveInfo>>> _newGroupDictionary;
-        readonly Func<FastList<int>> _newList;
-        readonly ActionRef<FastList<int>> _clearList;
-
-        readonly ActionRef<
-            DenseDictionary<Group, DenseDictionary<int, MoveInfo>>
-        > _recycleDicitionaryWithCaller;
-        readonly Func<DenseDictionary<int, MoveInfo>> _newListWithCaller;
-        readonly ActionRef<DenseDictionary<int, MoveInfo>> _clearListWithCaller;
-
-        public EntitiesOperations()
+        public EntitiesOperations(TrecsLog log, int groupCount)
         {
-            _thisSubmissionInfo.Init();
-            _lastSubmittedInfo.Init();
-
-            _newGroupDictionary = NewGroupDictionary;
-            _newList = NewList;
-            _clearList = ClearList;
-            _recycleDicitionaryWithCaller = RecycleDicitionaryWithCaller;
-            _newListWithCaller = NewListWithCaller;
-            _clearListWithCaller = ClearListWithCaller;
+            _log = log;
+            _thisSubmissionInfo.Init(groupCount);
+            _lastSubmittedInfo.Init(groupCount);
         }
 
-        public void QueueRemoveGroupOperation(Group groupId, string caller)
+        public void Dispose()
+        {
+            DisposeInnerMoveLists(ref _thisSubmissionInfo);
+            DisposeInnerMoveLists(ref _lastSubmittedInfo);
+        }
+
+        static void DisposeInnerMoveLists(ref Info info)
+        {
+            if (info._currentSwapEntitiesOperations == null)
+                return;
+            for (int i = 0; i < info._currentSwapEntitiesOperations.Length; i++)
+            {
+                var outerDict = info._currentSwapEntitiesOperations[i];
+                if (outerDict == null)
+                    continue;
+                foreach (var entry in outerDict)
+                {
+                    if (entry.Value.IsCreated)
+                        entry.Value.Dispose();
+                }
+            }
+            for (int i = 0; i < info._moveListPool.Count; i++)
+            {
+                if (info._moveListPool[i].IsCreated)
+                    info._moveListPool[i].Dispose();
+            }
+        }
+
+        public void QueueRemoveGroupOperation(GroupIndex groupId, string caller)
         {
             _thisSubmissionInfo._groupsToRemove.Add((groupId, caller));
         }
@@ -60,34 +74,23 @@ namespace Trecs.Internal
                 return;
 
             _thisSubmissionInfo._entitiesRemoved.Add(fromEntityIndex);
+            _thisSubmissionInfo._removeCount++;
             RevertMoveOperationIfPreviouslyQueued(fromEntityIndex);
 
-            var removedComponentsPerType =
-                _thisSubmissionInfo._currentRemoveEntitiesOperations.RecycleOrAdd(
-                    fromEntityIndex.Group,
-                    _newList,
-                    _clearList
-                );
-
-            removedComponentsPerType.Add(fromEntityIndex.Index);
+            GetOrCreateRemoveList(fromEntityIndex.GroupIndex).Add(fromEntityIndex.Index);
         }
 
         /// <summary>
         /// Queue removal of all entities in a group. More efficient than individual
         /// QueueRemoveOperation calls because it skips per-entity Contains checks
-        /// and amortizes dictionary lookups.
+        /// and amortizes the per-group slot lookup.
         /// </summary>
-        public void QueueRemoveAllInGroup(Group group, int entityCount)
+        public void QueueRemoveAllInGroup(GroupIndex group, int entityCount)
         {
             if (entityCount == 0)
                 return;
 
-            var removedComponentsPerType =
-                _thisSubmissionInfo._currentRemoveEntitiesOperations.RecycleOrAdd(
-                    group,
-                    _newList,
-                    _clearList
-                );
+            var removedComponentsPerType = GetOrCreateRemoveList(group);
 
             for (int i = 0; i < entityCount; i++)
             {
@@ -97,6 +100,7 @@ namespace Trecs.Internal
                     continue;
 
                 _thisSubmissionInfo._entitiesRemoved.Add(entityIndex);
+                _thisSubmissionInfo._removeCount++;
                 RevertMoveOperationIfPreviouslyQueued(entityIndex);
 
                 removedComponentsPerType.Add(i);
@@ -112,26 +116,51 @@ namespace Trecs.Internal
             if (
                 _thisSubmissionInfo._entitiesMoved.TryRemove(
                     fromEntityIndex,
-                    out (EntityIndex fromEntityIndex, Group toGroup) val
+                    out (EntityIndex fromEntityIndex, GroupIndex toGroup) val
                 )
             )
             {
+                // The outer slot must exist since the move was queued — its inner
+                // list's entry for toGroup must also exist since the same queue
+                // path created both.
                 var swappedComponentsPerType = _thisSubmissionInfo._currentSwapEntitiesOperations[
-                    fromEntityIndex.Group
+                    fromEntityIndex.GroupIndex.Index
                 ];
 
-                swappedComponentsPerType[val.toGroup].RemoveMustExist(fromEntityIndex.Index);
+                var innerList = swappedComponentsPerType[val.toGroup];
+                RemoveEntryByEntityIndex(ref innerList, fromEntityIndex.Index);
             }
         }
 
-        public void QueueMoveGroupOperation(Group fromGroupId, Group toGroupId, string caller)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static void RemoveEntryByEntityIndex(ref NativeList<MoveInfoEntry> list, int entityIndex)
+        {
+            for (int i = 0; i < list.Length; i++)
+            {
+                if (list[i].EntityIndex == entityIndex)
+                {
+                    list.RemoveAtSwapBack(i);
+                    return;
+                }
+            }
+            TrecsDebugAssert.That(
+                false,
+                "RemoveEntryByEntityIndex: entity not found in inner move list"
+            );
+        }
+
+        public void QueueMoveGroupOperation(
+            GroupIndex fromGroupId,
+            GroupIndex toGroupId,
+            string caller
+        )
         {
             _thisSubmissionInfo._groupsToMove.Add((fromGroupId, toGroupId, caller));
         }
 
         public void QueueMoveOperation(
             EntityIndex fromEntityIndex,
-            Group toGroup,
+            GroupIndex toGroup,
             IComponentBuilder[] componentBuilders
         )
         {
@@ -141,109 +170,177 @@ namespace Trecs.Internal
 
             _thisSubmissionInfo._entitiesMoved.Add(fromEntityIndex, (fromEntityIndex, toGroup));
 
-            //Get (or create) the dictionary that holds the entities that are swapping from fromEntityIndex group
-            var swappedComponentsPerType =
-                _thisSubmissionInfo._currentSwapEntitiesOperations.RecycleOrAdd(
-                    fromEntityIndex.Group,
-                    _newGroupDictionary,
-                    _recycleDicitionaryWithCaller
-                );
-
-            swappedComponentsPerType
-                .RecycleOrAdd(toGroup, _newListWithCaller, _clearListWithCaller)
-                .Add(fromEntityIndex.Index, default);
+            GetOrCreateInnerMoveList(fromEntityIndex.GroupIndex, toGroup)
+                .Add(new MoveInfoEntry { EntityIndex = fromEntityIndex.Index });
         }
 
         /// <summary>
         /// Batch queue remove operations from pre-sorted native data.
-        /// Groups entities by their group to amortize dictionary lookups.
+        /// <para>
+        /// Native-vs-native duplicate dedup is via adjacent-compare (cheap,
+        /// since sortedRemovals is sorted by EntityIndex). The hashset
+        /// <c>_entitiesRemoved</c> is intentionally <em>not</em> populated
+        /// here: its only in-pipeline consumer was the NatSwap Queue gate at
+        /// <see cref="QueueNativeMoveOperations"/>, which now uses a
+        /// merge-walk over <paramref name="sortedRemovals"/> instead.
+        /// _entitiesRemoved continues to track managed-side removes (queued
+        /// via <see cref="QueueRemoveOperation"/> / <see cref="QueueRemoveAllInGroup"/>)
+        /// for the cross-source dedup branch below and for mid-tick
+        /// <c>IsScheduledForRemove</c> callers.
+        /// </para>
         /// </summary>
         public void QueueNativeRemoveOperations(
-            NativeList<(EntityIndex, int)> sortedRemovals,
+            NativeList<RemovalEntry> sortedRemovals,
             WorldInfo worldInfo
         )
         {
-            Group cachedGroup = default;
-            FastList<int> cachedRemoveList = null;
+            // Cross-source dedup against managed removes only fires when something
+            // landed in _entitiesRemoved earlier this tick — typically 0 in
+            // bulk-native workloads, so the per-entity Contains probe is skipped.
+            bool checkPriorManagedRemoves = _thisSubmissionInfo._entitiesRemoved.Count > 0;
+            // Same idea: RevertMove's TryRemove on _entitiesMoved is a hashset
+            // probe per entity. Skip the call entirely when the move map is empty.
+            bool hasPriorMoves = _thisSubmissionInfo._entitiesMoved.Count > 0;
 
-            foreach (var (entityIdx, accessorId) in sortedRemovals)
+            // sortedRemovals is sorted by EntityIndex (group-major), so same-group
+            // runs cluster and adjacent-compare dedup handles native-vs-native
+            // duplicates without touching a hashset.
+            EntityIndex prev = default;
+            bool hasPrev = false;
+            GroupIndex cachedGroup = default;
+            List<int> cachedList = null;
+            int addedCount = 0;
+
+            unsafe
             {
-                if (_thisSubmissionInfo._entitiesRemoved.Contains(entityIdx))
-                    continue;
-
-                _thisSubmissionInfo._entitiesRemoved.Add(entityIdx);
-                RevertMoveOperationIfPreviouslyQueued(entityIdx);
-
-                if (entityIdx.Group != cachedGroup)
+                var removalsPtr = (RemovalEntry*)sortedRemovals.GetUnsafeReadOnlyPtr();
+                for (int ri = 0; ri < sortedRemovals.Length; ri++)
                 {
-                    cachedGroup = entityIdx.Group;
-                    cachedRemoveList =
-                        _thisSubmissionInfo._currentRemoveEntitiesOperations.RecycleOrAdd(
-                            cachedGroup,
-                            _newList,
-                            _clearList
-                        );
-                }
+                    var entityIdx = removalsPtr[ri].EntityIndex;
 
-                cachedRemoveList.Add(entityIdx.Index);
+                    if (hasPrev && entityIdx == prev)
+                        continue;
+                    prev = entityIdx;
+                    hasPrev = true;
+
+                    if (
+                        checkPriorManagedRemoves
+                        && _thisSubmissionInfo._entitiesRemoved.Contains(entityIdx)
+                    )
+                        continue;
+
+                    if (hasPriorMoves)
+                        RevertMoveOperationIfPreviouslyQueued(entityIdx);
+
+                    if (entityIdx.GroupIndex != cachedGroup || cachedList == null)
+                    {
+                        cachedGroup = entityIdx.GroupIndex;
+                        cachedList = GetOrCreateRemoveList(cachedGroup);
+                    }
+                    cachedList.Add(entityIdx.Index);
+                    addedCount++;
+                }
             }
+
+            _thisSubmissionInfo._removeCount += addedCount;
         }
 
         /// <summary>
         /// Batch queue move operations from pre-sorted native data.
-        /// Groups entities by (fromGroup, toGroup) to amortize dictionary lookups.
+        /// <para>
+        /// The "remove supersedes swap" gate has two parts: a hashset probe
+        /// against <c>_entitiesRemoved</c> for managed-side removes (typically
+        /// tiny — populated only by managed <c>QueueRemoveOperation</c> calls
+        /// earlier this tick), and a merge-walk against
+        /// <paramref name="sortedRemovals"/> for native-side removes (the bulk
+        /// case). Both lists share the same <see cref="EntityIndex.CompareTo"/>
+        /// primary sort key, so the merge-walk is one amortized pointer advance
+        /// per swap with no hashing.
+        /// </para>
         /// </summary>
         public void QueueNativeMoveOperations(
-            NativeList<(EntityIndex, Group, int)> sortedSwaps,
+            NativeList<SwapEntry> sortedSwaps,
+            NativeList<RemovalEntry> sortedRemovals,
             WorldInfo worldInfo
         )
         {
-            Group cachedFromGroup = default;
-            Group cachedToGroup = default;
-            DenseDictionary<Group, DenseDictionary<int, MoveInfo>> cachedFromGroupDict = null;
-            DenseDictionary<int, MoveInfo> cachedToGroupDict = null;
+            GroupIndex cachedFromGroup = default;
+            GroupIndex cachedToGroup = default;
+            NativeList<MoveInfoEntry> cachedInner = default;
+            bool hasCachedInner = false;
 
-            foreach (var (fromEntityIndex, toGroup, accessorId) in sortedSwaps)
+            bool checkPriorManagedRemoves = _thisSubmissionInfo._entitiesRemoved.Count > 0;
+            bool entityMovedDedupRequired = _thisSubmissionInfo._entitiesMoved.Count > 0;
+
+            int sortedRemovalsCount = sortedRemovals.Length;
+            int ri = 0;
+
+            unsafe
             {
-                // Remove supersedes swap
-                if (_thisSubmissionInfo._entitiesRemoved.Contains(fromEntityIndex))
-                    continue;
+                var swapsPtr = (SwapEntry*)sortedSwaps.GetUnsafeReadOnlyPtr();
+                var removalsPtr =
+                    sortedRemovalsCount > 0
+                        ? (RemovalEntry*)sortedRemovals.GetUnsafeReadOnlyPtr()
+                        : null;
 
-                // Skip if already queued for a move (first move wins, dedup with managed moves)
-                if (
-                    !_thisSubmissionInfo._entitiesMoved.TryAdd(
-                        fromEntityIndex,
-                        (fromEntityIndex, toGroup),
-                        out _
+                for (int si = 0; si < sortedSwaps.Length; si++)
+                {
+                    var swap = swapsPtr[si];
+                    var fromEntityIndex = swap.EntityIndex;
+                    var toGroup = swap.ToGroup;
+
+                    if (
+                        checkPriorManagedRemoves
+                        && _thisSubmissionInfo._entitiesRemoved.Contains(fromEntityIndex)
                     )
-                )
-                    continue;
+                        continue;
 
-                if (fromEntityIndex.Group != cachedFromGroup)
-                {
-                    cachedFromGroup = fromEntityIndex.Group;
-                    cachedFromGroupDict =
-                        _thisSubmissionInfo._currentSwapEntitiesOperations.RecycleOrAdd(
-                            cachedFromGroup,
-                            _newGroupDictionary,
-                            _recycleDicitionaryWithCaller
+                    while (
+                        ri < sortedRemovalsCount
+                        && removalsPtr[ri].EntityIndex.CompareTo(fromEntityIndex) < 0
+                    )
+                        ri++;
+                    if (
+                        ri < sortedRemovalsCount
+                        && removalsPtr[ri].EntityIndex.Equals(fromEntityIndex)
+                    )
+                        continue;
+
+                    if (entityMovedDedupRequired)
+                    {
+                        if (
+                            !_thisSubmissionInfo._entitiesMoved.TryAdd(
+                                fromEntityIndex,
+                                (fromEntityIndex, toGroup),
+                                out _
+                            )
+                        )
+                            continue;
+                    }
+                    else
+                    {
+                        _thisSubmissionInfo._entitiesMoved.Add(
+                            fromEntityIndex,
+                            (fromEntityIndex, toGroup)
                         );
-                    // Reset toGroup cache when fromGroup changes
-                    cachedToGroup = default;
-                    cachedToGroupDict = null;
-                }
+                    }
 
-                if (toGroup != cachedToGroup)
-                {
-                    cachedToGroup = toGroup;
-                    cachedToGroupDict = cachedFromGroupDict.RecycleOrAdd(
-                        cachedToGroup,
-                        _newListWithCaller,
-                        _clearListWithCaller
-                    );
-                }
+                    if (fromEntityIndex.GroupIndex != cachedFromGroup)
+                    {
+                        cachedFromGroup = fromEntityIndex.GroupIndex;
+                        cachedToGroup = default;
+                        hasCachedInner = false;
+                    }
 
-                cachedToGroupDict.Add(fromEntityIndex.Index, default);
+                    if (toGroup != cachedToGroup || !hasCachedInner)
+                    {
+                        cachedToGroup = toGroup;
+                        cachedInner = GetOrCreateInnerMoveList(cachedFromGroup, toGroup);
+                        hasCachedInner = true;
+                    }
+
+                    cachedInner.Add(new MoveInfoEntry { EntityIndex = fromEntityIndex.Index });
+                }
             }
         }
 
@@ -252,16 +349,12 @@ namespace Trecs.Internal
         /// update any pending remove indices for that group so they target the correct positions.
         /// </summary>
         internal void UpdateRemoveIndicesAfterMoveSwapBack(
-            Group fromGroup,
-            DenseDictionary<int, int> swapBackMapping
+            GroupIndex fromGroup,
+            IterableDictionary<int, int> swapBackMapping
         )
         {
-            if (
-                !_lastSubmittedInfo._currentRemoveEntitiesOperations.TryGetValue(
-                    fromGroup,
-                    out var removeList
-                )
-            )
+            var removeList = _lastSubmittedInfo._currentRemoveEntitiesOperations[fromGroup.Index];
+            if (removeList == null || removeList.Count == 0)
                 return;
 
             for (int i = 0; i < removeList.Count; i++)
@@ -275,7 +368,7 @@ namespace Trecs.Internal
                 {
                     idx = newIndex;
 #if TRECS_INTERNAL_CHECKS && DEBUG
-                    Assert.That(++hops <= maxHops, "Cycle detected in swap-back mapping");
+                    TrecsDebugAssert.That(++hops <= maxHops, "Cycle detected in swap-back mapping");
 #endif
                 }
                 removeList[i] = idx;
@@ -290,13 +383,13 @@ namespace Trecs.Internal
 
         public void ExecuteRemoveAndSwappingOperations(
             Action<
-                DenseDictionary<Group, DenseDictionary<Group, DenseDictionary<int, MoveInfo>>>,
-                DenseDictionary<EntityIndex, (EntityIndex, Group)>,
+                IterableDictionary<GroupIndex, NativeList<MoveInfoEntry>>[],
+                IterableDictionary<EntityIndex, (EntityIndex, GroupIndex)>,
                 EntitySubmitter
             > moveEntities,
-            Action<DenseDictionary<Group, FastList<int>>, EntitySubmitter> removeEntities,
-            Action<Group, EntitySubmitter> removeGroup,
-            Action<Group, Group, EntitySubmitter> swapGroup,
+            Action<List<int>[], EntitySubmitter> removeEntities,
+            Action<GroupIndex, EntitySubmitter> removeGroup,
+            Action<GroupIndex, GroupIndex, EntitySubmitter> swapGroup,
             EntitySubmitter ecsRoot
         )
         {
@@ -331,7 +424,7 @@ namespace Trecs.Internal
                     throw;
                 }
 
-            if (_lastSubmittedInfo._currentSwapEntitiesOperations.Count > 0)
+            if (_lastSubmittedInfo._entitiesMoved.Count > 0)
             {
                 moveEntities(
                     _lastSubmittedInfo._currentSwapEntitiesOperations,
@@ -340,7 +433,7 @@ namespace Trecs.Internal
                 );
             }
 
-            if (_lastSubmittedInfo._currentRemoveEntitiesOperations.Count > 0)
+            if (_lastSubmittedInfo._removeCount > 0)
             {
                 removeEntities(_lastSubmittedInfo._currentRemoveEntitiesOperations, ecsRoot);
             }
@@ -351,94 +444,115 @@ namespace Trecs.Internal
             }
         }
 
-        static FastList<int> NewList()
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        List<int> GetOrCreateRemoveList(GroupIndex group)
         {
-            return new FastList<int>();
+            ref var slot = ref _thisSubmissionInfo._currentRemoveEntitiesOperations[group.Index];
+            slot ??= new List<int>();
+            return slot;
         }
 
-        static void ClearList(ref FastList<int> target)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        NativeList<MoveInfoEntry> GetOrCreateInnerMoveList(GroupIndex fromGroup, GroupIndex toGroup)
         {
-            target.Clear();
-        }
+            ref var outerSlot = ref _thisSubmissionInfo._currentSwapEntitiesOperations[
+                fromGroup.Index
+            ];
+            outerSlot ??= new IterableDictionary<GroupIndex, NativeList<MoveInfoEntry>>();
 
-        static void RecycleDicitionaryWithCaller(
-            ref DenseDictionary<Group, DenseDictionary<int, MoveInfo>> target
-        )
-        {
-            target.Recycle();
-        }
+            ref var innerList = ref outerSlot.GetOrAdd(toGroup, out _);
 
-        static void ClearListWithCaller(ref DenseDictionary<int, MoveInfo> target)
-        {
-            target.Recycle();
-        }
+            if (!innerList.IsCreated)
+            {
+                var pool = _thisSubmissionInfo._moveListPool;
+                if (pool.Count > 0)
+                {
+                    innerList = pool[pool.Count - 1];
+                    pool.RemoveAt(pool.Count - 1);
+                }
+                else
+                {
+                    innerList = new NativeList<MoveInfoEntry>(1, Allocator.Persistent);
+                }
+            }
 
-        static DenseDictionary<int, MoveInfo> NewListWithCaller()
-        {
-            return new DenseDictionary<int, MoveInfo>();
-        }
-
-        static DenseDictionary<Group, DenseDictionary<int, MoveInfo>> NewGroupDictionary()
-        {
-            return new DenseDictionary<Group, DenseDictionary<int, MoveInfo>>();
+            return innerList;
         }
 
         struct Info
         {
-            //from group         //actual component type
-            internal DenseDictionary<
-                Group,
-                DenseDictionary<Group, DenseDictionary<int, MoveInfo>>
-            > _currentSwapEntitiesOperations;
+            internal IterableDictionary<
+                GroupIndex,
+                NativeList<MoveInfoEntry>
+            >[] _currentSwapEntitiesOperations;
 
-            internal DenseDictionary<Group, FastList<int>> _currentRemoveEntitiesOperations;
+            internal List<NativeList<MoveInfoEntry>> _moveListPool;
 
-            internal DenseDictionary<
+            internal List<int>[] _currentRemoveEntitiesOperations;
+
+            internal IterableDictionary<
                 EntityIndex,
-                (EntityIndex fromEntityIndex, Group toGroup)
+                (EntityIndex fromEntityIndex, GroupIndex toGroup)
             > _entitiesMoved;
-            internal DenseHashSet<EntityIndex> _entitiesRemoved;
-            public FastList<(Group, Group, string)> _groupsToMove;
-            public FastList<(Group, string)> _groupsToRemove;
+            internal IterableHashSet<EntityIndex> _entitiesRemoved;
+
+            internal int _removeCount;
+            public List<(GroupIndex, GroupIndex, string)> _groupsToMove;
+            public List<(GroupIndex, string)> _groupsToRemove;
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal bool AnyOperationQueued()
             {
                 return _entitiesMoved.Count > 0
-                    || _entitiesRemoved.Count > 0
-                    || _currentSwapEntitiesOperations.Count > 0
-                    || _currentRemoveEntitiesOperations.Count > 0
+                    || _removeCount > 0
                     || _groupsToMove.Count > 0
                     || _groupsToRemove.Count > 0;
             }
 
             internal void Clear()
             {
-                _currentSwapEntitiesOperations.Recycle();
-                _currentRemoveEntitiesOperations.Recycle();
+                for (int i = 0; i < _currentSwapEntitiesOperations.Length; i++)
+                {
+                    var fromGroup = _currentSwapEntitiesOperations[i];
+                    if (fromGroup == null)
+                        continue;
+                    foreach (var entry in fromGroup)
+                    {
+                        entry.Value.Clear();
+                        _moveListPool.Add(entry.Value);
+                    }
+                    fromGroup.Recycle();
+                }
+
+                for (int i = 0; i < _currentRemoveEntitiesOperations.Length; i++)
+                {
+                    _currentRemoveEntitiesOperations[i]?.Clear();
+                }
+
                 _entitiesMoved.Recycle();
                 _entitiesRemoved.Recycle();
+                _removeCount = 0;
                 _groupsToRemove.Clear();
                 _groupsToMove.Clear();
             }
 
-            internal void Init()
+            internal void Init(int groupCount)
             {
                 _entitiesMoved =
-                    new DenseDictionary<
+                    new IterableDictionary<
                         EntityIndex,
-                        (EntityIndex fromEntityIndex, Group toGroup)
+                        (EntityIndex fromEntityIndex, GroupIndex toGroup)
                     >();
-                _entitiesRemoved = new DenseHashSet<EntityIndex>();
-                _groupsToRemove = new FastList<(Group, string)>();
-                _groupsToMove = new FastList<(Group, Group, string)>();
+                _entitiesRemoved = new IterableHashSet<EntityIndex>();
+                _groupsToRemove = new List<(GroupIndex, string)>();
+                _groupsToMove = new List<(GroupIndex, GroupIndex, string)>();
 
-                _currentSwapEntitiesOperations =
-                    new DenseDictionary<
-                        Group,
-                        DenseDictionary<Group, DenseDictionary<int, MoveInfo>>
-                    >();
-                _currentRemoveEntitiesOperations = new DenseDictionary<Group, FastList<int>>();
+                _currentSwapEntitiesOperations = new IterableDictionary<
+                    GroupIndex,
+                    NativeList<MoveInfoEntry>
+                >[groupCount];
+                _moveListPool = new List<NativeList<MoveInfoEntry>>();
+                _currentRemoveEntitiesOperations = new List<int>[groupCount];
             }
         }
     }
@@ -453,5 +567,36 @@ namespace Trecs.Internal
         /// Set during move precomputation in MoveEntities, before the component-type loop.
         /// </summary>
         public int ResolvedFromIndex;
+    }
+
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public struct MoveInfoEntry
+    {
+        public int EntityIndex;
+        public MoveInfo Info;
+    }
+
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public struct RemovalEntry
+    {
+        public EntityIndex EntityIndex;
+        public int AccessorId;
+    }
+
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public struct SwapEntry
+    {
+        public EntityIndex EntityIndex;
+        public GroupIndex ToGroup;
+        public int AccessorId;
+    }
+
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public struct NativeTagOp
+    {
+        public int AccessorId;
+        public EntityIndex EntityIndex;
+        public int TagId;
+        public bool IsSet;
     }
 }

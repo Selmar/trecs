@@ -6,6 +6,7 @@ using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Trecs.SourceGen.Aspect;
 using Trecs.SourceGen.Performance;
 
 namespace Trecs.SourceGen.Shared
@@ -39,6 +40,9 @@ namespace Trecs.SourceGen.Shared
         /// <summary>Whether an EntityIndex parameter was found.</summary>
         public bool HasEntityIndex { get; set; }
 
+        /// <summary>Whether an EntityHandle parameter was found.</summary>
+        public bool HasEntityHandle { get; set; }
+
         /// <summary>Whether a WorldAccessor parameter was found.</summary>
         public bool HasWorldAccessor { get; set; }
 
@@ -59,6 +63,13 @@ namespace Trecs.SourceGen.Shared
 
         /// <summary>Custom/PassThrough parameters.</summary>
         public List<ParameterInfo> CustomParameters { get; } = new();
+
+        /// <summary>
+        /// <c>[SingleEntity]</c> parameters that are hoisted out of the iteration loop.
+        /// Each entry is referenced by a <see cref="ParamSlotKind.HoistedSingleton"/>
+        /// slot in <see cref="ParameterSlots"/>.
+        /// </summary>
+        public List<HoistedSingletonInfo> HoistedSingletons { get; } = new();
     }
 
     /// <summary>
@@ -76,7 +87,6 @@ namespace Trecs.SourceGen.Shared
         /// <param name="mode">Aspect or Components iteration.</param>
         /// <param name="context">Source production context for reporting diagnostics.</param>
         /// <param name="methodName">Method name for diagnostic messages (aspect mode only, used in MixedAspectAndComponentParams).</param>
-        /// <param name="supportsEntityIndex">Whether EntityIndex is a valid parameter (false for ForSingleAspect).</param>
         /// <param name="aspectParam">
         /// For Aspect mode: the pre-detected aspect ParameterSyntax (already validated).
         /// The classifier will record it as LoopAspect and skip classification for that parameter.
@@ -93,9 +103,8 @@ namespace Trecs.SourceGen.Shared
             SeparatedSyntaxList<ParameterSyntax> parameters,
             SemanticModel semanticModel,
             IterationMode mode,
-            SourceProductionContext context,
+            System.Action<Diagnostic> reportDiagnostic,
             string? methodName,
-            bool supportsEntityIndex,
             ParameterSyntax? aspectParam,
             ref bool isValid
         )
@@ -117,7 +126,7 @@ namespace Trecs.SourceGen.Shared
 
                 if (isRef && isIn)
                 {
-                    context.ReportDiagnostic(
+                    reportDiagnostic(
                         Diagnostic.Create(
                             DiagnosticDescriptors.InvalidParameterModifiers,
                             param.GetLocation(),
@@ -144,15 +153,69 @@ namespace Trecs.SourceGen.Shared
                         TrecsAttributeNames.PassThroughArgument,
                         TrecsNamespaces.Trecs
                     );
+                bool hasSingleEntity =
+                    paramSymbol != null
+                    && PerformanceCache.HasAttributeByName(
+                        paramSymbol,
+                        TrecsAttributeNames.SingleEntity,
+                        TrecsNamespaces.Trecs
+                    );
 
-                // NativeSetRead<T> / NativeSetWrite<T> detection — these are job-only,
+                // [SingleEntity] params are hoisted out of the loop. Validate and
+                // record before any iteration-target classification, so a [SingleEntity]
+                // aspect/component param is never mis-classified as a loop aspect/component.
+                if (hasSingleEntity)
+                {
+                    bool hasFromWorld =
+                        paramSymbol != null
+                        && PerformanceCache.HasAttributeByName(
+                            paramSymbol,
+                            TrecsAttributeNames.FromWorld,
+                            TrecsNamespaces.Trecs
+                        );
+                    if (hasFromWorld || isPassThrough)
+                    {
+                        reportDiagnostic(
+                            Diagnostic.Create(
+                                DiagnosticDescriptors.SingleEntityConflictingAttributes,
+                                param.GetLocation(),
+                                param.Identifier.Text,
+                                hasFromWorld ? "FromWorld" : "PassThroughArgument"
+                            )
+                        );
+                        isValid = false;
+                        continue;
+                    }
+
+                    var hoisted = ClassifyHoistedSingleton(
+                        param,
+                        paramType,
+                        paramSymbol!,
+                        isRef,
+                        isIn,
+                        reportDiagnostic
+                    );
+                    if (hoisted == null)
+                    {
+                        isValid = false;
+                        continue;
+                    }
+                    var hoistedIndex = result.HoistedSingletons.Count;
+                    result.HoistedSingletons.Add(hoisted);
+                    result.ParameterSlots.Add(
+                        new ParamSlot(ParamSlotKind.HoistedSingleton, hoistedIndex)
+                    );
+                    continue;
+                }
+
+                // NativeSetRead<T> / NativeSetCommandBuffer<T> detection — these are job-only,
                 // forbidden in main-thread iteration methods.
                 if (
                     !isPassThrough
                     && paramType is INamedTypeSymbol namedNativeSet
                     && (
                         namedNativeSet.Name == "NativeSetRead"
-                        || namedNativeSet.Name == "NativeSetWrite"
+                        || namedNativeSet.Name == "NativeSetCommandBuffer"
                     )
                     && namedNativeSet.TypeArguments.Length == 1
                     && PerformanceCache.GetDisplayString(namedNativeSet.ContainingNamespace)
@@ -162,7 +225,7 @@ namespace Trecs.SourceGen.Shared
                     var nativeSetTypeArg = PerformanceCache.GetDisplayString(
                         namedNativeSet.TypeArguments[0]
                     );
-                    context.ReportDiagnostic(
+                    reportDiagnostic(
                         Diagnostic.Create(
                             DiagnosticDescriptors.NativeSetNotAllowedOnMainThread,
                             param.GetLocation(),
@@ -187,7 +250,7 @@ namespace Trecs.SourceGen.Shared
                 {
                     if (isRef)
                     {
-                        context.ReportDiagnostic(
+                        reportDiagnostic(
                             Diagnostic.Create(
                                 DiagnosticDescriptors.ParameterMustBeByValue,
                                 param.GetLocation(),
@@ -226,7 +289,7 @@ namespace Trecs.SourceGen.Shared
                 {
                     if (!isIn || isRef)
                     {
-                        context.ReportDiagnostic(
+                        reportDiagnostic(
                             Diagnostic.Create(
                                 DiagnosticDescriptors.ParameterMustBeIn,
                                 param.GetLocation(),
@@ -264,7 +327,7 @@ namespace Trecs.SourceGen.Shared
                 {
                     if (!isIn || isRef)
                     {
-                        context.ReportDiagnostic(
+                        reportDiagnostic(
                             Diagnostic.Create(
                                 DiagnosticDescriptors.ParameterMustBeIn,
                                 param.GetLocation(),
@@ -295,6 +358,11 @@ namespace Trecs.SourceGen.Shared
                     "EntityIndex",
                     TrecsNamespaces.Trecs
                 );
+                bool isEntityHandle = SymbolAnalyzer.IsExactType(
+                    paramType,
+                    "EntityHandle",
+                    TrecsNamespaces.Trecs
+                );
                 bool isWorldAccessor = SymbolAnalyzer.IsExactType(
                     paramType,
                     "WorldAccessor",
@@ -303,84 +371,58 @@ namespace Trecs.SourceGen.Shared
 
                 if (!isPassThrough && isEntityIndex)
                 {
-                    if (!supportsEntityIndex)
-                    {
-                        // EntityIndex not supported in this mode — treat as unrecognized.
-                        context.ReportDiagnostic(
-                            Diagnostic.Create(
-                                DiagnosticDescriptors.UnrecognizedParameterType,
-                                param.GetLocation(),
-                                param.Identifier.Text,
-                                PerformanceCache.GetDisplayString(paramType)
-                            )
-                        );
-                        isValid = false;
-                        continue;
-                    }
+                    if (
+                        TryClassifyByValueLoopParam(
+                            param,
+                            isRef,
+                            isIn,
+                            alreadyPresent: result.HasEntityIndex,
+                            typeName: "EntityIndex",
+                            slotKind: ParamSlotKind.LoopEntityIndex,
+                            result,
+                            reportDiagnostic,
+                            ref isValid
+                        )
+                    )
+                        result.HasEntityIndex = true;
+                    continue;
+                }
 
-                    if (isRef || isIn)
-                    {
-                        context.ReportDiagnostic(
-                            Diagnostic.Create(
-                                DiagnosticDescriptors.ParameterMustBeByValue,
-                                param.GetLocation(),
-                                param.Identifier.Text
-                            )
-                        );
-                        isValid = false;
-                        continue;
-                    }
-
-                    if (result.HasEntityIndex)
-                    {
-                        context.ReportDiagnostic(
-                            Diagnostic.Create(
-                                DiagnosticDescriptors.DuplicateLoopParameter,
-                                param.GetLocation(),
-                                param.Identifier.Text,
-                                "EntityIndex"
-                            )
-                        );
-                        isValid = false;
-                        continue;
-                    }
-
-                    result.HasEntityIndex = true;
-                    result.ParameterSlots.Add(new ParamSlot(ParamSlotKind.LoopEntityIndex, 0));
+                if (!isPassThrough && isEntityHandle)
+                {
+                    if (
+                        TryClassifyByValueLoopParam(
+                            param,
+                            isRef,
+                            isIn,
+                            alreadyPresent: result.HasEntityHandle,
+                            typeName: "EntityHandle",
+                            slotKind: ParamSlotKind.LoopEntityHandle,
+                            result,
+                            reportDiagnostic,
+                            ref isValid
+                        )
+                    )
+                        result.HasEntityHandle = true;
                     continue;
                 }
 
                 if (!isPassThrough && isWorldAccessor)
                 {
-                    if (isRef || isIn)
-                    {
-                        context.ReportDiagnostic(
-                            Diagnostic.Create(
-                                DiagnosticDescriptors.ParameterMustBeByValue,
-                                param.GetLocation(),
-                                param.Identifier.Text
-                            )
-                        );
-                        isValid = false;
-                        continue;
-                    }
-
-                    if (result.HasWorldAccessor)
-                    {
-                        context.ReportDiagnostic(
-                            Diagnostic.Create(
-                                DiagnosticDescriptors.DuplicateLoopParameter,
-                                param.GetLocation(),
-                                param.Identifier.Text,
-                                "WorldAccessor"
-                            )
-                        );
-                        isValid = false;
-                        continue;
-                    }
-
-                    result.HasWorldAccessor = true;
-                    result.ParameterSlots.Add(new ParamSlot(ParamSlotKind.LoopWorldAccessor, 0));
+                    if (
+                        TryClassifyByValueLoopParam(
+                            param,
+                            isRef,
+                            isIn,
+                            alreadyPresent: result.HasWorldAccessor,
+                            typeName: "WorldAccessor",
+                            slotKind: ParamSlotKind.LoopWorldAccessor,
+                            result,
+                            reportDiagnostic,
+                            ref isValid
+                        )
+                    )
+                        result.HasWorldAccessor = true;
                     continue;
                 }
 
@@ -392,7 +434,7 @@ namespace Trecs.SourceGen.Shared
                     // Component mode: accept IEntityComponent params with in/ref modifier.
                     if (!isRef && !isIn)
                     {
-                        context.ReportDiagnostic(
+                        reportDiagnostic(
                             Diagnostic.Create(
                                 DiagnosticDescriptors.ComponentParameterMustBeInOrRef,
                                 param.GetLocation(),
@@ -417,7 +459,7 @@ namespace Trecs.SourceGen.Shared
                 {
                     // Aspect mode: IEntityComponent params are not valid — the aspect
                     // already declares the components. Report the specific error.
-                    context.ReportDiagnostic(
+                    reportDiagnostic(
                         Diagnostic.Create(
                             DiagnosticDescriptors.MixedAspectAndComponentParams,
                             param.GetLocation(),
@@ -433,7 +475,7 @@ namespace Trecs.SourceGen.Shared
                 // Unrecognized type without [PassThroughArgument] — report error.
                 if (!isPassThrough)
                 {
-                    context.ReportDiagnostic(
+                    reportDiagnostic(
                         Diagnostic.Create(
                             DiagnosticDescriptors.UnrecognizedParameterType,
                             param.GetLocation(),
@@ -454,6 +496,169 @@ namespace Trecs.SourceGen.Shared
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Validates and records a by-value loop parameter (no <c>ref</c> / <c>in</c>,
+        /// at most one per method). Used by every entity-shaped slot
+        /// (<c>EntityIndex</c> / <c>EntityHandle</c> /
+        /// <c>WorldAccessor</c>) since they share the same shape: validate
+        /// modifiers, reject duplicates, register a <see cref="ParamSlot"/>.
+        /// Returns <c>true</c> if the slot was successfully registered (caller
+        /// should set its <c>HasXxx</c> flag); <c>false</c> if validation failed
+        /// (caller should not set the flag, but may still <c>continue</c> — the
+        /// diagnostic has already been reported and <paramref name="isValid"/>
+        /// flipped to <c>false</c>).
+        /// </summary>
+        private static bool TryClassifyByValueLoopParam(
+            ParameterSyntax param,
+            bool isRef,
+            bool isIn,
+            bool alreadyPresent,
+            string typeName,
+            ParamSlotKind slotKind,
+            ClassifiedParameters result,
+            System.Action<Diagnostic> reportDiagnostic,
+            ref bool isValid
+        )
+        {
+            if (isRef || isIn)
+            {
+                reportDiagnostic(
+                    Diagnostic.Create(
+                        DiagnosticDescriptors.ParameterMustBeByValue,
+                        param.GetLocation(),
+                        param.Identifier.Text
+                    )
+                );
+                isValid = false;
+                return false;
+            }
+
+            if (alreadyPresent)
+            {
+                reportDiagnostic(
+                    Diagnostic.Create(
+                        DiagnosticDescriptors.DuplicateLoopParameter,
+                        param.GetLocation(),
+                        param.Identifier.Text,
+                        typeName
+                    )
+                );
+                isValid = false;
+                return false;
+            }
+
+            result.ParameterSlots.Add(new ParamSlot(slotKind, 0));
+            return true;
+        }
+
+        /// <summary>
+        /// Classifies a parameter marked <c>[SingleEntity]</c>. Validates type
+        /// (TRECS112), modifier (TRECS113), inline tags (TRECS114), and parses
+        /// the aspect's read/write component types when applicable. Returns
+        /// <c>null</c> on any validation failure (with diagnostics already reported).
+        /// <para>
+        /// Exposed as <c>internal</c> so generators that do their own parameter
+        /// walk (e.g. RunOnceGenerator) can route singleton classification through
+        /// the same code path as the iteration-style generators.
+        /// </para>
+        /// </summary>
+        internal static HoistedSingletonInfo? ClassifyHoistedSingleton(
+            ParameterSyntax param,
+            ITypeSymbol paramType,
+            IParameterSymbol paramSymbol,
+            bool isRef,
+            bool isIn,
+            System.Action<Diagnostic> reportDiagnostic
+        )
+        {
+            var tagTypes = InlineTagsParser.ParseFromSymbol(
+                paramSymbol,
+                "SingleEntity",
+                param.GetLocation(),
+                param.Identifier.Text,
+                reportDiagnostic
+            );
+            if (tagTypes == null)
+                return null;
+            if (tagTypes.Count == 0)
+            {
+                reportDiagnostic(
+                    Diagnostic.Create(
+                        DiagnosticDescriptors.SingleEntityRequiresInlineTags,
+                        param.GetLocation(),
+                        param.Identifier.Text
+                    )
+                );
+                return null;
+            }
+
+            bool isAspect = SymbolAnalyzer.ImplementsInterface(
+                paramType,
+                "IAspect",
+                TrecsNamespaces.Trecs
+            );
+            bool isComponent = paramType.AllInterfaces.Any(i => i.Name == "IEntityComponent");
+            if (!isAspect && !isComponent)
+            {
+                reportDiagnostic(
+                    Diagnostic.Create(
+                        DiagnosticDescriptors.SingleEntityWrongType,
+                        param.GetLocation(),
+                        param.Identifier.Text,
+                        PerformanceCache.GetDisplayString(paramType)
+                    )
+                );
+                return null;
+            }
+
+            if (isAspect)
+            {
+                if (!isIn || isRef)
+                {
+                    reportDiagnostic(
+                        Diagnostic.Create(
+                            DiagnosticDescriptors.SingleEntityWrongModifier,
+                            param.GetLocation(),
+                            param.Identifier.Text
+                        )
+                    );
+                    return null;
+                }
+                if (paramType is not INamedTypeSymbol aspectType)
+                    return null;
+                var aspectData = AspectAttributeParser.ParseAspectData(aspectType);
+                return new HoistedSingletonInfo(
+                    paramName: param.Identifier.ToString(),
+                    isAspect: true,
+                    tagTypes: tagTypes,
+                    aspectTypeDisplay: PerformanceCache.GetDisplayString(paramType),
+                    aspectData: aspectData,
+                    aspectTypeSymbol: paramType
+                );
+            }
+
+            // Component-typed singleton.
+            if (!isIn && !isRef)
+            {
+                reportDiagnostic(
+                    Diagnostic.Create(
+                        DiagnosticDescriptors.SingleEntityWrongModifier,
+                        param.GetLocation(),
+                        param.Identifier.Text
+                    )
+                );
+                return null;
+            }
+            return new HoistedSingletonInfo(
+                paramName: param.Identifier.ToString(),
+                isAspect: false,
+                tagTypes: tagTypes,
+                componentTypeDisplay: PerformanceCache.GetDisplayString(paramType),
+                componentTypeSymbol: paramType,
+                isRef: isRef
+            );
         }
     }
 }

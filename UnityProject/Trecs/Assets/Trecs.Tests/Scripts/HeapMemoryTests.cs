@@ -17,7 +17,7 @@ namespace Trecs.Tests
         [Test]
         public void UniquePtr_Alloc_IsValid()
         {
-            var heap = new UniqueHeap(null);
+            var heap = new UniqueHeap(TrecsLog.Default, null);
             var ptr = heap.AllocUnique(new TestHeapObject { Value = 42 });
 
             NAssert.IsFalse(ptr.Handle.IsNull);
@@ -29,7 +29,7 @@ namespace Trecs.Tests
         [Test]
         public void UniquePtr_GetEntry_ReturnsCorrectValue()
         {
-            var heap = new UniqueHeap(null);
+            var heap = new UniqueHeap(TrecsLog.Default, null);
             var ptr = heap.AllocUnique(new TestHeapObject { Value = 99 });
 
             var resolved = heap.GetEntry<TestHeapObject>(ptr.Handle.Value);
@@ -41,7 +41,7 @@ namespace Trecs.Tests
         [Test]
         public void UniquePtr_DisposeEntry_ReducesCount()
         {
-            var heap = new UniqueHeap(null);
+            var heap = new UniqueHeap(TrecsLog.Default, null);
             var ptr = heap.AllocUnique(new TestHeapObject { Value = 1 });
 
             NAssert.AreEqual(1, heap.NumEntries);
@@ -56,7 +56,7 @@ namespace Trecs.Tests
         [Test]
         public void UniquePtr_MultipleAllocs_IndependentHandles()
         {
-            var heap = new UniqueHeap(null);
+            var heap = new UniqueHeap(TrecsLog.Default, null);
             var ptr1 = heap.AllocUnique(new TestHeapObject { Value = 10 });
             var ptr2 = heap.AllocUnique(new TestHeapObject { Value = 20 });
 
@@ -72,7 +72,7 @@ namespace Trecs.Tests
         [Test]
         public void UniquePtr_DisposeOne_OtherStillValid()
         {
-            var heap = new UniqueHeap(null);
+            var heap = new UniqueHeap(TrecsLog.Default, null);
             var ptr1 = heap.AllocUnique(new TestHeapObject { Value = 10 });
             var ptr2 = heap.AllocUnique(new TestHeapObject { Value = 20 });
 
@@ -92,12 +92,16 @@ namespace Trecs.Tests
         public void SharedPtr_AllocAndResolve_ViaWorld()
         {
             using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
-            var heap = env.Accessor.Heap;
+            var world = env.Accessor;
 
-            var ptr = heap.AllocShared(new TestHeapObject { Value = 55 });
+            var ptr = SharedPtr.Alloc(
+                world,
+                BlobIdGenerator.FromKey(1),
+                new TestHeapObject { Value = 55 }
+            );
             NAssert.IsFalse(ptr.Handle.IsNull);
 
-            var sharedHeap = heap.SharedHeap;
+            var sharedHeap = world.SharedHeap;
             var resolved = sharedHeap.GetBlob<TestHeapObject>(ptr.Handle);
             NAssert.AreEqual(55, resolved.Value);
         }
@@ -106,10 +110,14 @@ namespace Trecs.Tests
         public void SharedPtr_DisposeHandle_FreesBlob()
         {
             using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
-            var heap = env.Accessor.Heap;
+            var world = env.Accessor;
 
-            var ptr = heap.AllocShared(new TestHeapObject { Value = 33 });
-            var sharedHeap = heap.SharedHeap;
+            var ptr = SharedPtr.Alloc(
+                world,
+                BlobIdGenerator.FromKey(1),
+                new TestHeapObject { Value = 33 }
+            );
+            var sharedHeap = world.SharedHeap;
 
             NAssert.IsTrue(sharedHeap.CanGetBlob(ptr.Handle));
 
@@ -122,14 +130,22 @@ namespace Trecs.Tests
         public void SharedPtr_MultipleAllocs_Independent()
         {
             using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
-            var heap = env.Accessor.Heap;
+            var world = env.Accessor;
 
-            var ptr1 = heap.AllocShared(new TestHeapObject { Value = 10 });
-            var ptr2 = heap.AllocShared(new TestHeapObject { Value = 20 });
+            var ptr1 = SharedPtr.Alloc(
+                world,
+                BlobIdGenerator.FromKey(1),
+                new TestHeapObject { Value = 10 }
+            );
+            var ptr2 = SharedPtr.Alloc(
+                world,
+                BlobIdGenerator.FromKey(2),
+                new TestHeapObject { Value = 20 }
+            );
 
             NAssert.AreNotEqual(ptr1.Handle, ptr2.Handle);
 
-            var sharedHeap = heap.SharedHeap;
+            var sharedHeap = world.SharedHeap;
             NAssert.AreEqual(10, sharedHeap.GetBlob<TestHeapObject>(ptr1.Handle).Value);
             NAssert.AreEqual(20, sharedHeap.GetBlob<TestHeapObject>(ptr2.Handle).Value);
 
@@ -149,39 +165,28 @@ namespace Trecs.Tests
         public void NativeSharedPtr_Alloc_HasValidBlobId()
         {
             using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
-            var heap = env.Accessor.Heap;
+            var world = env.Accessor;
 
             var data = 42;
-            var ptr = heap.AllocNativeShared(in data);
+            var ptr = NativeSharedPtr.Alloc(world, BlobIdGenerator.FromKey(1), in data);
 
-            NAssert.IsFalse(ptr.BlobId.IsNull, "NativeSharedPtr should have a valid BlobId");
-        }
-
-        [Test]
-        public void NativeSharedPtr_TwoAllocs_DifferentBlobIds()
-        {
-            using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
-            var heap = env.Accessor.Heap;
-
-            var val1 = 100;
-            var val2 = 200;
-            var ptr1 = heap.AllocNativeShared(in val1);
-            var ptr2 = heap.AllocNativeShared(in val2);
-
-            NAssert.AreNotEqual(ptr1.BlobId, ptr2.BlobId);
+            NAssert.IsFalse(
+                ptr.GetBlobId(world).IsNull,
+                "NativeSharedPtr should have a valid BlobId"
+            );
         }
 
         [Test]
         public void NativeSharedPtr_ExplicitBlobId_AllocsToSameId()
         {
             using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
-            var heap = env.Accessor.Heap;
+            var world = env.Accessor;
 
             var blobId = new BlobId(99999);
             var data = 123;
-            var ptr = heap.AllocNativeShared(blobId, in data);
+            var ptr = NativeSharedPtr.Alloc(world, blobId, in data);
 
-            NAssert.AreEqual(blobId, ptr.BlobId);
+            NAssert.AreEqual(blobId, ptr.GetBlobId(world));
         }
 
         #endregion

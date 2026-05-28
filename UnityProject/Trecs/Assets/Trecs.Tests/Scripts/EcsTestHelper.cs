@@ -1,4 +1,5 @@
 using System;
+using Trecs.Internal;
 
 namespace Trecs.Tests
 {
@@ -7,7 +8,8 @@ namespace Trecs.Tests
         public World World;
 
         WorldAccessor _accessor;
-        public WorldAccessor Accessor => _accessor ??= World.CreateAccessor();
+        public WorldAccessor Accessor =>
+            _accessor ??= World.CreateAccessor(AccessorRole.Unrestricted);
 
         public TestEnvironment(World world)
         {
@@ -16,7 +18,33 @@ namespace Trecs.Tests
 
         public void Dispose()
         {
-            World.Dispose();
+            if (!World.IsDisposed)
+            {
+                World.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Advances <paramref name="frames"/> fixed-update frames in lockstep.
+        /// Decouples from Unity's non-deterministic <c>Time.deltaTime</c> in EditMode
+        /// by pausing fixed update and explicitly stepping one frame per iteration.
+        /// The leading Tick+LateTick gives variable-update systems one cycle to
+        /// settle before the first stepped fixed frame.
+        /// </summary>
+        public void StepFixedFrames(int frames)
+        {
+            var runner = World.GetSystemRunner();
+            runner.FixedIsPaused = true;
+
+            World.Tick();
+            World.LateTick();
+
+            for (int i = 0; i < frames; i++)
+            {
+                runner.StepFixedFrame();
+                World.Tick();
+                World.LateTick();
+            }
         }
     }
 
@@ -24,10 +52,7 @@ namespace Trecs.Tests
     {
         public static BlobStoreInMemory CreateBlobStore()
         {
-            return new BlobStoreInMemory(
-                new BlobStoreInMemorySettings { MaxMemoryCacheMb = 100 },
-                null
-            );
+            return new BlobStoreInMemory(BlobStoreInMemorySettings.Default, null);
         }
 
         public static TestEnvironment CreateEnvironment(params Template[] templates)
@@ -80,12 +105,12 @@ namespace Trecs.Tests
 
             var builder = new WorldBuilder()
                 .SetSettings(settings)
-                .AddEntityType(globalsTemplate)
+                .AddTemplate(globalsTemplate)
                 .AddBlobStore(CreateBlobStore());
 
             foreach (var template in templates)
             {
-                builder.AddEntityType(template);
+                builder.AddTemplate(template);
             }
 
             configure?.Invoke(builder);

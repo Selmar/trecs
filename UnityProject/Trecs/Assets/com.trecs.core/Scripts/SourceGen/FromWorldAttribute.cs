@@ -39,7 +39,7 @@ namespace Trecs
     /// <see cref="NativeComponentLookupWrite{T}"/></term>
     /// <description><see cref="TagSet"/> — may resolve to multiple groups;
     /// each contributes a per-group dependency.</description></item>
-    /// <item><term><c>NativeSetWrite&lt;TSet&gt;</c></term>
+    /// <item><term><c>NativeSetCommandBuffer&lt;TSet&gt;</c></term>
     /// <description>(no extra parameter — the set type is on the field's
     /// generic argument).</description></item>
     /// <item><term><c>NativeSetRead&lt;TSet&gt;</c></term>
@@ -50,7 +50,7 @@ namespace Trecs
     /// <item><term><see cref="NativeWorldAccessor"/></term>
     /// <description>(no extra parameter — wired via
     /// <c>world.ToNative()</c>). Tags are not supported.</description></item>
-    /// <item><term><see cref="Group"/></term>
+    /// <item><term><see cref="GroupIndex"/></term>
     /// <description><see cref="TagSet"/> — must resolve to exactly one
     /// group via <c>GetSingleGroupWithTags</c>.</description></item>
     /// </list>
@@ -69,7 +69,7 @@ namespace Trecs
     /// partial struct ScatterJob
     /// {
     ///     [ReadOnly]
-    ///     [FromWorld(Tag = typeof(FrenzyTags.Fish))]
+    ///     [FromWorld(typeof(FrenzyTags.Fish))]
     ///     public NativeComponentBufferRead&lt;CPosition&gt; FishPositions;
     ///
     ///     public void Execute(int i) { /* ... */ }
@@ -90,7 +90,7 @@ namespace Trecs
     ///     [FromWorld]
     ///     public NativeComponentLookupRead&lt;CPosition&gt; AllPositions;
     ///
-    ///     [ForEachEntity(Tag = typeof(FrenzyTags.Fish))]
+    ///     [ForEachEntity(typeof(FrenzyTags.Fish))]
     ///     void Execute(in Fish fish) { /* ... */ }
     /// }
     ///
@@ -120,6 +120,17 @@ namespace Trecs
         public FromWorldAttribute()
         {
             Tags = Array.Empty<Type>();
+        }
+
+        /// <summary>
+        /// Shorthand: <c>[FromWorld(typeof(MyTag))]</c> /
+        /// <c>[FromWorld(typeof(A), typeof(B))]</c>. Equivalent to setting
+        /// <see cref="Tags"/>. Cannot be combined with the named <see cref="Tag"/>
+        /// / <see cref="Tags"/> properties.
+        /// </summary>
+        public FromWorldAttribute(params Type[] tags)
+        {
+            Tags = tags ?? Array.Empty<Type>();
         }
     }
 }

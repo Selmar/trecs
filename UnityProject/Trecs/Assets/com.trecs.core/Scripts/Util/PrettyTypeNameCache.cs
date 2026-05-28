@@ -8,7 +8,7 @@ namespace Trecs.Internal
     /// Provides functionality to generate human-readable type names with proper generic
     /// and nested type formatting.
     /// </summary>
-    public static class PrettyTypeNameCache
+    internal static class PrettyTypeNameCache
     {
         // Cache to avoid redundant formatting operations
         private static readonly Dictionary<Type, string> _formattedTypeNames = new();
@@ -68,7 +68,17 @@ namespace Trecs.Internal
         /// <returns>A formatted, human-readable type name</returns>
         public static string GetPrettyName(this Type type)
         {
-            Assert.IsNotNull(type);
+            TrecsDebugAssert.IsNotNull(type);
+            // The backing Dictionary<Type, string> has no synchronization. Callers
+            // should only reach this from main-thread code: Burst-compiled jobs
+            // never reach here because the [BurstDiscard] throw helpers short-
+            // circuit before CustomFormatter's Type-formatting path runs. A
+            // non-Burst job reaching here is already a misuse worth surfacing
+            // loudly instead of silently racing on the cache.
+            TrecsDebugAssert.That(
+                UnityThreadHelper.IsMainThread,
+                "PrettyTypeNameCache is main-thread only"
+            );
 
             // Return from cache if available
             if (_formattedTypeNames.TryGetValue(type, out string prettyName))

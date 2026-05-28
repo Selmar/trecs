@@ -1,7 +1,6 @@
 using System;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using Trecs.Collections;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 
@@ -11,7 +10,7 @@ namespace Trecs.Internal
     {
         internal static EntityIndexMapper<T> ToEntityIndexMapper<T>(
             this IComponentArray<T> dic,
-            Group groupStructId
+            GroupIndex groupStructId
         )
             where T : unmanaged, IEntityComponent
         {
@@ -41,11 +40,13 @@ namespace Trecs.Internal
             get => _count;
         }
 
+        public Type ComponentType => typeof(TValue);
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public NativeBuffer<TValue> GetValues(out int count)
         {
             count = _count;
-            return new NativeBuffer<TValue>(_values);
+            return NativeBuffer<TValue>.FromNativeList(_values);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -109,54 +110,28 @@ namespace Trecs.Internal
             _count = count;
         }
 
-        internal void ForceSetCount(int count)
-        {
-            _count = count;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void ReorderRange(int startIndex, int count, NativeList<int> permutation)
-        {
-            if (count <= 1)
-            {
-                return;
-            }
-
-            unsafe
-            {
-                var elementSize = UnsafeUtility.SizeOf<TValue>();
-                var ptr = (byte*)_values.GetUnsafePtr();
-                var rangePtr = ptr + startIndex * elementSize;
-
-                // Copy the range to a temp buffer
-                var temp = new NativeArray<TValue>(
-                    count,
-                    Allocator.Temp,
-                    NativeArrayOptions.UninitializedMemory
-                );
-                UnsafeUtility.MemCpy(temp.GetUnsafePtr(), rangePtr, count * elementSize);
-
-                // Scatter-write from temp back using permutation
-                var tempPtr = (byte*)temp.GetUnsafeReadOnlyPtr();
-                for (int i = 0; i < count; i++)
-                {
-                    UnsafeUtility.MemCpy(
-                        rangePtr + i * elementSize,
-                        tempPtr + permutation[i] * elementSize,
-                        elementSize
-                    );
-                }
-
-                temp.Dispose();
-            }
-        }
-
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void EnsureCapacity(int size)
         {
             if (size > _values.Length)
             {
                 _values.Resize(size, NativeArrayOptions.UninitializedMemory);
+            }
+        }
+
+        public void ResetToDefaultValuesWithCount(int count)
+        {
+            _values.Resize(count, NativeArrayOptions.UninitializedMemory);
+            _count = count;
+            if (count > 0)
+            {
+                unsafe
+                {
+                    UnsafeUtility.MemClear(
+                        _values.GetUnsafePtr(),
+                        UnsafeUtility.SizeOf<TValue>() * count
+                    );
+                }
             }
         }
 
@@ -168,11 +143,8 @@ namespace Trecs.Internal
             GC.SuppressFinalize(this);
         }
 
-        /// *********************************
-        /// the following methods are executed during the submission of entities
-        /// *********************************
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void AddEntitiesToDictionary(IComponentArray toDictionary, Group groupId)
+        public void AddEntitiesToDictionary(IComponentArray toDictionary, GroupIndex groupId)
         {
             if (_count == 0)
             {
@@ -194,121 +166,6 @@ namespace Trecs.Internal
             }
 
             toDic._count = newCount;
-        }
-
-        /// <summary>
-        /// Remove entities using swap-back. Indices must be sorted descending so that
-        /// each removal's swap-back only affects positions above the next removal index,
-        /// eliminating the need for transitive chain resolution.
-        /// Removed values are placed at the tail of the array (past the new count)
-        /// so that remove callbacks can still access them.
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void RemoveEntitiesFromArray(FastList<int> sortedDescendingIndices)
-        {
-            var iterations = sortedDescendingIndices.Count;
-
-            for (var i = 0; i < iterations; i++)
-            {
-                var indexToRemove = sortedDescendingIndices[i];
-
-                Assert.That(
-                    indexToRemove < _count,
-                    "Removing an entity at an index that is out of range"
-                );
-
-                var lastIndex = _count - 1;
-
-                unsafe
-                {
-                    var ptr = _values.GetUnsafePtr();
-                    var removedValue = UnsafeUtility.ArrayElementAsRef<TValue>(ptr, indexToRemove);
-
-                    if (indexToRemove != lastIndex)
-                    {
-                        // Swap-back: move last element into the removed slot
-                        UnsafeUtility.ArrayElementAsRef<TValue>(ptr, indexToRemove) =
-                            UnsafeUtility.ArrayElementAsRef<TValue>(ptr, lastIndex);
-                    }
-
-                    // Place the removed value at the end so it's accessible for remove callbacks
-                    // (they iterate from count to count + numRemoved)
-                    UnsafeUtility.ArrayElementAsRef<TValue>(ptr, lastIndex) = removedValue;
-                }
-
-                _count--;
-            }
-        }
-
-        /// <summary>
-        /// Move entities from this array to the destination using swap-back.
-        /// Each MoveInfo.ResolvedFromIndex must be pre-set by the caller to the entity's
-        /// current position after accounting for prior swap-backs.
-        /// This eliminates per-component-type chain resolution.
-        /// The destination is written via direct memcpy after gathering values,
-        /// avoiding per-element Add() bounds checks.
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SwapEntitiesBetweenDictionaries(
-            in DenseDictionary<int, MoveInfo> entitiesIDsToSwap,
-            Group fromgroup,
-            Group togroup,
-            IComponentArray toComponentsDictionary
-        )
-        {
-            var toDic = (ComponentArray<TValue>)toComponentsDictionary;
-
-            var iterations = entitiesIDsToSwap.Count;
-            var entitiesToSwapInfo = entitiesIDsToSwap.UnsafeValues;
-
-            // The caller has already called EnsureCapacity on toDic.
-            // Pre-compute destination base index so we can set toIndex without calling Add().
-            var destBase = toDic._count;
-
-            unsafe
-            {
-                var srcPtr = _values.GetUnsafePtr();
-                var dstPtr = toDic._values.GetUnsafePtr();
-                var elementSize = UnsafeUtility.SizeOf<TValue>();
-
-                for (var i = 0; i < iterations; i++)
-                {
-                    ref MoveInfo swapInfo = ref entitiesToSwapInfo[i];
-                    var indexToRemove = swapInfo.ResolvedFromIndex;
-
-                    Assert.That(!togroup.IsNull, "Invalid To Group");
-                    Assert.That(
-                        indexToRemove < _count,
-                        "Swapping an entity at an index that is out of range"
-                    );
-
-                    var lastIndex = _count - 1;
-
-                    // Copy value to destination via direct pointer write
-                    UnsafeUtility.MemCpy(
-                        (byte*)dstPtr + (destBase + i) * elementSize,
-                        (byte*)srcPtr + indexToRemove * elementSize,
-                        elementSize
-                    );
-
-                    if (indexToRemove != lastIndex)
-                    {
-                        // Swap-back: move last element into the removed slot
-                        UnsafeUtility.MemCpy(
-                            (byte*)srcPtr + indexToRemove * elementSize,
-                            (byte*)srcPtr + lastIndex * elementSize,
-                            elementSize
-                        );
-                    }
-
-                    _count--;
-
-                    // Set destination index directly (sequential from destBase)
-                    swapInfo.ToIndex = destBase + i;
-                }
-            }
-
-            toDic._count = destBase + iterations;
         }
     }
 }

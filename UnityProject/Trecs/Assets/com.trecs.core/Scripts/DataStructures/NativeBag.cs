@@ -13,20 +13,27 @@ using Unity.Collections.LowLevel.Unsafe;
 namespace Trecs.Internal
 {
     /// <summary>
-    ///     Burst friendly RingBuffer on steroid:
-    ///     it can: Enqueue/Dequeue, it wraps around if there is enough space after dequeuing
-    ///     It resizes if there isn't enough space left.
-    ///     It's a "bag", you can queue and dequeue any type and mix them. Just be sure that you dequeue what you queue! No check on type
-    ///     is done.
-    ///     You can reserve a position in the queue to update it later.
-    ///     The datastructure is a struct and it's "copiable"
-    ///     I eventually decided to call it NativeBag and not NativeBag because it can also be used as
-    ///     a preallocated memory pool where any kind of T can be stored as long as T is unmanaged
+    /// Burst-friendly typeless ring-buffer queue with mixed-type Enqueue/Dequeue,
+    /// reservation slots, and growth on demand. Stored values can be any unmanaged
+    /// type — callers are responsible for dequeuing types in the same order they
+    /// were enqueued. The struct is copyable; copies share the underlying buffer.
     /// </summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
     public struct NativeBag : IDisposable
     {
-        public uint Count
+        [NoAlias]
+        [NativeDisableUnsafePtrRestriction]
+        unsafe UnsafeBlob* _queue;
+
+        readonly AllocatorManager.AllocatorHandle _allocator;
+
+        public unsafe NativeBag(AllocatorManager.AllocatorHandle allocator)
+        {
+            _allocator = allocator;
+            _queue = null;
+        }
+
+        public int Length
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get
@@ -34,12 +41,12 @@ namespace Trecs.Internal
                 unsafe
                 {
                     BasicTests();
-                    return _queue->size;
+                    return (int)_queue->size;
                 }
             }
         }
 
-        public uint capacity
+        public int Capacity
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get
@@ -47,37 +54,41 @@ namespace Trecs.Internal
                 unsafe
                 {
                     BasicTests();
-                    return _queue->capacity;
+                    return (int)_queue->capacity;
                 }
             }
         }
 
-        public static NativeBag Create()
+        public static NativeBag Create(AllocatorManager.AllocatorHandle allocator)
         {
             unsafe
             {
-                var bag = new NativeBag();
+                var bag = new NativeBag(allocator);
                 var sizeOf = Unsafe.SizeOf<UnsafeBlob>();
-                var listData = (UnsafeBlob*)UnsafeUtility.Malloc(sizeOf, 16, Allocator.Persistent);
+                var listData = (UnsafeBlob*)UnsafeUtility.Malloc(sizeOf, 16, allocator.ToAllocator);
                 UnsafeUtility.MemClear(listData, sizeOf);
+                listData->_allocator = allocator;
 
                 bag._queue = listData;
                 return bag;
             }
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool IsEmpty()
+        public bool IsEmpty
         {
-            unsafe
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get
             {
-                BasicTests();
+                unsafe
+                {
+                    BasicTests();
 
-                if (_queue == null || _queue->ptr == null)
-                    return true;
+                    if (_queue == null || _queue->ptr == null)
+                        return true;
+                }
+
+                return Length == 0;
             }
-
-            return Count == 0;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -88,7 +99,7 @@ namespace Trecs.Internal
                 BasicTests();
 
                 _queue->Dispose();
-                UnsafeUtility.Free(_queue, Allocator.Persistent);
+                UnsafeUtility.Free(_queue, _allocator.ToAllocator);
                 _queue = null;
             }
         }
@@ -164,14 +175,10 @@ namespace Trecs.Internal
         }
 
         [Conditional("ENABLE_DEBUG_CHECKS")]
-        unsafe void BasicTests()
+        readonly unsafe void BasicTests()
         {
             if (_queue == null)
-                throw new TrecsException("SimpleNativeArray: null-access");
+                throw new TrecsException("NativeBag: null-access");
         }
-
-        [NoAlias]
-        [NativeDisableUnsafePtrRestriction]
-        unsafe UnsafeBlob* _queue;
     }
 }

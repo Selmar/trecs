@@ -13,12 +13,11 @@ namespace Trecs.Tests
 
     public partial class FMTestEntity
         : ITemplate,
-            IHasTags<FMTag>,
-            IHasPartition<FMPartitionA>,
-            IHasPartition<FMPartitionB>
+            ITagged<FMTag>,
+            IPartitionedBy<FMPartitionA, FMPartitionB>
     {
-        public TestInt TestInt;
-        public TestFloat TestFloat;
+        TestInt TestInt;
+        TestFloat TestFloat;
     }
 
     // Set scoped to the FMTag (valid for both partition groups)
@@ -52,19 +51,19 @@ namespace Trecs.Tests
                 .Set(new TestFloat { Value = 1.0f })
                 .AssertComplete();
             var entityHandle = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(FMPartitionASet);
             var set = a.Set<FMSet>();
 
-            set.Write.AddImmediate(new EntityIndex(0, groupA));
-            a.SubmitEntities();
+            set.Write.Add(new EntityIndex(0, groupA));
+            a.Submit();
 
             NAssert.AreEqual(1, set.Read.Count);
 
             // Move entity to PartitionB
-            a.MoveTo(entityHandle.ToIndex(a), FMPartitionBSet);
-            a.SubmitEntities();
+            a.SetTag<FMPartitionB>(entityHandle.ToIndex(a));
+            a.Submit();
 
             // Entity should still be in the set, but now under the PartitionB group
             NAssert.AreEqual(
@@ -85,17 +84,17 @@ namespace Trecs.Tests
                 .Set(new TestFloat())
                 .AssertComplete();
             var entityHandle = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(FMPartitionASet);
             var set = a.Set<FMSet>();
 
-            set.Write.AddImmediate(new EntityIndex(0, groupA));
-            a.SubmitEntities();
+            set.Write.Add(new EntityIndex(0, groupA));
+            a.Submit();
 
             // Move to PartitionB
-            a.MoveTo(entityHandle.ToIndex(a), FMPartitionBSet);
-            a.SubmitEntities();
+            a.SetTag<FMPartitionB>(entityHandle.ToIndex(a));
+            a.Submit();
 
             // Query through set should find the entity
             int queryCount = a.Query().InSet<FMSet>().Count();
@@ -103,7 +102,7 @@ namespace Trecs.Tests
 
             // Verify data is correct
             var results = new List<int>();
-            foreach (var ei in a.Query().InSet<FMSet>().EntityIndices())
+            foreach (var ei in a.Query().InSet<FMSet>().Indices())
             {
                 results.Add(a.Component<TestInt>(ei).Read.Value);
             }
@@ -126,17 +125,17 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 20 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(FMPartitionASet);
             var set = a.Set<FMSet>();
 
-            set.Write.AddImmediate(new EntityIndex(0, groupA));
-            a.SubmitEntities();
+            set.Write.Add(new EntityIndex(0, groupA));
+            a.Submit();
 
             // Move entity 1 (NOT in set) to PartitionB
-            a.MoveTo(init1.Handle.ToIndex(a), FMPartitionBSet);
-            a.SubmitEntities();
+            a.SetTag<FMPartitionB>(init1.Handle.ToIndex(a));
+            a.Submit();
 
             // Set should still have exactly 1 entity
             NAssert.AreEqual(1, set.Read.Count);
@@ -158,31 +157,31 @@ namespace Trecs.Tests
                     .AssertComplete();
                 refs[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(FMPartitionASet);
             var set = a.Set<FMSet>();
 
             // Add entities 0, 2, 4 to set
             var write = set.Write;
-            write.AddImmediate(new EntityIndex(0, groupA));
-            write.AddImmediate(new EntityIndex(2, groupA));
-            write.AddImmediate(new EntityIndex(4, groupA));
-            a.SubmitEntities();
+            write.Add(new EntityIndex(0, groupA));
+            write.Add(new EntityIndex(2, groupA));
+            write.Add(new EntityIndex(4, groupA));
+            a.Submit();
             NAssert.AreEqual(3, set.Read.Count);
 
             // Move entities 0 and 2 (in set) plus entity 1 (not in set) to PartitionB
-            a.MoveTo(refs[0].ToIndex(a), FMPartitionBSet);
-            a.MoveTo(refs[1].ToIndex(a), FMPartitionBSet);
-            a.MoveTo(refs[2].ToIndex(a), FMPartitionBSet);
-            a.SubmitEntities();
+            a.SetTag<FMPartitionB>(refs[0].ToIndex(a));
+            a.SetTag<FMPartitionB>(refs[1].ToIndex(a));
+            a.SetTag<FMPartitionB>(refs[2].ToIndex(a));
+            a.Submit();
 
             // Set should still have 3 entities (0 and 2 moved but still tracked, 4 stayed)
             NAssert.AreEqual(3, set.Read.Count, "All 3 set entities should be tracked after moves");
 
             // Verify query through set gets correct values
             var values = new List<int>();
-            foreach (var ei in a.Query().InSet<FMSet>().EntityIndices())
+            foreach (var ei in a.Query().InSet<FMSet>().Indices())
             {
                 values.Add(a.Component<TestInt>(ei).Read.Value);
             }
@@ -212,23 +211,23 @@ namespace Trecs.Tests
                     .AssertComplete();
                 refs[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(FMPartitionASet);
             var set = a.Set<FMSet>();
 
             // Add all 3 to set
             var write = set.Write;
-            write.AddImmediate(new EntityIndex(0, groupA));
-            write.AddImmediate(new EntityIndex(1, groupA));
-            write.AddImmediate(new EntityIndex(2, groupA));
-            a.SubmitEntities();
+            write.Add(new EntityIndex(0, groupA));
+            write.Add(new EntityIndex(1, groupA));
+            write.Add(new EntityIndex(2, groupA));
+            a.Submit();
             NAssert.AreEqual(3, set.Read.Count);
 
             // Move entity 0 to PartitionB, remove entity 1
-            a.MoveTo(refs[0].ToIndex(a), FMPartitionBSet);
+            a.SetTag<FMPartitionB>(refs[0].ToIndex(a));
             a.RemoveEntity(refs[1]);
-            a.SubmitEntities();
+            a.Submit();
 
             // Entity 0: moved (still in set at new group)
             // Entity 1: removed (gone from set)
@@ -252,21 +251,21 @@ namespace Trecs.Tests
                     .AssertComplete();
                 refs[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(FMPartitionASet);
             var set = a.Set<FMSet>();
 
             // Only entity 0 and 2 in set
             var write = set.Write;
-            write.AddImmediate(new EntityIndex(0, groupA));
-            write.AddImmediate(new EntityIndex(2, groupA));
-            a.SubmitEntities();
+            write.Add(new EntityIndex(0, groupA));
+            write.Add(new EntityIndex(2, groupA));
+            a.Submit();
 
             // Remove entity 0 (in set), move entity 1 (NOT in set) to PartitionB
             a.RemoveEntity(refs[0]);
-            a.MoveTo(refs[1].ToIndex(a), FMPartitionBSet);
-            a.SubmitEntities();
+            a.SetTag<FMPartitionB>(refs[1].ToIndex(a));
+            a.Submit();
 
             // Entity 0 removed -> set loses it
             // Entity 1 moved but wasn't in set -> set unchanged for it
@@ -289,28 +288,28 @@ namespace Trecs.Tests
                 .Set(new TestFloat())
                 .AssertComplete();
             var entityHandle = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(FMPartitionASet);
             var set = a.Set<FMSet>();
 
-            set.Write.AddImmediate(new EntityIndex(0, groupA));
-            a.SubmitEntities();
+            set.Write.Add(new EntityIndex(0, groupA));
+            a.Submit();
             NAssert.AreEqual(1, set.Read.Count);
 
             // Move A -> B
-            a.MoveTo(entityHandle.ToIndex(a), FMPartitionBSet);
-            a.SubmitEntities();
+            a.SetTag<FMPartitionB>(entityHandle.ToIndex(a));
+            a.Submit();
             NAssert.AreEqual(1, set.Read.Count, "After A->B");
 
             // Move B -> A
-            a.MoveTo(entityHandle.ToIndex(a), FMPartitionASet);
-            a.SubmitEntities();
+            a.SetTag<FMPartitionA>(entityHandle.ToIndex(a));
+            a.Submit();
             NAssert.AreEqual(1, set.Read.Count, "After B->A");
 
             // Move A -> B again
-            a.MoveTo(entityHandle.ToIndex(a), FMPartitionBSet);
-            a.SubmitEntities();
+            a.SetTag<FMPartitionB>(entityHandle.ToIndex(a));
+            a.Submit();
             NAssert.AreEqual(1, set.Read.Count, "After A->B again");
 
             // Verify data is still correct

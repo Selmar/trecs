@@ -1,14 +1,14 @@
 # 12 — Feeding Frenzy Benchmark
 
-A performance benchmark that implements the same gameplay using three different ECS architectures and nine iteration styles. Useful for understanding performance trade-offs.
+A performance benchmark — the same gameplay implemented across three ECS architectures and nine iteration styles.
 
-**Source:** `Samples/12_FeedingFrenzyBenchmark/`
+**Source:** `com.trecs.core/Samples~/Tutorials/12_FeedingFrenzyBenchmark/`
 
-## What It Does
+## What it does
 
-The same fish-eating-meals simulation as [07 — Feeding Frenzy](07-feeding-frenzy.md), but implemented three different ways. You can switch approaches and iteration styles at runtime to compare performance with up to 200,000+ entities.
+The fish-eating-meals simulation from [07 — Feeding Frenzy](07-feeding-frenzy.md), implemented three ways. Switch approaches and iteration styles at runtime to compare performance. Default presets span 5,000 to 1,000,000 fish plus a configurable ratio of meals.
 
-## Three Approaches
+## Three approaches
 
 ### Branching
 
@@ -26,33 +26,33 @@ else
 }
 ```
 
-**Trade-off:** Simple code, but iterates entities that don't need processing.
+**Trade-off:** Simplest code, but iterates entities that don't need processing.
 
 ### Sets
 
 Uses `IEntitySet` for membership tracking. Systems filter by set:
 
 ```csharp
-[ForEachEntity(Tag = typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.NotEating))]
+[ForEachEntity(typeof(FrenzyTags.Fish), Set = typeof(FrenzySets.NotEating))]
 void IdleBob(in Fish fish) { ... }
 ```
 
-**Trade-off:** Only visits relevant entities. No group changes when membership changes. Sparse iteration.
+**Trade-off:** Visits only relevant entities. No data movement on membership flips. Sparse iteration.
 
 ### Partitions
 
-Uses `IHasPartition` for group separation:
+Uses `IPartitionedBy` for partition separation:
 
 ```csharp
-[ForEachEntity(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+[ForEachEntity(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
 void IdleBob(in Fish fish) { ... }
 ```
 
-**Trade-off:** Dense, cache-friendly iteration. But partition changes copy component data between groups.
+**Trade-off:** Dense, cache-friendly iteration. Partition changes copy component data to the new partition's buffers.
 
-## Nine Iteration Styles
+## Nine iteration styles
 
-Each approach is tested with multiple iteration patterns:
+Each approach is tested with several iteration patterns:
 
 | Style | Description |
 |-------|-------------|
@@ -66,7 +66,7 @@ Each approach is tested with multiple iteration patterns:
 | WrapAsJobAspect | Static `[WrapAsJob]` method with aspect |
 | WrapAsJobComponents | Static `[WrapAsJob]` method with components |
 
-## Runtime Controls
+## Runtime controls
 
 | Key | Action |
 |-----|--------|
@@ -74,30 +74,30 @@ Each approach is tested with multiple iteration patterns:
 | Tab / Shift+Tab | Cycle iteration style |
 | Up / Down | Adjust entity count preset |
 
-The display shows real-time performance stats: simulation Hz, FPS, entity count, and memory usage.
+The display shows simulation Hz, FPS, entity count, and memory usage in real time.
 
-## Fish Count Presets
+## Fish count presets
 
-Logarithmically spaced from 5,000 to 1,000,000 entities for testing at different scales.
+Logarithmically spaced from 5,000 to 1,000,000 fish (with proportional meals) for testing at different scales. The min/max are configurable in the scene's `SampleSettings.Common`.
 
-## Key Implementation Details
+## Key implementation details
 
-### Population Management
+### Population management
 
-Fish and meal counts smoothly lerp toward the desired preset. The spawning system prioritizes removing idle entities first to minimize disruption.
+Fish and meal counts lerp toward the desired preset. The spawner removes idle entities first to minimize disruption.
 
-### GPU Rendering
+### GPU rendering
 
-At high entity counts, the `RendererSystem` uses GPU-instanced indirect rendering. A Burst job marshals Position, Rotation, Scale, and Color from ECS components to GPU instance buffers each frame.
+At high entity counts, `RendererSystem` uses GPU-instanced indirect rendering. A Burst job marshals Position, Rotation, Scale, and Color from ECS components into GPU instance buffers each frame.
 
-### Bidirectional Entity References
+### Bidirectional entity references
 
-Fish ↔ Meal pairing uses `EntityHandle` cross-references with cleanup handlers to prevent dangling references when either entity is removed.
+Fish ↔ Meal pairing uses `EntityHandle` cross-references with cleanup handlers, preventing dangling references when either entity is removed.
 
-## What to Learn from This Sample
+## Concepts introduced
 
 - **Partitions are fastest for dense iteration** — entities are contiguous in memory
-- **Sets avoid group explosion** — no combinatorial blowup with multiple dimensions
+- **Sets avoid storage fragmentation** — no combinatorial blowup across dimensions
 - **Branching is simplest but slowest** — iterates everything, branches per entity
 - **Jobs provide the biggest speedup** — Burst + parallel iteration scales with core count
 - **Source generation produces efficient code** — `[ForEachEntity]` and `[WrapAsJob]` generate tight loops comparable to hand-written jobs

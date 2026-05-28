@@ -26,6 +26,12 @@ namespace Trecs.Samples.Sets
             float waveCenterX = math.sin(World.ElapsedTime * _settings.WaveXSpeed) * _gridExtent;
             float waveCenterZ = math.cos(World.ElapsedTime * _settings.WaveZSpeed) * _gridExtent;
 
+            var waveXSet = World.Set<SampleSets.WaveX>().Write;
+            waveXSet.Clear();
+
+            var waveZSet = World.Set<SampleSets.WaveZ>().Write;
+            waveZSet.Clear();
+
             foreach (var particle in ParticleView.Query(World).WithTags<SampleTags.Particle>())
             {
                 // Reset intensities — downstream effect systems will overwrite
@@ -36,15 +42,17 @@ namespace Trecs.Samples.Sets
                 float distX = math.abs(particle.Position.x - waveCenterX);
                 float distZ = math.abs(particle.Position.z - waveCenterZ);
 
+                var handle = particle.Handle(World);
+
                 if (distX < _settings.WaveBandWidth)
-                    World.SetAdd<SampleSets.WaveX>(particle.EntityIndex);
-                else
-                    World.SetRemove<SampleSets.WaveX>(particle.EntityIndex);
+                {
+                    waveXSet.Add(handle);
+                }
 
                 if (distZ < _settings.WaveBandWidth)
-                    World.SetAdd<SampleSets.WaveZ>(particle.EntityIndex);
-                else
-                    World.SetRemove<SampleSets.WaveZ>(particle.EntityIndex);
+                {
+                    waveZSet.Add(handle);
+                }
             }
         }
 

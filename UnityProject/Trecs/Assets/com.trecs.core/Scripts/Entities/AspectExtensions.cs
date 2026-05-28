@@ -4,24 +4,31 @@ namespace Trecs
 {
     public static class AspectExtensions
     {
+        /// <summary>
+        /// Resolves this aspect's transient entity index to a stable <see cref="EntityHandle"/>.
+        /// Use when storing a reference to this entity in another component or across frames.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static EntityHandle Handle<TAspect>(this TAspect aspect, WorldAccessor world)
+            where TAspect : struct, IAspect => aspect.EntityIndex.ToHandle(world);
+
+        /// <summary>
+        /// Resolves this aspect's transient entity index to a stable <see cref="EntityHandle"/>
+        /// from inside a Burst-compiled job using a <see cref="NativeWorldAccessor"/>.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static EntityHandle Handle<TAspect>(
+            this TAspect aspect,
+            in NativeWorldAccessor world
+        )
+            where TAspect : struct, IAspect => aspect.EntityIndex.ToHandle(world);
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Remove<TAspect>(this TAspect aspect, WorldAccessor world)
-            where TAspect : struct, IAspect => world.RemoveEntity(aspect.EntityIndex);
+            where TAspect : struct, IAspect => aspect.EntityIndex.Remove(world);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Remove<TAspect>(this TAspect aspect, in NativeWorldAccessor world)
-            where TAspect : struct, IAspect => world.RemoveEntity(aspect.EntityIndex);
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void MoveTo<TAspect>(this TAspect aspect, WorldAccessor world, TagSet tags)
-            where TAspect : struct, IAspect => world.MoveTo(aspect.EntityIndex, tags);
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void MoveTo<TAspect>(
-            this TAspect aspect,
-            in NativeWorldAccessor world,
-            TagSet tags
-        )
-            where TAspect : struct, IAspect => world.MoveTo(aspect.EntityIndex, tags);
+            where TAspect : struct, IAspect => aspect.EntityIndex.Remove(world);
     }
 }

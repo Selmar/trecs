@@ -1,0 +1,131 @@
+# OOP Integration
+
+Trecs is a pure ECS framework, but Unity games need GameObjects, MonoBehaviours, and other managed objects. A three-layer architecture bridges ECS and non-ECS code cleanly.
+
+## The three layers
+
+```
+┌─────────────────────────────────────────┐
+│  Layer 1: Non-ECS → ECS (Input)         │
+│  MonoBehaviours, services, Unity APIs   │
+│  → Queues input into ECS                │
+└─────────────┬───────────────────────────┘
+              │ AddInput()
+┌─────────────▼───────────────────────────┐
+│  Layer 2: Pure ECS (Simulation)         │
+│  Systems, components, templates         │
+│  No Unity APIs, fully deterministic     │
+└─────────────┬───────────────────────────┘
+              │ Read components
+┌─────────────▼───────────────────────────┐
+│  Layer 3: ECS → Non-ECS (Output)        │
+│  Sync transforms, spawn GameObjects     │
+│  Presentation-phase systems             │
+└─────────────────────────────────────────┘
+```
+
+## Layer 1: input bridge
+
+An input-phase ECS system reads player input and queues it into the world. Funneling external state through `AddInput` means the framework can record and replay the same input data deterministically:
+
+```csharp
+[ExecuteIn(SystemPhase.Input)]
+public partial class PlayerInputSystem : ISystem
+{
+    readonly EntityHandle _player;
+
+    public PlayerInputSystem(EntityHandle player) => _player = player;
+
+    public void Execute()
+    {
+        var dir = new float2(Input.GetAxis("Horizontal"), Input.GetAxis("Vertical"));
+        _player.AddInput(World, new MoveInput { Direction = dir });
+    }
+}
+```
+
+`Input`-phase systems are the only place [`AddInput`](../core/input-system.md) is allowed; they run just-in-time before each fixed step so the simulation reads a stable input snapshot.
+
+## Layer 2: pure ECS
+
+Simulation systems contain only ECS logic — no `GameObject`, `MonoBehaviour`, or `UnityEngine` APIs:
+
+```csharp
+public partial class MovementSystem : ISystem
+{
+    [ForEachEntity(typeof(GameTags.Player))]
+    void Execute(in PlayerView player)
+    {
+        player.Position += player.Velocity * World.DeltaTime;
+    }
+}
+```
+
+This layer is fully deterministic and can be recorded / replayed.
+
+## Layer 3: output bridge
+
+Variable-update systems sync ECS state out to GameObjects:
+
+```csharp
+[ExecuteIn(SystemPhase.Presentation)]
+public partial class GameObjectSyncSystem : ISystem
+{
+    readonly RenderableGameObjectManager _goManager;
+
+    public GameObjectSyncSystem(RenderableGameObjectManager goManager) =>
+        _goManager = goManager;
+
+    [ForEachEntity(MatchByComponents = true)]
+    void Execute(in Position pos, in Rotation rot, in GameObjectId id)
+    {
+        var go = _goManager.Resolve(id);
+        go.transform.position = (Vector3)pos.Value;
+        go.transform.rotation = rot.Value;
+    }
+}
+```
+
+`RenderableGameObjectManager` and `GameObjectId` aren't part of Trecs — they're sample-side helpers under `Common/`. Use them, copy them, or roll your own; Trecs only cares that components are unmanaged.
+
+### Spawning and despawning GameObjects
+
+Use [entity events](../entity-management/entity-events.md) with `[ForEachEntity]` to manage GameObject lifecycle reactively:
+
+```csharp
+public partial class EnemyGameObjectManager : IDisposable
+{
+    readonly RenderableGameObjectManager _goManager;
+    readonly DisposeCollection _disposables = new();
+
+    public EnemyGameObjectManager(World world, RenderableGameObjectManager goManager)
+    {
+        World = world.CreateAccessor(AccessorRole.Fixed);
+        _goManager = goManager;
+
+        World.Events.EntitiesWithTags<GameTags.Enemy>()
+            .OnRemoved(OnEnemyRemoved)
+            .AddTo(_disposables);
+    }
+
+    WorldAccessor World { get; }
+
+    [ForEachEntity]
+    void OnEnemyRemoved(in GameObjectId id)
+    {
+        var go = _goManager.Resolve(id);
+        UnityEngine.Object.Destroy(go);
+    }
+
+    public void Dispose() => _disposables.Dispose();
+}
+```
+
+The `Common/RenderableGameObjectManager.cs` in the samples is exactly this pattern, generalized over `PrefabId` so a single observer can spawn and pool GameObjects for every template that adds the `RenderableGameObject` base — no per-entity wiring required.
+
+## Why this separation matters
+
+- **Determinism** — Layer 2 has no external dependencies, enabling recording and replay.
+- **Testability** — pure ECS logic can be tested without Unity.
+- **Portability** — simulation code doesn't depend on specific rendering or input systems.
+- **Clarity** — each layer has a single responsibility.

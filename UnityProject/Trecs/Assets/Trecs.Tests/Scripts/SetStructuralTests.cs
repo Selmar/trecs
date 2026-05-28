@@ -32,22 +32,22 @@ namespace Trecs.Tests
                     .AssertComplete();
                 refs[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
 
             // Add entity 0 to set
-            set.Write.AddImmediate(new EntityIndex(0, group));
-            a.SubmitEntities();
+            set.Write.Add(new EntityIndex(0, group));
+            a.Submit();
 
             var read = set.Read;
-            NAssert.IsTrue(read.Exists(new EntityIndex(0, group)));
+            NAssert.IsTrue(read.Contains(new EntityIndex(0, group)));
             NAssert.AreEqual(1, read.Count);
 
             // Remove entity 0 - entity 2 will swap-back to index 0
             a.RemoveEntity(refs[0]);
-            a.SubmitEntities();
+            a.Submit();
 
             // After swap-back, the entity now at index 0 (formerly index 2) should NOT be in the set
             // The set should have been cleaned up
@@ -74,23 +74,23 @@ namespace Trecs.Tests
                     .AssertComplete();
                 refs[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
 
             // Add entity 0 to set
-            set.Write.AddImmediate(new EntityIndex(0, group));
-            a.SubmitEntities();
+            set.Write.Add(new EntityIndex(0, group));
+            a.Submit();
 
             // Remove entity 2 (not in set)
             a.RemoveEntity(refs[2]);
-            a.SubmitEntities();
+            a.Submit();
 
             // Set should still contain entity 0
             var read = set.Read;
             NAssert.AreEqual(1, read.Count);
-            NAssert.IsTrue(read.Exists(new EntityIndex(0, group)));
+            NAssert.IsTrue(read.Contains(new EntityIndex(0, group)));
         }
 
         [Test]
@@ -111,22 +111,22 @@ namespace Trecs.Tests
                     .AssertComplete();
                 refs[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
 
             // Add entities 0 and 2 to set
             var write = set.Write;
-            write.AddImmediate(new EntityIndex(0, group));
-            write.AddImmediate(new EntityIndex(2, group));
-            a.SubmitEntities();
+            write.Add(new EntityIndex(0, group));
+            write.Add(new EntityIndex(2, group));
+            a.Submit();
 
             NAssert.AreEqual(2, set.Read.Count);
 
             // Remove entity 0 -> entity 2 swaps to index 0
             a.RemoveEntity(refs[0]);
-            a.SubmitEntities();
+            a.Submit();
 
             // After removal + swap-back:
             // - The removed entity should no longer be in the set
@@ -152,19 +152,19 @@ namespace Trecs.Tests
                     .AssertComplete();
                 refs[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
 
             // Add entity 3 (last) to set
-            set.Write.AddImmediate(new EntityIndex(3, group));
-            a.SubmitEntities();
+            set.Write.Add(new EntityIndex(3, group));
+            a.Submit();
             NAssert.AreEqual(1, set.Read.Count);
 
             // Remove entity 1 (middle) -> entity 3 swaps to index 1
             a.RemoveEntity(refs[1]);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(3, a.CountEntitiesWithTags(Tag<QId1>.Value));
 
@@ -196,22 +196,22 @@ namespace Trecs.Tests
                     .AssertComplete();
                 refs[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
 
             // Add entities 1, 3 to set
             var write = set.Write;
-            write.AddImmediate(new EntityIndex(1, group));
-            write.AddImmediate(new EntityIndex(3, group));
-            a.SubmitEntities();
+            write.Add(new EntityIndex(1, group));
+            write.Add(new EntityIndex(3, group));
+            a.Submit();
             NAssert.AreEqual(2, set.Read.Count);
 
             // Remove both filtered entities
             a.RemoveEntity(refs[1]);
             a.RemoveEntity(refs[3]);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(3, a.CountEntitiesWithTags(Tag<QId1>.Value));
             NAssert.AreEqual(0, set.Read.Count, "All filtered entities removed");
@@ -230,20 +230,20 @@ namespace Trecs.Tests
                     .Set(new TestFloat())
                     .AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
 
             var write = set.Write;
-            write.AddImmediate(new EntityIndex(0, group));
-            write.AddImmediate(new EntityIndex(1, group));
-            write.AddImmediate(new EntityIndex(2, group));
-            a.SubmitEntities();
+            write.Add(new EntityIndex(0, group));
+            write.Add(new EntityIndex(1, group));
+            write.Add(new EntityIndex(2, group));
+            a.Submit();
 
             // Remove all entities using tag-based removal
             a.RemoveEntitiesWithTags(Tag<QId1>.Value);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(0, a.CountEntitiesWithTags(Tag<QId1>.Value));
             NAssert.AreEqual(0, set.Read.Count);
@@ -263,24 +263,24 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 10 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
 
-            set.Write.AddImmediate(new EntityIndex(0, group));
-            a.SubmitEntities();
+            set.Write.Add(new EntityIndex(0, group));
+            a.Submit();
 
             // Remove filtered entity
             a.RemoveEntity(init.Handle);
-            a.SubmitEntities();
+            a.Submit();
 
             // Add a new entity (gets index 0 since group is empty)
             a.AddEntity(Tag<QId1>.Value)
                 .Set(new TestInt { Value = 20 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             // New entity should NOT be in the set
             NAssert.AreEqual(1, a.CountEntitiesWithTags(Tag<QId1>.Value));
@@ -308,7 +308,7 @@ namespace Trecs.Tests
                     .Set(new TestFloat())
                     .AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
@@ -316,9 +316,9 @@ namespace Trecs.Tests
             // Add every other entity to set
             for (int i = 0; i < 10; i += 2)
             {
-                set.Write.AddImmediate(new EntityIndex(i, group));
+                set.Write.Add(new EntityIndex(i, group));
             }
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(5, set.Read.Count);
 
@@ -342,7 +342,7 @@ namespace Trecs.Tests
                     .AssertComplete();
                 refs[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
@@ -350,14 +350,14 @@ namespace Trecs.Tests
             // Add entities 0-4 to set
             for (int i = 0; i < 5; i++)
             {
-                set.Write.AddImmediate(new EntityIndex(i, group));
+                set.Write.Add(new EntityIndex(i, group));
             }
-            a.SubmitEntities();
+            a.Submit();
 
             // Remove entities 0 and 2 (both in set)
             a.RemoveEntity(refs[0]);
             a.RemoveEntity(refs[2]);
-            a.SubmitEntities();
+            a.Submit();
 
             // After removal + swap-backs, query through set should yield correct count
             int setCount = set.Read.Count;
@@ -385,7 +385,7 @@ namespace Trecs.Tests
                     .AssertComplete();
                 refs[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
@@ -393,9 +393,9 @@ namespace Trecs.Tests
             // Add every 3rd entity to set
             for (int i = 0; i < total; i += 3)
             {
-                set.Write.AddImmediate(new EntityIndex(i, group));
+                set.Write.Add(new EntityIndex(i, group));
             }
-            a.SubmitEntities();
+            a.Submit();
 
             int expectedCount = (total + 2) / 3; // ceiling division
             NAssert.AreEqual(expectedCount, set.Read.Count);
@@ -405,7 +405,7 @@ namespace Trecs.Tests
             {
                 a.RemoveEntity(refs[i]);
             }
-            a.SubmitEntities();
+            a.Submit();
 
             // After removals, query count should match set count
             int setCount = set.Read.Count;
@@ -433,25 +433,25 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 1 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
 
-            a.SetAdd<FiltStructSet>(new EntityIndex(0, group));
-            a.SubmitEntities();
+            a.Set<FiltStructSet>().DeferredAdd(new EntityIndex(0, group));
+            a.Submit();
 
             // Expected behavior: entity should be in set after one submit
             var read = set.Read;
             NAssert.IsTrue(
-                read.Exists(new EntityIndex(0, group)),
+                read.Contains(new EntityIndex(0, group)),
                 "Native set add should take effect in the same submission cycle"
             );
             NAssert.AreEqual(1, read.Count);
         }
 
         // NativeSetAdd_RequiresExtraSubmit_Bug — removed: bug was fixed by using
-        // AddImmediate/RemoveImmediate in FlushNativeSetQueue
+        // Add/Remove in FlushNativeSetQueue
 
         [Test]
         public void NativeSetRemove_EntityRemovedFromSet()
@@ -463,29 +463,29 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 1 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
 
-            set.Write.AddImmediate(new EntityIndex(0, group));
-            a.SubmitEntities();
+            set.Write.Add(new EntityIndex(0, group));
+            a.Submit();
             NAssert.AreEqual(1, set.Read.Count);
 
-            a.SetRemove<FiltStructSet>(new EntityIndex(0, group));
-            a.SubmitEntities();
+            a.Set<FiltStructSet>().DeferredRemove(new EntityIndex(0, group));
+            a.Submit();
 
             // Expected behavior: entity should be removed after one submit
             var read = set.Read;
             NAssert.IsFalse(
-                read.Exists(new EntityIndex(0, group)),
+                read.Contains(new EntityIndex(0, group)),
                 "Native set remove should take effect in the same submission cycle"
             );
             NAssert.AreEqual(0, read.Count);
         }
 
         // NativeSetRemove_RequiresExtraSubmit_Bug — removed: bug was fixed by using
-        // AddImmediate/RemoveImmediate in FlushNativeSetQueue
+        // Add/Remove in FlushNativeSetQueue
 
         #endregion
 
@@ -512,23 +512,23 @@ namespace Trecs.Tests
                 init.AssertComplete();
                 refs[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
 
             // Put all 3 entities in set
             var write = set.Write;
-            write.AddImmediate(new EntityIndex(0, group));
-            write.AddImmediate(new EntityIndex(1, group));
-            write.AddImmediate(new EntityIndex(2, group));
-            a.SubmitEntities();
+            write.Add(new EntityIndex(0, group));
+            write.Add(new EntityIndex(1, group));
+            write.Add(new EntityIndex(2, group));
+            a.Submit();
             NAssert.AreEqual(3, set.Read.Count);
 
             // Now: deferred remove entity 0 from set AND structural remove entity 0
-            set.Write.RemoveImmediate(new EntityIndex(0, group));
+            set.Write.Remove(new EntityIndex(0, group));
             a.RemoveEntity(refs[0]);
-            a.SubmitEntities();
+            a.Submit();
 
             // After submission:
             // - FlushAllDeferredOps removed index 0 from set
@@ -558,15 +558,15 @@ namespace Trecs.Tests
                 init.AssertComplete();
                 refs[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
 
             // Deferred add entity 1 to set, AND remove entity 0 structurally
-            set.Write.AddImmediate(new EntityIndex(1, group));
+            set.Write.Add(new EntityIndex(1, group));
             a.RemoveEntity(refs[0]);
-            a.SubmitEntities();
+            a.Submit();
 
             // After submission:
             // - FlushAllDeferredOps added index 1 to set
@@ -576,7 +576,7 @@ namespace Trecs.Tests
             var read = set.Read;
             NAssert.AreEqual(1, read.Count, "Set should have 1 entity (the one added at index 1)");
             NAssert.IsTrue(
-                read.Exists(new EntityIndex(1, group)),
+                read.Contains(new EntityIndex(1, group)),
                 "Entity at index 1 should still be in set after swap-back at index 0"
             );
         }
@@ -600,15 +600,15 @@ namespace Trecs.Tests
                 init.AssertComplete();
                 refs[i] = init.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
 
             // Deferred add entity 0 to set, AND remove entity 0 structurally
-            set.Write.AddImmediate(new EntityIndex(0, group));
+            set.Write.Add(new EntityIndex(0, group));
             a.RemoveEntity(refs[0]);
-            a.SubmitEntities();
+            a.Submit();
 
             // After submission:
             // - FlushAllDeferredOps added index 0 to set
@@ -636,24 +636,24 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 1 })
                 .Set(new TestFloat())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(Tag<QId1>.Value);
             var set = a.Set<FiltStructSet>();
 
             // Add entity to set first
-            set.Write.AddImmediate(new EntityIndex(0, group));
-            a.SubmitEntities();
-            NAssert.IsTrue(set.Read.Exists(new EntityIndex(0, group)));
+            set.Write.Add(new EntityIndex(0, group));
+            a.Submit();
+            NAssert.IsTrue(set.Read.Contains(new EntityIndex(0, group)));
 
             // Remove then re-add in same frame
             var write = set.Write;
-            write.RemoveImmediate(new EntityIndex(0, group));
-            write.AddImmediate(new EntityIndex(0, group));
-            a.SubmitEntities();
+            write.Remove(new EntityIndex(0, group));
+            write.Add(new EntityIndex(0, group));
+            a.Submit();
 
             NAssert.IsTrue(
-                set.Read.Exists(new EntityIndex(0, group)),
+                set.Read.Contains(new EntityIndex(0, group)),
                 "Entity should be in set after remove-then-add (removes processed before adds)"
             );
         }

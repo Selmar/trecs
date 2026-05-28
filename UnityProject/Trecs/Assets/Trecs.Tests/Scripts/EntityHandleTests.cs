@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Unity.Mathematics;
 using NAssert = NUnit.Framework.Assert;
 
 namespace Trecs.Tests
@@ -64,12 +65,12 @@ namespace Trecs.Tests
 
             var init = a.AddEntity(TestTags.Alpha).AssertComplete();
             var entityHandle = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             var entityIndex = entityHandle.ToIndex(a);
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
 
-            NAssert.AreEqual(group, entityIndex.Group);
+            NAssert.AreEqual(group, entityIndex.GroupIndex);
         }
 
         [Test]
@@ -80,9 +81,9 @@ namespace Trecs.Tests
 
             var init = a.AddEntity(TestTags.Alpha).AssertComplete();
             var entityHandle = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
-            NAssert.IsTrue(a.EntityExists(entityHandle));
+            NAssert.IsTrue(entityHandle.Exists(a));
         }
 
         [Test]
@@ -93,12 +94,12 @@ namespace Trecs.Tests
 
             var init = a.AddEntity(TestTags.Alpha).AssertComplete();
             var entityHandle = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             a.RemoveEntity(entityHandle);
-            a.SubmitEntities();
+            a.Submit();
 
-            NAssert.IsFalse(a.EntityExists(entityHandle));
+            NAssert.IsFalse(entityHandle.Exists(a));
         }
 
         #endregion
@@ -113,13 +114,13 @@ namespace Trecs.Tests
 
             var init = a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 11 }).AssertComplete();
             var entityHandle = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             // Add another entity
             a.AddEntity(TestTags.Alpha).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
-            NAssert.IsTrue(a.EntityExists(entityHandle));
+            NAssert.IsTrue(entityHandle.Exists(a));
             var comp = a.Component<TestInt>(entityHandle);
             NAssert.AreEqual(11, comp.Read.Value);
         }
@@ -141,14 +142,14 @@ namespace Trecs.Tests
             var entityHandle2 = init2.Handle;
 
             a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 33 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             // Remove the second entity
             a.RemoveEntity(entityHandle2);
-            a.SubmitEntities();
+            a.Submit();
 
             // First entity should still be valid
-            NAssert.IsTrue(a.EntityExists(entityHandle1));
+            NAssert.IsTrue(entityHandle1.Exists(a));
             var comp = a.Component<TestInt>(entityHandle1);
             NAssert.AreEqual(11, comp.Read.Value);
         }
@@ -164,13 +165,13 @@ namespace Trecs.Tests
 
             var init = a.AddEntity(partitionA).Set(new TestInt { Value = 42 }).AssertComplete();
             var entityHandle = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             var entityIndex = entityHandle.ToIndex(a);
-            a.MoveTo(entityIndex, partitionB);
-            a.SubmitEntities();
+            a.SetTag<TestPartitionB>(entityIndex);
+            a.Submit();
 
-            NAssert.IsTrue(a.EntityExists(entityHandle));
+            NAssert.IsTrue(entityHandle.Exists(a));
             var comp = a.Component<TestInt>(entityHandle);
             NAssert.AreEqual(42, comp.Read.Value);
         }
@@ -194,18 +195,18 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 300 })
                 .AssertComplete();
 
-            a.SubmitEntities();
+            a.Submit();
 
             var entityHandle0 = init0.Handle;
             var entityHandle2 = init2.Handle;
 
             // Remove the middle entity (triggers swap-back)
             a.RemoveEntity(init1.Handle);
-            a.SubmitEntities();
+            a.Submit();
 
             // Both remaining entity refs should still resolve to valid entity indices
-            NAssert.IsTrue(a.EntityExists(entityHandle0));
-            NAssert.IsTrue(a.EntityExists(entityHandle2));
+            NAssert.IsTrue(entityHandle0.Exists(a));
+            NAssert.IsTrue(entityHandle2.Exists(a));
 
             var comp0 = a.Component<TestInt>(entityHandle0);
             var comp2 = a.Component<TestInt>(entityHandle2);
@@ -228,7 +229,7 @@ namespace Trecs.Tests
                 .Set(new TestVec { X = 1.0f, Y = 2.0f })
                 .AssertComplete();
             var trackedRef = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             // Round 1: add 5 entities, remove 2
             var roundRefs = new EntityHandle[5];
@@ -237,13 +238,13 @@ namespace Trecs.Tests
                 var r = a.AddEntity(partitionA).Set(new TestInt { Value = i }).AssertComplete();
                 roundRefs[i] = r.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
             a.RemoveEntity(roundRefs[0]);
             a.RemoveEntity(roundRefs[2]);
-            a.SubmitEntities();
+            a.Submit();
 
             // Round 2: move tracked entity to PartitionB, add 3 more, remove 1
-            a.MoveTo(trackedRef.ToIndex(a), partitionB);
+            a.SetTag<TestPartitionB>(trackedRef.ToIndex(a));
             var round2Refs = new EntityHandle[3];
             for (int i = 0; i < 3; i++)
             {
@@ -252,19 +253,19 @@ namespace Trecs.Tests
                     .AssertComplete();
                 round2Refs[i] = r.Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
             a.RemoveEntity(round2Refs[1]);
-            a.SubmitEntities();
+            a.Submit();
 
             // Round 3: add 5 more to PartitionA
             for (int i = 0; i < 5; i++)
             {
                 a.AddEntity(partitionA).Set(new TestInt { Value = 200 + i }).AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             // Verify tracked entity ref still resolves correctly
-            NAssert.IsTrue(a.EntityExists(trackedRef), "Tracked entity should still exist");
+            NAssert.IsTrue(trackedRef.Exists(a), "Tracked entity should still exist");
             var entityIndex = trackedRef.ToIndex(a);
             var intComp = a.Component<TestInt>(entityIndex);
             var vecComp = a.Component<TestVec>(entityIndex);
@@ -281,7 +282,7 @@ namespace Trecs.Tests
 
             var init = a.AddEntity(TestTags.Alpha).AssertComplete();
             var entityHandle = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             var entityIndex1 = entityHandle.ToIndex(a);
             var entityIndex2 = entityHandle.ToIndex(a);
@@ -294,7 +295,7 @@ namespace Trecs.Tests
         #region Hash Determinism
 
         [Test]
-        public void EntityHandle_GetStableHashCode_SameForSameRef()
+        public void EntityHandle_GetHashCode_SameForSameRef()
         {
             using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
             var a = env.Accessor;
@@ -302,11 +303,11 @@ namespace Trecs.Tests
             var init = a.AddEntity(TestTags.Alpha).AssertComplete();
             var entityHandle = init.Handle;
 
-            NAssert.AreEqual(entityHandle.GetStableHashCode(), entityHandle.GetStableHashCode());
+            NAssert.AreEqual(entityHandle.GetHashCode(), entityHandle.GetHashCode());
         }
 
         [Test]
-        public void EntityHandle_GetStableHashCode_DifferentForDifferentRefs()
+        public void EntityHandle_GetHashCode_DifferentForDifferentRefs()
         {
             using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
             var a = env.Accessor;
@@ -314,17 +315,17 @@ namespace Trecs.Tests
             var init1 = a.AddEntity(TestTags.Alpha).AssertComplete();
             var init2 = a.AddEntity(TestTags.Alpha).AssertComplete();
 
-            NAssert.AreNotEqual(init1.Handle.GetStableHashCode(), init2.Handle.GetStableHashCode());
+            NAssert.AreNotEqual(init1.Handle.GetHashCode(), init2.Handle.GetHashCode());
         }
 
         [Test]
-        public void EntityHandle_GetStableHashCode_DeterministicAcrossWorlds()
+        public void EntityHandle_GetHashCode_DeterministicAcrossWorlds()
         {
             int HashForFirstEntity()
             {
                 using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
                 var init = env.Accessor.AddEntity(TestTags.Alpha).AssertComplete();
-                return init.Handle.GetStableHashCode();
+                return init.Handle.GetHashCode();
             }
 
             var hash1 = HashForFirstEntity();
@@ -335,6 +336,33 @@ namespace Trecs.Tests
                 hash2,
                 "First entity ref hash should be deterministic across world instances"
             );
+        }
+
+        [Test]
+        public void EntityRange_GetHashCode_IsDeterministic()
+        {
+            var range = new EntityRange(42, 100);
+
+            // math.hash(new int2(42, 100)) is the deterministic hash used by
+            // EntityHandle and EntityIndex. EntityRange should use the same approach.
+            int expected = unchecked((int)math.hash(new int2(42, 100)));
+
+            NAssert.AreEqual(
+                expected,
+                range.GetHashCode(),
+                "EntityRange.GetHashCode should use deterministic math.hash, not HashCode.Combine"
+            );
+        }
+
+        [Test]
+        public void EntityRange_GetHashCode_DifferentForDifferentRanges()
+        {
+            var range1 = new EntityRange(0, 10);
+            var range2 = new EntityRange(0, 11);
+            var range3 = new EntityRange(1, 10);
+
+            NAssert.AreNotEqual(range1.GetHashCode(), range2.GetHashCode());
+            NAssert.AreNotEqual(range1.GetHashCode(), range3.GetHashCode());
         }
 
         #endregion

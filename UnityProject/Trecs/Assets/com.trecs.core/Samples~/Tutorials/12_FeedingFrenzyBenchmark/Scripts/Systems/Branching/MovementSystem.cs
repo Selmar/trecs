@@ -1,15 +1,12 @@
 using System;
-using Trecs.Internal;
 using Unity.Burst;
 using Unity.Collections;
 
 namespace Trecs.Samples.FeedingFrenzyBenchmark.Branching
 {
-    [ExecutesAfter(typeof(IConsumingMeal))]
+    [ExecuteAfter(typeof(IConsumingMeal))]
     public partial class MovementSystem : IMovement, ISystem
     {
-        static readonly TrecsLog _log = new(nameof(MovementSystem));
-
         public void Execute()
         {
             ref readonly var config = ref World.GlobalComponent<FrenzyConfig>().Read;
@@ -48,7 +45,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Branching
             }
         }
 
-        [ForEachEntity(Tags = new[] { typeof(FrenzyTags.Fish) })]
+        [ForEachEntity(typeof(FrenzyTags.Fish))]
         void RunForEachMethodAspect(in Fish fish)
         {
             if (!fish.TargetMeal.IsNull)
@@ -57,7 +54,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Branching
             }
         }
 
-        [ForEachEntity(Tags = new[] { typeof(FrenzyTags.Fish) })]
+        [ForEachEntity(typeof(FrenzyTags.Fish))]
         void RunForEachMethodComponents(
             in Velocity velocity,
             in TargetMeal meal,
@@ -85,9 +82,9 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Branching
         {
             foreach (var slice in World.Query().WithTags<FrenzyTags.Fish>().GroupSlices())
             {
-                var velocities = World.ComponentBuffer<Velocity>(slice.Group).Read;
-                var positions = World.ComponentBuffer<Position>(slice.Group).Write;
-                var targetMeals = World.ComponentBuffer<TargetMeal>(slice.Group).Read;
+                var velocities = World.ComponentBuffer<Velocity>(slice.GroupIndex).Read;
+                var positions = World.ComponentBuffer<Position>(slice.GroupIndex).Write;
+                var targetMeals = World.ComponentBuffer<TargetMeal>(slice.GroupIndex).Read;
 
                 for (int fi = 0; fi < slice.Count; fi++)
                 {
@@ -125,7 +122,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Branching
             );
         }
 
-        [ForEachEntity(Tag = typeof(FrenzyTags.Fish))]
+        [ForEachEntity(typeof(FrenzyTags.Fish))]
         [WrapAsJob]
         static void RunWrapAsJobAspect(in Fish fish, in NativeWorldAccessor world)
         {
@@ -135,7 +132,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Branching
             }
         }
 
-        [ForEachEntity(Tag = typeof(FrenzyTags.Fish))]
+        [ForEachEntity(typeof(FrenzyTags.Fish))]
         [WrapAsJob]
         static void RunWrapAsJobComponents(
             in Velocity velocity,
@@ -155,7 +152,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Branching
         {
             public float DeltaTime;
 
-            [ForEachEntity(Tag = typeof(FrenzyTags.Fish))]
+            [ForEachEntity(typeof(FrenzyTags.Fish))]
             public readonly void Execute(in Fish fish)
             {
                 if (!fish.TargetMeal.IsNull)
@@ -170,7 +167,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Branching
         {
             public float DeltaTime;
 
-            [ForEachEntity(Tag = typeof(FrenzyTags.Fish))]
+            [ForEachEntity(typeof(FrenzyTags.Fish))]
             public readonly void Execute(
                 in Velocity velocity,
                 in TargetMeal meal,
@@ -189,14 +186,14 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Branching
         {
             public float DeltaTime;
 
-            [FromWorld(Tag = typeof(FrenzyTags.Fish))]
+            [FromWorld(typeof(FrenzyTags.Fish))]
             public NativeComponentBufferRead<Velocity> Velocities;
 
-            [FromWorld(Tag = typeof(FrenzyTags.Fish))]
+            [FromWorld(typeof(FrenzyTags.Fish))]
             public NativeComponentBufferRead<TargetMeal> TargetMeals;
 
             [NativeDisableParallelForRestriction]
-            [FromWorld(Tag = typeof(FrenzyTags.Fish))]
+            [FromWorld(typeof(FrenzyTags.Fish))]
             public NativeComponentBufferWrite<Position> Positions;
 
             public void Execute(int i)

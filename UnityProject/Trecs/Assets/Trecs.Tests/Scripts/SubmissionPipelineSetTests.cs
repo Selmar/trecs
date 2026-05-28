@@ -12,12 +12,11 @@ namespace Trecs.Tests
 
     public partial class SPTestEntity
         : ITemplate,
-            IHasTags<SPTag>,
-            IHasPartition<SPPartitionA>,
-            IHasPartition<SPPartitionB>
+            ITagged<SPTag>,
+            IPartitionedBy<SPPartitionA, SPPartitionB>
     {
-        public TestInt TestInt;
-        public TestVec TestVec;
+        TestInt TestInt;
+        TestVec TestVec;
     }
 
     public struct SPSet : IEntitySet<SPTag> { }
@@ -68,23 +67,23 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(PartitionA);
             var set = a.Set<SPSet>();
 
             // Add entities 0, 1, 2 to set
             var write = set.Write;
-            write.AddImmediate(new EntityIndex(0, groupA));
-            write.AddImmediate(new EntityIndex(1, groupA));
-            write.AddImmediate(new EntityIndex(2, groupA));
-            a.SubmitEntities();
+            write.Add(new EntityIndex(0, groupA));
+            write.Add(new EntityIndex(1, groupA));
+            write.Add(new EntityIndex(2, groupA));
+            a.Submit();
             NAssert.AreEqual(3, set.Read.Count);
 
             // Move entity 0 to PartitionB, remove entity 1, entity 2 stays
-            a.MoveTo(handles[0].ToIndex(a), PartitionB);
+            a.SetTag<SPPartitionB>(handles[0].ToIndex(a));
             a.RemoveEntity(handles[1]);
-            a.SubmitEntities();
+            a.Submit();
 
             // Entity 0: moved (should still be in set)
             // Entity 1: removed (should be gone from set)
@@ -110,23 +109,23 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(PartitionA);
             var set = a.Set<SPSet>();
 
-            set.Write.AddImmediate(new EntityIndex(0, groupA));
-            set.Write.AddImmediate(new EntityIndex(1, groupA));
-            a.SubmitEntities();
+            set.Write.Add(new EntityIndex(0, groupA));
+            set.Write.Add(new EntityIndex(1, groupA));
+            a.Submit();
 
             // Move entity 0, then remove it (reverts the move)
-            a.MoveTo(handles[0].ToIndex(a), PartitionB);
+            a.SetTag<SPPartitionB>(handles[0].ToIndex(a));
             a.RemoveEntity(handles[0].ToIndex(a));
-            a.SubmitEntities();
+            a.Submit();
 
             // Entity 0 is gone; entity 1 should still be in set
             NAssert.AreEqual(1, set.Read.Count);
-            NAssert.IsFalse(a.EntityExists(handles[0]));
+            NAssert.IsFalse(handles[0].Exists(a));
         }
 
         #endregion
@@ -149,15 +148,15 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(PartitionA);
             var set = a.Set<SPSet>();
 
             // Deferred add entity 1 to set, native-remove entity 0
-            a.SetAdd<SPSet>(new EntityIndex(1, groupA));
+            a.Set<SPSet>().DeferredAdd(new EntityIndex(1, groupA));
             nativeEcs.RemoveEntity(handles[0].ToIndex(a));
-            a.SubmitEntities();
+            a.Submit();
 
             // After swap-back from removing entity 0, entity at index 1 may have moved.
             // The set should still correctly track the entity that was originally at index 1.
@@ -183,15 +182,15 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(PartitionA);
             var set = a.Set<SPSet>();
 
             // Add entity 0 to set, then native-remove entity 0
-            a.SetAdd<SPSet>(new EntityIndex(0, groupA));
+            a.Set<SPSet>().DeferredAdd(new EntityIndex(0, groupA));
             nativeEcs.RemoveEntity(handles[0].ToIndex(a));
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(2, a.CountEntitiesWithTags(PartitionA));
             NAssert.AreEqual(0, set.Read.Count, "Entity was removed, set should be empty");
@@ -216,24 +215,24 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(PartitionA);
             var set1 = a.Set<SPSet>();
             var set2 = a.Set<SPSet2>();
 
             // Entity 0 in both sets, entity 1 in set1 only
-            set1.Write.AddImmediate(new EntityIndex(0, groupA));
-            set1.Write.AddImmediate(new EntityIndex(1, groupA));
-            set2.Write.AddImmediate(new EntityIndex(0, groupA));
-            a.SubmitEntities();
+            set1.Write.Add(new EntityIndex(0, groupA));
+            set1.Write.Add(new EntityIndex(1, groupA));
+            set2.Write.Add(new EntityIndex(0, groupA));
+            a.Submit();
 
             NAssert.AreEqual(2, set1.Read.Count);
             NAssert.AreEqual(1, set2.Read.Count);
 
             // Remove entity 0 (in both sets)
             a.RemoveEntity(handles[0]);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(1, set1.Read.Count, "Set1 should lose entity 0, keep entity 1");
             NAssert.AreEqual(0, set2.Read.Count, "Set2 should lose entity 0, now empty");
@@ -250,19 +249,19 @@ namespace Trecs.Tests
                 .Set(new TestVec())
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(PartitionA);
             var set1 = a.Set<SPSet>();
             var set2 = a.Set<SPSet2>();
 
-            set1.Write.AddImmediate(new EntityIndex(0, groupA));
-            set2.Write.AddImmediate(new EntityIndex(0, groupA));
-            a.SubmitEntities();
+            set1.Write.Add(new EntityIndex(0, groupA));
+            set2.Write.Add(new EntityIndex(0, groupA));
+            a.Submit();
 
             // Move entity to PartitionB
-            a.MoveTo(handle.ToIndex(a), PartitionB);
-            a.SubmitEntities();
+            a.SetTag<SPPartitionB>(handle.ToIndex(a));
+            a.Submit();
 
             NAssert.AreEqual(1, set1.Read.Count, "Set1 should track entity through move");
             NAssert.AreEqual(1, set2.Read.Count, "Set2 should track entity through move");
@@ -287,7 +286,7 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(PartitionA);
             var set1 = a.Set<SPSet>();
@@ -295,17 +294,17 @@ namespace Trecs.Tests
 
             // Set1: entities 0, 2, 4
             // Set2: entities 1, 3
-            set1.Write.AddImmediate(new EntityIndex(0, groupA));
-            set1.Write.AddImmediate(new EntityIndex(2, groupA));
-            set1.Write.AddImmediate(new EntityIndex(4, groupA));
-            set2.Write.AddImmediate(new EntityIndex(1, groupA));
-            set2.Write.AddImmediate(new EntityIndex(3, groupA));
-            a.SubmitEntities();
+            set1.Write.Add(new EntityIndex(0, groupA));
+            set1.Write.Add(new EntityIndex(2, groupA));
+            set1.Write.Add(new EntityIndex(4, groupA));
+            set2.Write.Add(new EntityIndex(1, groupA));
+            set2.Write.Add(new EntityIndex(3, groupA));
+            a.Submit();
 
             // Move entity 0 (set1), remove entity 1 (set2)
-            a.MoveTo(handles[0].ToIndex(a), PartitionB);
+            a.SetTag<SPPartitionB>(handles[0].ToIndex(a));
             a.RemoveEntity(handles[1]);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(3, set1.Read.Count, "Set1: entity 0 moved but tracked, 2 and 4 stay");
             NAssert.AreEqual(1, set2.Read.Count, "Set2: entity 1 removed, entity 3 stays");
@@ -331,7 +330,7 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(PartitionA);
             var set = a.Set<SPSet>();
@@ -339,15 +338,15 @@ namespace Trecs.Tests
             // Add every other entity to set (0, 2, 4, ..., 48)
             var write = set.Write;
             for (int i = 0; i < total; i += 2)
-                write.AddImmediate(new EntityIndex(i, groupA));
-            a.SubmitEntities();
+                write.Add(new EntityIndex(i, groupA));
+            a.Submit();
 
             NAssert.AreEqual(25, set.Read.Count);
 
             // Remove every 5th entity (some in set, some not)
             for (int i = 0; i < total; i += 5)
                 a.RemoveEntity(handles[i]);
-            a.SubmitEntities();
+            a.Submit();
 
             // Verify set count matches query count
             int setCount = set.Read.Count;
@@ -385,7 +384,7 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(PartitionA);
             var set = a.Set<SPSet>();
@@ -393,17 +392,17 @@ namespace Trecs.Tests
             // Add first 30 to set
             var write = set.Write;
             for (int i = 0; i < 30; i++)
-                write.AddImmediate(new EntityIndex(i, groupA));
-            a.SubmitEntities();
+                write.Add(new EntityIndex(i, groupA));
+            a.Submit();
 
             NAssert.AreEqual(30, set.Read.Count);
 
             // Move first 20 to PartitionB, native-remove every 4th among them (0, 4, 8, 12, 16)
             for (int i = 0; i < 20; i++)
-                a.MoveTo(handles[i].ToIndex(a), PartitionB);
+                a.SetTag<SPPartitionB>(handles[i].ToIndex(a));
             for (int i = 0; i < 20; i += 4)
                 nativeEcs.RemoveEntity(handles[i].ToIndex(a));
-            a.SubmitEntities();
+            a.Submit();
 
             // Verify set count matches query count
             int setCount = set.Read.Count;
@@ -437,30 +436,30 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(PartitionA);
             var set = a.Set<SPSet>();
 
             // Add entities 0, 2 to set
-            set.Write.AddImmediate(new EntityIndex(0, groupA));
-            set.Write.AddImmediate(new EntityIndex(2, groupA));
-            a.SubmitEntities();
+            set.Write.Add(new EntityIndex(0, groupA));
+            set.Write.Add(new EntityIndex(2, groupA));
+            a.Submit();
 
             // In one submission:
             // - Deferred set add entity 3
             // - Move entity 0 to PartitionB (in set)
             // - Remove entity 1 (not in set, but causes swap-back)
             // - Add new entity
-            a.SetAdd<SPSet>(new EntityIndex(3, groupA));
-            a.MoveTo(handles[0].ToIndex(a), PartitionB);
+            a.Set<SPSet>().DeferredAdd(new EntityIndex(3, groupA));
+            a.SetTag<SPPartitionB>(handles[0].ToIndex(a));
             a.RemoveEntity(handles[1]);
             var newHandle = a.AddEntity(PartitionA)
                 .Set(new TestInt { Value = 99 })
                 .Set(new TestVec())
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             // Entity 0: moved (should stay in set)
             // Entity 1: removed (was not in set)
@@ -496,7 +495,7 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             // Callback: when entity removed from PartitionA, add entity 3 to set
             var subscription = a
@@ -504,19 +503,19 @@ namespace Trecs.Tests
                 .OnRemoved(
                     (group, indices) =>
                     {
-                        if (a.EntityExists(handles[3]))
+                        if (handles[3].Exists(a))
                         {
                             var idx = handles[3].ToIndex(a);
-                            a.Set<SPSet>().Write.AddImmediate(idx);
+                            a.Set<SPSet>().Write.Add(idx);
                         }
                     }
                 );
 
             // Remove entity 0 -> callback fires -> adds entity 3 to set
             a.RemoveEntity(handles[0]);
-            a.SubmitEntities();
+            a.Submit();
 
-            NAssert.IsFalse(a.EntityExists(handles[0]));
+            NAssert.IsFalse(handles[0].Exists(a));
             NAssert.AreEqual(
                 1,
                 a.Set<SPSet>().Read.Count,
@@ -541,15 +540,15 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(PartitionA);
             var set = a.Set<SPSet>();
 
             // Entities 1 and 2 in set
-            set.Write.AddImmediate(new EntityIndex(1, groupA));
-            set.Write.AddImmediate(new EntityIndex(2, groupA));
-            a.SubmitEntities();
+            set.Write.Add(new EntityIndex(1, groupA));
+            set.Write.Add(new EntityIndex(2, groupA));
+            a.Submit();
 
             // Callback: on remove, also remove entity 2
             var subscription = a
@@ -557,17 +556,17 @@ namespace Trecs.Tests
                 .OnRemoved(
                     (group, indices) =>
                     {
-                        if (a.EntityExists(handles[2]))
+                        if (handles[2].Exists(a))
                             a.RemoveEntity(handles[2]);
                     }
                 );
 
             // Remove entity 0 -> callback removes entity 2 (which is in set)
             a.RemoveEntity(handles[0]);
-            a.SubmitEntities();
+            a.Submit();
 
-            NAssert.IsFalse(a.EntityExists(handles[0]));
-            NAssert.IsFalse(a.EntityExists(handles[2]));
+            NAssert.IsFalse(handles[0].Exists(a));
+            NAssert.IsFalse(handles[2].Exists(a));
             // Set should have lost entity 2 (removed by callback)
             // Entity 1 should still be in set
             NAssert.AreEqual(1, set.Read.Count, "Only entity 1 should remain in set");
@@ -594,28 +593,28 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(PartitionA);
             var set = a.Set<SPSet>();
 
             // Frame 1: Add entities 0, 2, 4 to set
-            set.Write.AddImmediate(new EntityIndex(0, groupA));
-            set.Write.AddImmediate(new EntityIndex(2, groupA));
-            set.Write.AddImmediate(new EntityIndex(4, groupA));
-            a.SubmitEntities();
+            set.Write.Add(new EntityIndex(0, groupA));
+            set.Write.Add(new EntityIndex(2, groupA));
+            set.Write.Add(new EntityIndex(4, groupA));
+            a.Submit();
             NAssert.AreEqual(3, set.Read.Count);
 
             // Frame 2: Move entity 0 to PartitionB, remove entity 1
-            a.MoveTo(handles[0].ToIndex(a), PartitionB);
+            a.SetTag<SPPartitionB>(handles[0].ToIndex(a));
             a.RemoveEntity(handles[1]);
-            a.SubmitEntities();
+            a.Submit();
             NAssert.AreEqual(3, set.Read.Count, "Entity 0 moved but still tracked, 1 not in set");
 
             // Frame 3: Move entity 0 back, remove entity 4 (in set)
-            a.MoveTo(handles[0].ToIndex(a), PartitionA);
+            a.SetTag<SPPartitionA>(handles[0].ToIndex(a));
             a.RemoveEntity(handles[4]);
-            a.SubmitEntities();
+            a.Submit();
             NAssert.AreEqual(2, set.Read.Count, "Lost entity 4, entity 0 moved back");
 
             // Frame 4: Remove entity 0 (in set), add new entity
@@ -625,7 +624,7 @@ namespace Trecs.Tests
                 .Set(new TestVec())
                 .AssertComplete()
                 .Handle;
-            a.SubmitEntities();
+            a.Submit();
             NAssert.AreEqual(1, set.Read.Count, "Only entity 2 remains in set");
 
             // Verify query through set matches

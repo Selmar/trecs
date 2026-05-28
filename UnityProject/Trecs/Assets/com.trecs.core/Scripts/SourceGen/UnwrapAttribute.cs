@@ -13,7 +13,6 @@ namespace Trecs
     /// instance field. Violating these constraints produces compile-time diagnostics:
     /// </para>
     /// <list type="bullet">
-    /// <item><description>TRECS011 — Component must be a struct.</description></item>
     /// <item><description>TRECS012 — Component must implement IEntityComponent.</description></item>
     /// <item><description>TRECS013 — Component must have exactly one field.</description></item>
     /// </list>
@@ -26,13 +25,12 @@ namespace Trecs
     ///     public float3 Value;
     /// }
     ///
-    /// [Aspect]
-    /// partial struct MyView : IWrite&lt;Position&gt; { }
+    /// partial struct MyView : IAspect, IWrite&lt;Position&gt; { }
     ///
     /// // With [Unwrap]: myView.Position is ref float3
     /// // Without [Unwrap]: myView.Position would be ref Position
     /// </code>
     /// </example>
     [AttributeUsage(AttributeTargets.Struct, AllowMultiple = false)]
-    public class UnwrapAttribute : Attribute { }
+    public sealed class UnwrapAttribute : Attribute { }
 }

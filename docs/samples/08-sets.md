@@ -1,12 +1,12 @@
 # 08 — Sets
 
-Dynamic entity subsets with overlapping membership. Unlike partitions (which are mutually exclusive), sets allow an entity to belong to multiple subsets simultaneously.
+Dynamic entity subsets with overlapping membership. Unlike partitions (mutually exclusive), an entity can belong to multiple sets at once.
 
-**Source:** `Samples/08_Sets/`
+**Source:** `com.trecs.core/Samples~/Tutorials/08_Sets/`
 
-## What It Does
+## What it does
 
-A grid of particles is affected by two overlapping wave effects — a warm (orange) horizontal wave and a cool (blue) vertical wave. Where the waves overlap, particles turn purple. Particles rise when in the warm wave and scale when in the cool wave.
+A grid of particles is affected by two overlapping waves — a warm (orange) horizontal wave and a cool (blue) vertical wave. Particles rise in the warm wave, scale in the cool wave, and turn purple where they overlap.
 
 ## Schema
 
@@ -33,83 +33,94 @@ public struct WaveX : IEntitySet { }
 public struct WaveZ : IEntitySet { }
 ```
 
-Sets define sparse subsets of entities. Membership is managed at runtime via `SetAdd`/`SetRemove`.
+Sets define sparse entity subsets. Membership is managed at runtime via `World.Set<T>().Write`, which exposes `.Add()` / `.Remove()` (or `.Clear()` for bulk reset).
 
 ### Registration
 
-Sets must be registered with the world builder:
+Register sets with the world builder:
 
 ```csharp
-new WorldBuilder()
+var world = new WorldBuilder()
+    .AddTemplate(SampleTemplates.ParticleEntity.Template)
     .AddSet<SampleSets.WaveX>()
     .AddSet<SampleSets.WaveZ>()
-    // ...
+    .Build();
 ```
 
 ## Systems
 
 ### WaveMembershipSystem
 
-Each frame, determines which particles are inside each wave band and updates set membership:
+Each frame, decides which particles are inside each wave band and updates set membership:
 
 ```csharp
 public void Execute()
 {
-    float waveXCenter = math.sin(World.ElapsedTime * 2f) * _gridSize * 0.6f;
-    float waveZCenter = math.cos(World.ElapsedTime * 1.5f) * _gridSize * 0.6f;
+    float waveCenterX = math.sin(World.ElapsedTime * _settings.WaveXSpeed) * _gridExtent;
+    float waveCenterZ = math.cos(World.ElapsedTime * _settings.WaveZSpeed) * _gridExtent;
 
-    foreach (var p in ParticleView.Query(World).WithTags<SampleTags.Particle>())
+    var waveXSet = World.Set<SampleSets.WaveX>().Write;
+    waveXSet.Clear();
+
+    var waveZSet = World.Set<SampleSets.WaveZ>().Write;
+    waveZSet.Clear();
+
+    foreach (var particle in ParticleView.Query(World).WithTags<SampleTags.Particle>())
     {
-        p.WarmIntensity = 0;
-        p.CoolIntensity = 0;
+        // Reset intensities — downstream effect systems will overwrite
+        // for particles that are in their set.
+        particle.WarmIntensity = 0;
+        particle.CoolIntensity = 0;
 
-        float distX = math.abs(p.Position.x - waveXCenter);
-        float distZ = math.abs(p.Position.z - waveZCenter);
+        float distX = math.abs(particle.Position.x - waveCenterX);
+        float distZ = math.abs(particle.Position.z - waveCenterZ);
 
-        if (distX < waveBandWidth)
-            World.SetAdd<SampleSets.WaveX>(p.EntityIndex);
-        else
-            World.SetRemove<SampleSets.WaveX>(p.EntityIndex);
+        var handle = particle.Handle(World);
 
-        if (distZ < waveBandWidth)
-            World.SetAdd<SampleSets.WaveZ>(p.EntityIndex);
-        else
-            World.SetRemove<SampleSets.WaveZ>(p.EntityIndex);
+        if (distX < _settings.WaveBandWidth)
+            waveXSet.Add(handle);
+
+        if (distZ < _settings.WaveBandWidth)
+            waveZSet.Add(handle);
     }
 }
 ```
 
-### WaveXEffectSystem — Iterate Only WaveX Members
+### WaveXEffectSystem — iterate only WaveX members
 
 ```csharp
-[ForEachEntity(Set = typeof(SampleSets.WaveX))]
-void Execute(in ParticleView p)
+[ForEachEntity(
+    typeof(SampleTags.Particle),
+    Set = typeof(SampleSets.WaveX)
+)]
+void Execute(in WaveXView view)
 {
-    float distFromWave = math.abs(p.Position.x - waveCenter);
-    p.WarmIntensity = 1f - (distFromWave / waveBandWidth);
+    float waveCenterX = math.sin(World.ElapsedTime * _settings.WaveXSpeed) * _gridExtent;
+    float dist = math.abs(view.Position.x - waveCenterX);
+    view.WarmIntensity = math.saturate(1f - dist / _settings.WaveBandWidth);
 }
 ```
 
-### WaveZEffectSystem — Iterate Only WaveZ Members
+### WaveZEffectSystem — iterate only WaveZ members
 
 Same pattern, scoped to `WaveZ` set.
 
-### ParticleRendererSystem
+### ParticlePresenter
 
-Composites the final color from warm and cool intensities. A particle in both waves gets both effects blended together.
+Composites final color from warm and cool intensities. A particle in both waves blends both effects.
 
-## Why Sets, Not Partitions?
+## Why sets, not partitions?
 
-With partitions, an entity can only be in one partition at a time. To represent "in WaveX", "in WaveZ", and "in both", you'd need four partitions (None, X, Z, XZ) — and that grows as 2^N for N wave effects.
+An entity can only be in one partition at a time. Representing "in WaveX", "in WaveZ", and "in both" needs four partitions (None, X, Z, XZ) — growing as 2^N.
 
-With sets, each wave is independent. A particle can be in zero, one, or both sets simultaneously without any combinatorial explosion.
+Sets are independent. A particle can be in zero, one, or both sets at once without combinatorial explosion.
 
-The drawback is that sets are sparse and may have slower iteration than partitions due to less memory locality
+The trade-off: sets are sparse and may iterate slower than partitions due to weaker memory locality.
 
-## Concepts Introduced
+## Concepts introduced
 
-- **`IEntitySet`** — defines a sparse entity subset
-- **`SetAdd` / `SetRemove`** — deferred membership changes
-- **`[ForEachEntity(Set = typeof(...))]`** — iterate only set members
-- **Overlapping membership** — entities can be in multiple sets
-- **Sets vs Partitions trade-off** — sets avoid combinatorial explosion
+- **`IEntitySet`** — sparse entity subset. See [Sets](../entity-management/sets.md).
+- **`World.Set<T>().Write`** with `.Clear()`, `.Add()`, `.Remove()` — direct membership management. See [Structural Changes](../entity-management/structural-changes.md).
+- **`[ForEachEntity(Set = typeof(...))]`** — iterate only set members. See [Queries & Iteration](../data-access/queries-and-iteration.md).
+- **Overlapping membership** — entities can be in multiple sets at once.
+- **Sets vs Partitions** — see [Partitions](06-partitions.md) for the mutually-exclusive alternative, and [Entity Subset Patterns](../guides/entity-subset-patterns.md) for guidance.

@@ -5,7 +5,7 @@ namespace Trecs.Internal
 {
     /// <summary>
     /// Identifies a trackable resource in the job scheduler — either a component type or a set.
-    /// Used as part of a (ResourceId, Group) composite key for dependency tracking.
+    /// Used as part of a (ResourceId, GroupIndex) composite key for dependency tracking.
     /// </summary>
     public readonly struct ResourceId : IEquatable<ResourceId>
     {
@@ -23,7 +23,7 @@ namespace Trecs.Internal
         /// conservative, but harmless — the scheduler just syncs them together).
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static ResourceId Component(ComponentId id) => new(id.Value & 0x7FFFFFFF);
+        public static ResourceId Component(TypeId id) => new(id.Value & 0x7FFFFFFF);
 
         /// <summary>
         /// Create a ResourceId for a set.
@@ -31,7 +31,7 @@ namespace Trecs.Internal
         /// guaranteeing no collision with component ResourceIds.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static ResourceId Set(SetId id) => new(id.Id | unchecked((int)0x80000000));
+        public static ResourceId Set(SetId id) => new(id.Value | unchecked((int)0x80000000));
 
         public int Value
         {

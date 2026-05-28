@@ -1,28 +1,30 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using Trecs.Collections;
-using Trecs.Internal;
 
-namespace Trecs
+namespace Trecs.Internal
 {
     /// <summary>
     /// Cached query engine that resolves groups matching tag, component, and exclusion criteria.
     /// Results are memoized so repeated queries within a frame are allocation-free.
     /// </summary>
-    public class WorldQueryEngine
+    internal sealed class WorldQueryEngine
     {
-        readonly ReadOnlyFastList<Group> _allGroups;
-        readonly ReadOnlyDenseDictionary<Group, WorldInfo.GroupInfo> _groupInfos;
+        readonly ReadOnlyList<GroupIndex> _allGroups;
+
+        // Indexed by GroupIndex.Index; matches WorldInfo's _groupInfos layout.
+        readonly WorldInfo.GroupInfo[] _groupInfos;
         readonly WorldInfo _worldInfo;
 
         readonly Dictionary<TagSet, TagSetInfo> _tagSetInfos = new();
-        readonly Dictionary<int, ReadOnlyFastList<Group>> _groupsWithComponentsMap = new();
+        readonly Dictionary<int, ReadOnlyList<GroupIndex>> _groupsWithComponentsMap = new();
         readonly List<Type> _tempComponentTypeList = new();
 
         internal WorldQueryEngine(
-            ReadOnlyFastList<Group> allGroups,
-            ReadOnlyDenseDictionary<Group, WorldInfo.GroupInfo> groupInfos,
+            ReadOnlyList<GroupIndex> allGroups,
+            WorldInfo.GroupInfo[] groupInfos,
             WorldInfo worldInfo
         )
         {
@@ -35,16 +37,17 @@ namespace Trecs
         {
             if (!_tagSetInfos.TryGetValue(tagset, out var info))
             {
-                var groupsList = new FastList<Group>();
+                var groupsList = new List<GroupIndex>();
 
                 foreach (var group in _allGroups)
                 {
                     var hasAllTags = true;
 
+                    var groupTagSet = _worldInfo.ToTagSet(group);
                     var tags = tagset.Tags;
                     foreach (var tag in tags)
                     {
-                        if (!group.AsTagSet().Tags.Contains(tag))
+                        if (!groupTagSet.Tags.Contains(tag))
                         {
                             hasAllTags = false;
                             break;
@@ -66,19 +69,19 @@ namespace Trecs
 
         int GetComponentsListHash(List<Type> componentTypes)
         {
-            Assert.That(componentTypes.Count > 0);
+            TrecsDebugAssert.That(componentTypes.Count > 0);
 
-            var componentsHash = TypeIdProvider.GetTypeId(componentTypes[0]);
+            var componentsHash = TypeId.FromType(componentTypes[0]).Value;
 
             for (int i = 1; i < componentTypes.Count; i++)
             {
-                componentsHash ^= TypeIdProvider.GetTypeId(componentTypes[i]);
+                componentsHash ^= TypeId.FromType(componentTypes[i]).Value;
             }
 
             return componentsHash;
         }
 
-        public ReadOnlyFastList<Group> CommonGetTaggedGroupsWithComponents(
+        public ReadOnlyList<GroupIndex> CommonGetTaggedGroupsWithComponents(
             TagSet tagset,
             List<Type> componentTypes
         )
@@ -89,7 +92,7 @@ namespace Trecs
 
             if (!tagsetInfo.WithComponentsSubsets.TryGetValue(componentsHash, out var groups))
             {
-                var groupsList = new FastList<Group>();
+                var groupsList = new List<GroupIndex>();
 
                 foreach (var group in tagsetInfo.Groups)
                 {
@@ -118,16 +121,17 @@ namespace Trecs
             return groups;
         }
 
-        ReadOnlyFastList<Group> CommonGetGroupsWithComponents(List<Type> componentTypes)
+        ReadOnlyList<GroupIndex> CommonGetGroupsWithComponents(List<Type> componentTypes)
         {
             var componentsHash = GetComponentsListHash(componentTypes);
 
             if (!_groupsWithComponentsMap.TryGetValue(componentsHash, out var groups))
             {
-                var groupsList = new FastList<Group>();
+                var groupsList = new List<GroupIndex>();
 
-                foreach (var (group, groupInfo) in _groupInfos)
+                for (int gi = 0; gi < _groupInfos.Length; gi++)
                 {
+                    var groupInfo = _groupInfos[gi];
                     var hasAllComponents = true;
 
                     foreach (var componentType in componentTypes)
@@ -141,7 +145,7 @@ namespace Trecs
 
                     if (hasAllComponents)
                     {
-                        groupsList.Add(group);
+                        groupsList.Add(GroupIndex.FromIndex(gi));
                     }
                 }
 
@@ -166,17 +170,17 @@ namespace Trecs
                 }
                 else
                 {
-                    Assert.That(
+                    TrecsDebugAssert.That(
                         uniqueTemplate == resolvedTemplate.Template,
-                        "Ambiguous templates found for tags {} but expected exactly one",
+                        "Ambiguous templates found for tags {0} but expected exactly one",
                         tags
                     );
                 }
             }
 
-            Assert.IsNotNull(
+            TrecsDebugAssert.IsNotNull(
                 uniqueTemplate,
-                "No templates found for tags {}.  Expected exactly one",
+                "No templates found for tags {0}.  Expected exactly one",
                 tags
             );
             return uniqueTemplate;
@@ -200,78 +204,281 @@ namespace Trecs
                 }
                 else
                 {
-                    Assert.That(
+                    TrecsDebugAssert.That(
                         result == resolvedTemplate,
-                        "Ambiguous templates found for tags {} but expected exactly one",
+                        "Ambiguous templates found for tags {0} but expected exactly one",
                         tags
                     );
                 }
             }
 
-            Assert.IsNotNull(
+            TrecsDebugAssert.IsNotNull(
                 result,
-                "No concrete template found for tags {}.  Expected exactly one",
+                "No concrete template found for tags {0}.  Expected exactly one",
                 tags
             );
             return result;
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithTags(TagSet tagset)
+        public ReadOnlyList<GroupIndex> GetGroupsWithTags(TagSet tagset)
         {
             var tagsetInfo = GetTagsetInfo(tagset);
             return tagsetInfo.Groups;
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithTags<T1>()
+        public ReadOnlyList<GroupIndex> GetGroupsWithTags<T1>()
             where T1 : struct, ITag => GetGroupsWithTags(TagSet<T1>.Value);
 
-        public ReadOnlyFastList<Group> GetGroupsWithTags<T1, T2>()
+        public ReadOnlyList<GroupIndex> GetGroupsWithTags<T1, T2>()
             where T1 : struct, ITag
             where T2 : struct, ITag => GetGroupsWithTags(TagSet<T1, T2>.Value);
 
-        public ReadOnlyFastList<Group> GetGroupsWithTags<T1, T2, T3>()
+        public ReadOnlyList<GroupIndex> GetGroupsWithTags<T1, T2, T3>()
             where T1 : struct, ITag
             where T2 : struct, ITag
             where T3 : struct, ITag => GetGroupsWithTags(TagSet<T1, T2, T3>.Value);
 
-        public ReadOnlyFastList<Group> GetGroupsWithTags<T1, T2, T3, T4>()
+        public ReadOnlyList<GroupIndex> GetGroupsWithTags<T1, T2, T3, T4>()
             where T1 : struct, ITag
             where T2 : struct, ITag
             where T3 : struct, ITag
             where T4 : struct, ITag => GetGroupsWithTags(TagSet<T1, T2, T3, T4>.Value);
 
-        public Group GetSingleGroupWithTags(TagSet tagset)
+        // Non-throwing variant of GetSingleGroupWithTags. Returns true and sets
+        // `group` on a unique match; returns false on "no groups match" or "matches
+        // are ambiguous" (multi-template span, ties at smallest size, smallest not
+        // a subset of every other match). Used by the native TagSet→group map
+        // builder, which probes every subset and expects most to come back false.
+        // Avoids the exception unwind cost of the throwing variant on the failure
+        // path, since false is the common case there.
+        public bool TryGetSingleGroupWithTags(TagSet tagset, out GroupIndex group)
         {
-            var groups = GetGroupsWithTags(tagset);
-            Assert.That(groups.Count > 0, "No groups found for tags {}", tagset);
-            Assert.That(
-                groups.Count == 1,
-                "Ambiguous groups found for tags {}.  Must be unique when creating.",
-                tagset
-            );
+            var tagsetInfo = GetTagsetInfo(tagset);
 
-            return groups[0];
+            if (!tagsetInfo.SingleGroup.IsNull)
+            {
+                group = tagsetInfo.SingleGroup;
+                return true;
+            }
+
+            var groups = tagsetInfo.Groups;
+            if (groups.Count == 0)
+            {
+                group = default;
+                return false;
+            }
+
+            if (groups.Count == 1)
+            {
+                tagsetInfo.SingleGroup = groups[0];
+                group = groups[0];
+                return true;
+            }
+
+            var firstTemplate = _groupInfos[groups[0].Index].ResolvedTemplate.Template;
+            for (int i = 1; i < groups.Count; i++)
+            {
+                if (_groupInfos[groups[i].Index].ResolvedTemplate.Template != firstTemplate)
+                {
+                    group = default;
+                    return false;
+                }
+            }
+
+            int smallestIdx = 0;
+            int smallestCount = _groupInfos[groups[0].Index].Tags.Count;
+            bool smallestUnique = true;
+            for (int i = 1; i < groups.Count; i++)
+            {
+                var count = _groupInfos[groups[i].Index].Tags.Count;
+                if (count < smallestCount)
+                {
+                    smallestIdx = i;
+                    smallestCount = count;
+                    smallestUnique = true;
+                }
+                else if (count == smallestCount)
+                {
+                    smallestUnique = false;
+                }
+            }
+
+            if (!smallestUnique)
+            {
+                group = default;
+                return false;
+            }
+
+            var smallestGroup = groups[smallestIdx];
+            var smallestTags = _groupInfos[smallestGroup.Index].Tags;
+            for (int i = 0; i < groups.Count; i++)
+            {
+                if (i == smallestIdx)
+                    continue;
+
+                var otherTags = _groupInfos[groups[i].Index].Tags;
+                foreach (var tag in smallestTags)
+                {
+                    if (!otherTags.Contains(tag))
+                    {
+                        group = default;
+                        return false;
+                    }
+                }
+            }
+
+            tagsetInfo.SingleGroup = smallestGroup;
+            group = smallestGroup;
+            return true;
         }
 
-        public Group GetSingleGroupWithTags<T1>()
+        public GroupIndex GetSingleGroupWithTags(TagSet tagset)
+        {
+            var tagsetInfo = GetTagsetInfo(tagset);
+
+            if (!tagsetInfo.SingleGroup.IsNull)
+            {
+                return tagsetInfo.SingleGroup;
+            }
+
+            var groups = tagsetInfo.Groups;
+            TrecsDebugAssert.That(groups.Count > 0, "No groups found for tags {0}", tagset);
+
+            if (groups.Count == 1)
+            {
+                tagsetInfo.SingleGroup = groups[0];
+                return groups[0];
+            }
+
+            // Multiple groups contain this tag set as a subset. The tiebreaker
+            // only fires when every match belongs to the same registered
+            // template — we never resolve silently across template
+            // boundaries. Within one template, return the unique match whose
+            // tag set is a subset of every other match's (the "narrowest"
+            // partition that still contains the query). This lets users elide
+            // presence/absence partition tags and inherited base tags when
+            // their template has a unique smallest match for the query.
+            var firstTemplate = _groupInfos[groups[0].Index].ResolvedTemplate.Template;
+            for (int i = 1; i < groups.Count; i++)
+            {
+                if (_groupInfos[groups[i].Index].ResolvedTemplate.Template != firstTemplate)
+                {
+                    throw TrecsDebugAssert.CreateException(
+                        "Ambiguous groups found for tags {0}.  Matches span multiple templates: {1}.  "
+                            + "The resolver only picks a smallest match within one template.  "
+                            + "Add a discriminator tag to make the desired template's tag set unique.",
+                        tagset,
+                        FormatMatches(groups)
+                    );
+                }
+            }
+
+            // Find the match with the fewest tags. If multiple matches tie at
+            // that size, throw — within one template's partition lattice,
+            // equal-sized matches are siblings (mutex-variant or independent
+            // presence/absence dims that differ), so there's no unique
+            // minimum.
+            int smallestIdx = 0;
+            int smallestCount = _groupInfos[groups[0].Index].Tags.Count;
+            bool smallestUnique = true;
+            for (int i = 1; i < groups.Count; i++)
+            {
+                var count = _groupInfos[groups[i].Index].Tags.Count;
+                if (count < smallestCount)
+                {
+                    smallestIdx = i;
+                    smallestCount = count;
+                    smallestUnique = true;
+                }
+                else if (count == smallestCount)
+                {
+                    smallestUnique = false;
+                }
+            }
+
+            if (!smallestUnique)
+            {
+                throw TrecsDebugAssert.CreateException(
+                    "Ambiguous groups found for tags {0}.  Multiple matching groups share the "
+                        + "smallest tag-set size: {1}.  Narrow the query with an additional tag.",
+                    tagset,
+                    FormatMatches(groups)
+                );
+            }
+
+            // Verify the smallest is actually a subset of every other match.
+            // For cross-product partitions (source-gen IPartitionedBy), the
+            // unique-smallest check above already implies this. The check is
+            // here for templates whose partition shapes are declared manually
+            // via the Template constructor's `partitions: TagSet[]` parameter
+            // — those can produce matches of differing sizes that don't form
+            // a chain in the subset order.
+            var smallestGroup = groups[smallestIdx];
+            var smallestTags = _groupInfos[smallestGroup.Index].Tags;
+            for (int i = 0; i < groups.Count; i++)
+            {
+                if (i == smallestIdx)
+                    continue;
+
+                var otherTags = _groupInfos[groups[i].Index].Tags;
+                foreach (var tag in smallestTags)
+                {
+                    if (!otherTags.Contains(tag))
+                    {
+                        throw TrecsDebugAssert.CreateException(
+                            "Ambiguous groups found for tags {0}.  The smallest match isn't a "
+                                + "subset of every other match — matches form siblings rather "
+                                + "than a chain: {1}.  Narrow the query with an additional tag.",
+                            tagset,
+                            FormatMatches(groups)
+                        );
+                    }
+                }
+            }
+
+            tagsetInfo.SingleGroup = smallestGroup;
+            return smallestGroup;
+        }
+
+        // Formats the matching groups as "TemplateName[tag1, tag2]; ..." for
+        // inclusion in ambiguous-resolution error messages. Only called on the
+        // throw path, so allocation cost doesn't matter.
+        string FormatMatches(ReadOnlyList<GroupIndex> groups)
+        {
+            var sb = new StringBuilder();
+            for (int i = 0; i < groups.Count; i++)
+            {
+                if (i > 0)
+                    sb.Append("; ");
+
+                var info = _groupInfos[groups[i].Index];
+                sb.Append(info.ResolvedTemplate.Template.DebugName);
+                sb.Append('[');
+                sb.Append(info.TagSet);
+                sb.Append(']');
+            }
+            return sb.ToString();
+        }
+
+        public GroupIndex GetSingleGroupWithTags<T1>()
             where T1 : struct, ITag => GetSingleGroupWithTags(TagSet<T1>.Value);
 
-        public Group GetSingleGroupWithTags<T1, T2>()
+        public GroupIndex GetSingleGroupWithTags<T1, T2>()
             where T1 : struct, ITag
             where T2 : struct, ITag => GetSingleGroupWithTags(TagSet<T1, T2>.Value);
 
-        public Group GetSingleGroupWithTags<T1, T2, T3>()
+        public GroupIndex GetSingleGroupWithTags<T1, T2, T3>()
             where T1 : struct, ITag
             where T2 : struct, ITag
             where T3 : struct, ITag => GetSingleGroupWithTags(TagSet<T1, T2, T3>.Value);
 
-        public Group GetSingleGroupWithTags<T1, T2, T3, T4>()
+        public GroupIndex GetSingleGroupWithTags<T1, T2, T3, T4>()
             where T1 : struct, ITag
             where T2 : struct, ITag
             where T3 : struct, ITag
             where T4 : struct, ITag => GetSingleGroupWithTags(TagSet<T1, T2, T3, T4>.Value);
 
-        public ReadOnlyFastList<Group> GetGroupsWithTagsAndComponents<T1>(TagSet tagset)
+        public ReadOnlyList<GroupIndex> GetGroupsWithTagsAndComponents<T1>(TagSet tagset)
             where T1 : unmanaged, IEntityComponent
         {
             // Use a cached list to avoid any per frame allocs
@@ -281,7 +488,7 @@ namespace Trecs
             return CommonGetTaggedGroupsWithComponents(tagset, _tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithTagsAndComponents<T1, T2>(TagSet tagset)
+        public ReadOnlyList<GroupIndex> GetGroupsWithTagsAndComponents<T1, T2>(TagSet tagset)
             where T1 : unmanaged, IEntityComponent
             where T2 : unmanaged, IEntityComponent
         {
@@ -293,7 +500,7 @@ namespace Trecs
             return CommonGetTaggedGroupsWithComponents(tagset, _tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithTagsAndComponents<T1, T2, T3>(TagSet tagset)
+        public ReadOnlyList<GroupIndex> GetGroupsWithTagsAndComponents<T1, T2, T3>(TagSet tagset)
             where T1 : unmanaged, IEntityComponent
             where T2 : unmanaged, IEntityComponent
             where T3 : unmanaged, IEntityComponent
@@ -307,7 +514,9 @@ namespace Trecs
             return CommonGetTaggedGroupsWithComponents(tagset, _tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithTagsAndComponents<T1, T2, T3, T4>(TagSet tagset)
+        public ReadOnlyList<GroupIndex> GetGroupsWithTagsAndComponents<T1, T2, T3, T4>(
+            TagSet tagset
+        )
             where T1 : unmanaged, IEntityComponent
             where T2 : unmanaged, IEntityComponent
             where T3 : unmanaged, IEntityComponent
@@ -323,7 +532,7 @@ namespace Trecs
             return CommonGetTaggedGroupsWithComponents(tagset, _tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithTagsAndComponents<T1, T2, T3, T4, T5>(
+        public ReadOnlyList<GroupIndex> GetGroupsWithTagsAndComponents<T1, T2, T3, T4, T5>(
             TagSet tagset
         )
             where T1 : unmanaged, IEntityComponent
@@ -343,7 +552,7 @@ namespace Trecs
             return CommonGetTaggedGroupsWithComponents(tagset, _tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithTagsAndComponents<T1, T2, T3, T4, T5, T6>(
+        public ReadOnlyList<GroupIndex> GetGroupsWithTagsAndComponents<T1, T2, T3, T4, T5, T6>(
             TagSet tagset
         )
             where T1 : unmanaged, IEntityComponent
@@ -365,7 +574,7 @@ namespace Trecs
             return CommonGetTaggedGroupsWithComponents(tagset, _tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithTagsAndComponents<T1, T2, T3, T4, T5, T6, T7>(
+        public ReadOnlyList<GroupIndex> GetGroupsWithTagsAndComponents<T1, T2, T3, T4, T5, T6, T7>(
             TagSet tagset
         )
             where T1 : unmanaged, IEntityComponent
@@ -389,7 +598,7 @@ namespace Trecs
             return CommonGetTaggedGroupsWithComponents(tagset, _tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithTagsAndComponents<
+        public ReadOnlyList<GroupIndex> GetGroupsWithTagsAndComponents<
             T1,
             T2,
             T3,
@@ -422,7 +631,7 @@ namespace Trecs
             return CommonGetTaggedGroupsWithComponents(tagset, _tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithTagsAndComponents<
+        public ReadOnlyList<GroupIndex> GetGroupsWithTagsAndComponents<
             T1,
             T2,
             T3,
@@ -458,7 +667,7 @@ namespace Trecs
             return CommonGetTaggedGroupsWithComponents(tagset, _tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithTagsAndComponents<
+        public ReadOnlyList<GroupIndex> GetGroupsWithTagsAndComponents<
             T1,
             T2,
             T3,
@@ -497,7 +706,7 @@ namespace Trecs
             return CommonGetTaggedGroupsWithComponents(tagset, _tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithTagsAndComponents<
+        public ReadOnlyList<GroupIndex> GetGroupsWithTagsAndComponents<
             T1,
             T2,
             T3,
@@ -539,7 +748,7 @@ namespace Trecs
             return CommonGetTaggedGroupsWithComponents(tagset, _tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithTagsAndComponents<
+        public ReadOnlyList<GroupIndex> GetGroupsWithTagsAndComponents<
             T1,
             T2,
             T3,
@@ -584,7 +793,7 @@ namespace Trecs
             return CommonGetTaggedGroupsWithComponents(tagset, _tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents(Type componentType)
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents(Type componentType)
         {
             // Use a cached list to avoid any per frame allocs
             _tempComponentTypeList.Clear();
@@ -593,7 +802,7 @@ namespace Trecs
             return CommonGetGroupsWithComponents(_tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents(
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents(
             Type componentType1,
             Type componentType2
         )
@@ -606,7 +815,7 @@ namespace Trecs
             return CommonGetGroupsWithComponents(_tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents(
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents(
             Type componentType1,
             Type componentType2,
             Type componentType3
@@ -621,7 +830,7 @@ namespace Trecs
             return CommonGetGroupsWithComponents(_tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents(
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents(
             Type componentType1,
             Type componentType2,
             Type componentType3,
@@ -638,7 +847,7 @@ namespace Trecs
             return CommonGetGroupsWithComponents(_tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents(
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents(
             Type componentType1,
             Type componentType2,
             Type componentType3,
@@ -657,7 +866,7 @@ namespace Trecs
             return CommonGetGroupsWithComponents(_tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents(
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents(
             Type componentType1,
             Type componentType2,
             Type componentType3,
@@ -678,7 +887,7 @@ namespace Trecs
             return CommonGetGroupsWithComponents(_tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents(
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents(
             Type componentType1,
             Type componentType2,
             Type componentType3,
@@ -701,7 +910,7 @@ namespace Trecs
             return CommonGetGroupsWithComponents(_tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents(
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents(
             Type componentType1,
             Type componentType2,
             Type componentType3,
@@ -726,7 +935,7 @@ namespace Trecs
             return CommonGetGroupsWithComponents(_tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents(
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents(
             Type componentType1,
             Type componentType2,
             Type componentType3,
@@ -753,7 +962,7 @@ namespace Trecs
             return CommonGetGroupsWithComponents(_tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents(
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents(
             Type componentType1,
             Type componentType2,
             Type componentType3,
@@ -782,7 +991,7 @@ namespace Trecs
             return CommonGetGroupsWithComponents(_tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents(
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents(
             Type componentType1,
             Type componentType2,
             Type componentType3,
@@ -813,7 +1022,7 @@ namespace Trecs
             return CommonGetGroupsWithComponents(_tempComponentTypeList);
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents(
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents(
             Type componentType1,
             Type componentType2,
             Type componentType3,
@@ -846,11 +1055,9 @@ namespace Trecs
             return CommonGetGroupsWithComponents(_tempComponentTypeList);
         }
 
-        #region Generalized Group Query
+        readonly Dictionary<GroupQueryKey, ReadOnlyList<GroupIndex>> _groupQueryCache = new();
 
-        readonly Dictionary<GroupQueryKey, ReadOnlyFastList<Group>> _groupQueryCache = new();
-
-        internal ReadOnlyFastList<Group> ResolveGroups(GroupQueryKey key)
+        internal ReadOnlyList<GroupIndex> ResolveGroups(GroupQueryKey key)
         {
             if (_groupQueryCache.TryGetValue(key, out var cached))
                 return cached;
@@ -860,25 +1067,26 @@ namespace Trecs
             return result;
         }
 
-        ReadOnlyFastList<Group> ResolveGroupsUncached(GroupQueryKey key)
+        ReadOnlyList<GroupIndex> ResolveGroupsUncached(GroupQueryKey key)
         {
-            ReadOnlyFastList<Group> baseGroups;
+            ReadOnlyList<GroupIndex> baseGroups;
             if (!key.PositiveTags.IsNull)
                 baseGroups = GetTagsetInfo(key.PositiveTags).Groups;
             else
                 baseGroups = _allGroups;
 
-            var resultList = new FastList<Group>();
+            var resultList = new List<GroupIndex>();
 
             foreach (var group in baseGroups)
             {
                 if (key.HasNegativeTags)
                 {
+                    var groupTagSet = _worldInfo.ToTagSet(group);
                     var negativeTags = key.NegativeTags.Tags;
                     bool hasNegativeTag = false;
                     foreach (var tag in negativeTags)
                     {
-                        if (group.AsTagSet().Tags.Contains(tag))
+                        if (groupTagSet.Tags.Contains(tag))
                         {
                             hasNegativeTag = true;
                             break;
@@ -897,7 +1105,7 @@ namespace Trecs
                         bool hasAll = true;
                         foreach (var compId in key.PositiveComponents.Components)
                         {
-                            var type = TypeIdProvider.GetTypeFromId(compId.Value);
+                            var type = TypeId.ToType(new TypeId(compId.Value));
                             if (!resolvedTemplate.HasComponent(type))
                             {
                                 hasAll = false;
@@ -913,7 +1121,7 @@ namespace Trecs
                         bool hasNegative = false;
                         foreach (var compId in key.NegativeComponents.Components)
                         {
-                            var type = TypeIdProvider.GetTypeFromId(compId.Value);
+                            var type = TypeId.ToType(new TypeId(compId.Value));
                             if (resolvedTemplate.HasComponent(type))
                             {
                                 hasNegative = true;
@@ -931,22 +1139,20 @@ namespace Trecs
             return resultList;
         }
 
-        #endregion
-
-        public ReadOnlyFastList<Group> GetGroupsWithComponents<T1>()
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents<T1>()
             where T1 : unmanaged, IEntityComponent
         {
             return GetGroupsWithComponents(typeof(T1));
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents<T1, T2>()
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents<T1, T2>()
             where T1 : unmanaged, IEntityComponent
             where T2 : unmanaged, IEntityComponent
         {
             return GetGroupsWithComponents(typeof(T1), typeof(T2));
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents<T1, T2, T3>()
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents<T1, T2, T3>()
             where T1 : unmanaged, IEntityComponent
             where T2 : unmanaged, IEntityComponent
             where T3 : unmanaged, IEntityComponent
@@ -954,7 +1160,7 @@ namespace Trecs
             return GetGroupsWithComponents(typeof(T1), typeof(T2), typeof(T3));
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents<T1, T2, T3, T4>()
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents<T1, T2, T3, T4>()
             where T1 : unmanaged, IEntityComponent
             where T2 : unmanaged, IEntityComponent
             where T3 : unmanaged, IEntityComponent
@@ -963,7 +1169,7 @@ namespace Trecs
             return GetGroupsWithComponents(typeof(T1), typeof(T2), typeof(T3), typeof(T4));
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents<T1, T2, T3, T4, T5>()
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents<T1, T2, T3, T4, T5>()
             where T1 : unmanaged, IEntityComponent
             where T2 : unmanaged, IEntityComponent
             where T3 : unmanaged, IEntityComponent
@@ -979,7 +1185,7 @@ namespace Trecs
             );
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents<T1, T2, T3, T4, T5, T6>()
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents<T1, T2, T3, T4, T5, T6>()
             where T1 : unmanaged, IEntityComponent
             where T2 : unmanaged, IEntityComponent
             where T3 : unmanaged, IEntityComponent
@@ -997,7 +1203,7 @@ namespace Trecs
             );
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents<T1, T2, T3, T4, T5, T6, T7>()
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents<T1, T2, T3, T4, T5, T6, T7>()
             where T1 : unmanaged, IEntityComponent
             where T2 : unmanaged, IEntityComponent
             where T3 : unmanaged, IEntityComponent
@@ -1017,7 +1223,7 @@ namespace Trecs
             );
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents<T1, T2, T3, T4, T5, T6, T7, T8>()
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents<T1, T2, T3, T4, T5, T6, T7, T8>()
             where T1 : unmanaged, IEntityComponent
             where T2 : unmanaged, IEntityComponent
             where T3 : unmanaged, IEntityComponent
@@ -1039,7 +1245,17 @@ namespace Trecs
             );
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents<T1, T2, T3, T4, T5, T6, T7, T8, T9>()
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents<
+            T1,
+            T2,
+            T3,
+            T4,
+            T5,
+            T6,
+            T7,
+            T8,
+            T9
+        >()
             where T1 : unmanaged, IEntityComponent
             where T2 : unmanaged, IEntityComponent
             where T3 : unmanaged, IEntityComponent
@@ -1063,7 +1279,7 @@ namespace Trecs
             );
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents<
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents<
             T1,
             T2,
             T3,
@@ -1100,7 +1316,7 @@ namespace Trecs
             );
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents<
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents<
             T1,
             T2,
             T3,
@@ -1140,7 +1356,7 @@ namespace Trecs
             );
         }
 
-        public ReadOnlyFastList<Group> GetGroupsWithComponents<
+        public ReadOnlyList<GroupIndex> GetGroupsWithComponents<
             T1,
             T2,
             T3,
@@ -1185,17 +1401,29 @@ namespace Trecs
 
         class TagSetInfo
         {
-            public TagSetInfo(TagSet tagSet, ReadOnlyFastList<Group> groups)
+            public TagSetInfo(TagSet tagSet, ReadOnlyList<GroupIndex> groups)
             {
                 TagSet = tagSet;
                 Groups = groups;
             }
 
             public TagSet TagSet { get; }
-            public ReadOnlyFastList<Group> Groups { get; }
+            public ReadOnlyList<GroupIndex> Groups { get; }
 
-            public DenseDictionary<int, ReadOnlyFastList<Group>> WithComponentsSubsets { get; } =
-                new();
+            // Lazy cache for GetSingleGroupWithTags. Null until first
+            // successful resolve; ambiguous queries don't populate it (errors
+            // aren't on a hot path and re-throwing is fine).
+            //
+            // Relies on `default(GroupIndex) == GroupIndex.Null` so a freshly
+            // constructed TagSetInfo reads as "not cached" without an extra
+            // initializer. If GroupIndex's null sentinel ever stops being the
+            // default value, initialize this field explicitly.
+            public GroupIndex SingleGroup;
+
+            public IterableDictionary<
+                int,
+                ReadOnlyList<GroupIndex>
+            > WithComponentsSubsets { get; } = new();
         }
     }
 }

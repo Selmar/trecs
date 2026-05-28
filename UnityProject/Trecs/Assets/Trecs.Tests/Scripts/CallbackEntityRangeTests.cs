@@ -27,10 +27,10 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 42 })
                 .Set(new TestVec { X = 1f, Y = 2f })
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             int removedCount = 0;
-            Group observedGroup = default;
+            GroupIndex observedGroup = default;
             var sub = a
                 .Events.EntitiesWithTags(PartitionA)
                 .OnRemoved(
@@ -43,7 +43,7 @@ namespace Trecs.Tests
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(PartitionA);
             a.RemoveEntity(new EntityIndex(0, groupA));
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(1, removedCount, "Should report 1 removed entity");
             NAssert.AreEqual(groupA, observedGroup, "Should fire for correct group");
@@ -65,7 +65,7 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             int totalRemoved = 0;
             var sub = a
@@ -81,7 +81,7 @@ namespace Trecs.Tests
             a.RemoveEntity(handles[0]);
             a.RemoveEntity(handles[2]);
             a.RemoveEntity(handles[4]);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(3, totalRemoved, "Callback should report 3 removed entities");
             NAssert.AreEqual(2, a.CountEntitiesWithTags(PartitionA), "2 entities should survive");
@@ -105,7 +105,7 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             int removedCount = 0;
             var sub = a
@@ -118,11 +118,11 @@ namespace Trecs.Tests
                 );
 
             // Move entities 0, 1 to PartitionB; remove entities 4, 5
-            a.MoveTo(handles[0].ToIndex(a), PartitionB);
-            a.MoveTo(handles[1].ToIndex(a), PartitionB);
+            a.SetTag<TestPartitionB>(handles[0].ToIndex(a));
+            a.SetTag<TestPartitionB>(handles[1].ToIndex(a));
             a.RemoveEntity(handles[4]);
             a.RemoveEntity(handles[5]);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(2, removedCount, "Should report exactly 2 removed entities");
             NAssert.AreEqual(
@@ -152,10 +152,10 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 77 })
                 .Set(new TestVec())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             int observedValue = -1;
-            Group observedToGroup = default;
+            GroupIndex observedToGroup = default;
             EntityRange observedRange = default;
 
             var sub = a
@@ -173,8 +173,8 @@ namespace Trecs.Tests
                 );
 
             var groupA = a.WorldInfo.GetSingleGroupWithTags(PartitionA);
-            a.MoveTo(new EntityIndex(0, groupA), PartitionB);
-            a.SubmitEntities();
+            a.SetTag<TestPartitionB>(new EntityIndex(0, groupA));
+            a.Submit();
 
             var groupB = a.WorldInfo.GetSingleGroupWithTags(PartitionB);
             NAssert.AreEqual(groupB, observedToGroup);
@@ -202,7 +202,7 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var movedValues = new List<int>();
             var sub = a
@@ -218,10 +218,10 @@ namespace Trecs.Tests
                 );
 
             // Move 3 entities
-            a.MoveTo(handles[0].ToIndex(a), PartitionB);
-            a.MoveTo(handles[2].ToIndex(a), PartitionB);
-            a.MoveTo(handles[4].ToIndex(a), PartitionB);
-            a.SubmitEntities();
+            a.SetTag<TestPartitionB>(handles[0].ToIndex(a));
+            a.SetTag<TestPartitionB>(handles[2].ToIndex(a));
+            a.SetTag<TestPartitionB>(handles[4].ToIndex(a));
+            a.Submit();
 
             NAssert.AreEqual(3, movedValues.Count);
             movedValues.Sort();
@@ -246,7 +246,7 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             int movedCount = 0;
             var sub = a
@@ -259,11 +259,11 @@ namespace Trecs.Tests
                 );
 
             // Move 0,1 to PartitionB; remove 4,5
-            a.MoveTo(handles[0].ToIndex(a), PartitionB);
-            a.MoveTo(handles[1].ToIndex(a), PartitionB);
+            a.SetTag<TestPartitionB>(handles[0].ToIndex(a));
+            a.SetTag<TestPartitionB>(handles[1].ToIndex(a));
             a.RemoveEntity(handles[4]);
             a.RemoveEntity(handles[5]);
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(2, movedCount, "Move callback should only count moved entities");
             sub.Dispose();
@@ -299,7 +299,7 @@ namespace Trecs.Tests
                     .Set(new TestVec())
                     .AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(4, addedValues.Count);
             addedValues.Sort();
@@ -327,7 +327,7 @@ namespace Trecs.Tests
                     .AssertComplete()
                     .Handle;
             }
-            a.SubmitEntities();
+            a.Submit();
 
             int addedCount = 0;
             var sub = a
@@ -349,7 +349,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 101 })
                 .Set(new TestVec())
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             NAssert.AreEqual(2, addedCount, "OnAdded should fire for the 2 new entities");
             NAssert.AreEqual(4, a.CountEntitiesWithTags(PartitionA), "3 - 1 + 2 = 4");

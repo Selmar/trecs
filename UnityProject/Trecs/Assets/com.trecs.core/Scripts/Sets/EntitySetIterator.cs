@@ -1,25 +1,36 @@
 using Trecs.Internal;
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 
 namespace Trecs
 {
     /// <summary>
-    /// Unified set iterator. Yields (EntitySetIndices indices, Group group) per non-empty group.
+    /// Unified set iterator. Yields (EntitySetIndices indices, GroupIndex group) per non-empty group.
     /// </summary>
     public ref struct EntitySetIterator
     {
-        int _indexGroup;
-        readonly int _groupCount;
-        readonly NativeDenseDictionary<Group, SetGroupEntry> _entriesPerGroup;
+        int _registeredIndex;
+        readonly int _registeredCount;
+
+        [NativeDisableContainerSafetyRestriction]
+        readonly NativeList<SetGroupEntry> _entriesPerGroup;
+
+        readonly NativeList<GroupIndex> _registeredGroups;
+
         SetGroupEntry _current;
 
-        internal EntitySetIterator(in EntitySet set)
-            : this(set._entriesPerGroup) { }
+        internal EntitySetIterator(in EntitySetStorage set)
+            : this(set._entriesPerGroup, set._registeredGroups) { }
 
-        internal EntitySetIterator(NativeDenseDictionary<Group, SetGroupEntry> entriesPerGroup)
+        internal EntitySetIterator(
+            NativeList<SetGroupEntry> entriesPerGroup,
+            NativeList<GroupIndex> registeredGroups
+        )
         {
             _entriesPerGroup = entriesPerGroup;
-            _groupCount = _entriesPerGroup.Count;
-            _indexGroup = -1;
+            _registeredGroups = registeredGroups;
+            _registeredCount = registeredGroups.Length;
+            _registeredIndex = -1;
             _current = default;
         }
 
@@ -27,15 +38,15 @@ namespace Trecs
 
         public bool MoveNext()
         {
-            while (++_indexGroup < _groupCount)
+            while (++_registeredIndex < _registeredCount)
             {
-                _current = _entriesPerGroup.GetValuesWrite(out _)[_indexGroup];
+                _current = _entriesPerGroup[_registeredGroups[_registeredIndex].Index];
 
                 if (_current.Count > 0)
                     break;
             }
 
-            return _indexGroup < _groupCount;
+            return _registeredIndex < _registeredCount;
         }
 
         public readonly ref struct RefCurrent
@@ -47,20 +58,20 @@ namespace Trecs
                 _entry = entry;
             }
 
-            public void Deconstruct(out EntitySetIndices indices, out Group group)
+            public void Deconstruct(out EntitySetIndices indices, out GroupIndex group)
             {
                 indices = _entry.Indices;
-                group = _entry.Group;
+                group = _entry.GroupIndex;
             }
 
             public void Deconstruct(
                 out EntitySetIndices indices,
-                out Group group,
+                out GroupIndex group,
                 out SetGroupEntryRead groupEntry
             )
             {
                 indices = _entry.Indices;
-                group = _entry.Group;
+                group = _entry.GroupIndex;
                 groupEntry = new SetGroupEntryRead(_entry);
             }
         }

@@ -1,38 +1,79 @@
-# Groups & TagSets
+# Groups, GroupIndex & TagSets
 
-This page covers the low-level storage model behind [tags](../core/tags.md). Most users interact with tags through templates and `[ForEachEntity]` attributes and don't need the APIs described here. These are useful for advanced scenarios like custom job scheduling, dynamic queries, or tooling.
+This page covers the low-level storage model behind [tags](../core/tags.md). Most users interact with tags through templates and `[ForEachEntity]` attributes and don't need these APIs. They're useful for high performance job scheduling, dynamic queries, or tooling.
+
+It can also be useful to understand conceptually since it's fundamental to how Trecs works.
+
+## Terminology at a Glance
+
+These four terms are related but distinct — the docs and source are careful about which is which:
+
+| Term | What it is | Example |
+|---|---|---|
+| **Group** | Storage bucket. One per unique tag combination; holds the contiguous component arrays for entities with that exact tag set. | `{Player, VIP}` is a different group from `{Player}`. |
+| **Partition** | A group that an entity *moves between* at runtime to represent state, via `SetTag<T>()` / `UnsetTag<T>()` on a tag declared in `IPartitionedBy<…>`. "Partition" is the **role** a group plays — the storage is still a group. | An `Active` ball moves to the `Resting` partition via `ball.UnsetTag<Active>(World)`, without losing its components. |
+| **TagSet** | Stable identity for a tag combination — a 32-bit ID derived from the tag type hashes. Portable across runs and serializable. | `TagSet<GameTags.Player>.Value` resolves to the same value every run. |
+| **Set** | Dynamic, per-frame entity subset — membership is toggled at runtime by code, independent of tags or groups. See [Sets](../entity-management/sets.md). | A `Highlighted` set holding entities currently under the cursor. |
 
 ## Groups
 
-Groups are created **implicitly** from tag combinations. You never create groups directly — they emerge from how you use tags in templates and `AddEntity` calls.
+A **group** is Trecs' storage unit: a contiguous block of component arrays holding the entities that share one tag combination. Entities tagged `{Player, Character}` live in one group; entities tagged `{Enemy, Character}` live in another.
+
+Groups come from **templates** registered with the world at build time. Each unique tag combination across your registered templates defines exactly one group; the runtime API never creates new groups on the fly.
 
 ```csharp
-// These two entities belong to different groups:
-world.AddEntity<GameTags.Player>();                // Group: {Player}
-world.AddEntity<GameTags.Player, GameTags.VIP>();  // Group: {Player, VIP}
+// Two templates registered with WorldBuilder:
+//   PlayerEntity : ITagged<Player, Character>
+//   EnemyEntity  : ITagged<Enemy, Character>
+//
+// → Two groups exist: {Player, Character} and {Enemy, Character}.
 ```
 
-Each unique tag combination maps to exactly one group. Entities in the same group share the same component layout and are stored contiguously in memory.
+Each group is named by two handles — a stable `TagSet` and a runtime `GroupIndex`. See [TagSet](#tagset) and [GroupIndex](#groupindex) below.
 
-### Why Groups Matter
+### Why groups matter
 
 Groups are the foundation of Trecs' performance model:
 
-- **Cache efficiency** — entities with the same tags are packed together, so iterating over them is fast
-- **Targeted iteration** — systems can iterate over specific groups by tag, skipping irrelevant entities entirely
-- **Partitions** — template [partitions](../core/templates.md#partitions) use groups to separate entities by state, so each partition can be iterated independently
+- **Cache efficiency** — entities with the same tags are packed together, so iteration is fast.
+- **Targeted iteration** — systems iterate over specific groups by tag, skipping irrelevant entities.
+- **Partitions** — template [partitions](../core/templates.md#partitions) use groups to separate entities by state, so each partition iterates independently.
+
+## `AddEntity`: which group does the entity land in?
+
+The tags you pass to `AddEntity<...>()` are a **filter**, not a label. Trecs picks the registered group whose tag set contains every tag you passed:
+
+- **One group matches** → that's the target.
+- **Several match, all from different partitions on the same template** → the one with the fewest tags wins, as long as it's a unique minimum.
+- **Matches span multiple templates, or several tie at the smallest size** → throws ambiguous.
+
+```csharp
+// Given the two templates above ({Player, Character} and {Enemy, Character}):
+
+accessor.AddEntity<GameTags.Player>();
+// → {Player, Character}. Only this group contains Player.
+
+accessor.AddEntity<GameTags.Enemy, GameTags.Character>();
+// → {Enemy, Character}. Only this group contains Enemy.
+
+accessor.AddEntity<GameTags.Character>();
+// → throws. Both groups contain Character, and they belong to different
+//   templates — the resolver never picks across template boundaries.
+```
+
+`AddEntity<Player>()` works because `Player` narrows to one group. `AddEntity<Character>()` doesn't — `Character` alone matches both `PlayerEntity` and `EnemyEntity`, so you have to add `Player` or `Enemy` to disambiguate.
 
 ## GroupSlices
 
-`GroupSlices()` is a low-level iteration pattern that gives you direct access to component buffers per group. This bypasses the per-entity abstraction and can be more efficient for bulk operations, but requires you to manage group-level access yourself.
+`GroupSlices()` is a low-level iteration pattern that gives direct access to component buffers per group. It bypasses the per-entity abstraction and can be more efficient for bulk operations, but requires you to manage group-level access yourself.
 
 ### Dense GroupSlices
 
 ```csharp
-foreach (var slice in World.Query().WithTags<GameTags.Player>().GroupSlices())
+foreach (var slice in accessor.Query().WithTags<GameTags.Player>().GroupSlices())
 {
-    var positions = World.ComponentBuffer<Position>(slice.Group);
-    var velocities = World.ComponentBuffer<Velocity>(slice.Group);
+    var positions = accessor.ComponentBuffer<Position>(slice.GroupIndex).Write;
+    var velocities = accessor.ComponentBuffer<Velocity>(slice.GroupIndex).Read;
 
     for (int i = 0; i < slice.Count; i++)
     {
@@ -41,14 +82,16 @@ foreach (var slice in World.Query().WithTags<GameTags.Player>().GroupSlices())
 }
 ```
 
-### Sparse GroupSlices (Set Members)
+`ComponentBuffer<T>(group)` returns a `ComponentBufferAccessor<T>` — use `.Read` or `.Write` to get the native buffer (`NativeComponentBufferRead<T>` / `NativeComponentBufferWrite<T>`). The choice registers the access with the [dependency tracker](../performance/dependency-tracking.md).
+
+### Sparse GroupSlices (set members)
 
 When querying with `InSet<T>()`, iteration is sparse — only set members are visited:
 
 ```csharp
-foreach (var slice in World.Query().InSet<HighlightedParticles>().GroupSlices())
+foreach (var slice in accessor.Query().InSet<HighlightedParticles>().GroupSlices())
 {
-    var colors = World.ComponentBuffer<ColorComponent>(slice.Group);
+    var colors = accessor.ComponentBuffer<ColorComponent>(slice.GroupIndex).Write;
 
     foreach (int idx in slice.Indices)
     {
@@ -58,7 +101,7 @@ foreach (var slice in World.Query().InSet<HighlightedParticles>().GroupSlices())
 ```
 
 !!! tip
-    For most use cases, prefer `[ForEachEntity]`, aspect queries, or `EntityIndices()` iteration. GroupSlices are mainly useful when you need maximum throughput and are comfortable working at the group level. See [Queries & Iteration](../data-access/queries-and-iteration.md) for the higher-level alternatives.
+    Prefer `[ForEachEntity]`, aspect queries, or `.Handles()` / `.Indices()` iteration. GroupSlices are useful when you need maximum throughput and are comfortable working at the group level. See [Queries & Iteration](../data-access/queries-and-iteration.md) for the higher-level alternatives.
 
 ## TagSet
 
@@ -76,7 +119,34 @@ TagSet tags = TagSet.FromTags(Tag<GameTags.Player>.Value, Tag<GameTags.Enemy>.Va
 TagSet combined = playerTags.CombineWith(TagSet<GameTags.Active>.Value);
 ```
 
-## Tag&lt;T&gt;
+`TagSet` uses a stable identity (the `Id` property), so it's safe to serialize — the same tag combination produces the same value across runs.
+
+## GroupIndex
+
+`GroupIndex` is the runtime handle the core ECS plumbing uses to index into per-group storage (component buffers, sets, events). It's a `ushort` internally, 1-based with a `GroupIndex.Null` sentinel.
+
+```csharp
+// Resolve a TagSet to its GroupIndex (main-thread world queries)
+GroupIndex playerGroup = worldInfo.GetSingleGroupWithTags(TagSet<GameTags.Player>.Value);
+
+// Null check
+if (playerGroup.IsNull) { /* no group registered for this tag combination */ }
+
+// Use with per-group APIs (on a WorldAccessor)
+var positions = accessor.ComponentBuffer<Position>(playerGroup).Read;
+int count = accessor.CountEntitiesInGroup(playerGroup);
+```
+
+`GroupIndex` values are assigned sequentially during `WorldBuilder.Build()` and are stable for the lifetime of a `World`. They are **not** stable across runs — don't store them on disk. Persist the `TagSet` and resolve back to a `GroupIndex` after load.
+
+Event callbacks receive `GroupIndex` directly when iterating ranges:
+
+```csharp
+accessor.Events.EntitiesWithTags<GameTags.Enemy>()
+    .OnRemoved((GroupIndex group, EntityRange indices) => { ... });
+```
+
+## `Tag<T>`
 
 For runtime tag operations, use the `Tag<T>` cache:
 

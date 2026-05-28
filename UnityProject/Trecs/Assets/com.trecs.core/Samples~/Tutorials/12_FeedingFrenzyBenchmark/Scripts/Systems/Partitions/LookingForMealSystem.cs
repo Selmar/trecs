@@ -82,7 +82,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
 
         void PairFishWithMeal(in Fish fish, in Meal meal)
         {
-            fish.TargetMeal = meal.EntityIndex.ToHandle(World);
+            fish.TargetMeal = meal.Handle(World);
             fish.DestinationPosition = meal.Position;
             fish.DestinationPosition.y = fish.Position.y;
 
@@ -91,10 +91,10 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
             fish.Rotation = quaternion.LookRotationSafe(destinationDir, math.up());
             fish.Velocity = destinationDir * fish.Speed;
 
-            meal.ApproachingFish = fish.EntityIndex.ToHandle(World);
+            meal.ApproachingFish = fish.Handle(World);
 
-            World.MoveTo<FrenzyTags.Fish, FrenzyTags.Eating>(fish.EntityIndex);
-            World.MoveTo<FrenzyTags.Meal, FrenzyTags.Eating>(meal.EntityIndex);
+            fish.SetTag<FrenzyTags.Eating>(World);
+            meal.SetTag<FrenzyTags.Eating>(World);
         }
 
         void RunQueryGroupSlices()
@@ -107,7 +107,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
 
             var mealPositions = default(NativeComponentBufferRead<Position>);
             var mealApproachingFish = default(NativeComponentBufferWrite<ApproachingFish>);
-            var mealGroup = default(Group);
+            var mealGroup = default(GroupIndex);
             int mi = 0;
             int mealGroupCount = 0;
 
@@ -118,12 +118,14 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
                     .GroupSlices()
             )
             {
-                var positions = World.ComponentBuffer<Position>(slice.Group).Read;
-                var speeds = World.ComponentBuffer<Speed>(slice.Group).Read;
-                var meals = World.ComponentBuffer<TargetMeal>(slice.Group).Write;
-                var velocities = World.ComponentBuffer<Velocity>(slice.Group).Write;
-                var destPositions = World.ComponentBuffer<DestinationPosition>(slice.Group).Write;
-                var rotations = World.ComponentBuffer<Rotation>(slice.Group).Write;
+                var positions = World.ComponentBuffer<Position>(slice.GroupIndex).Read;
+                var speeds = World.ComponentBuffer<Speed>(slice.GroupIndex).Read;
+                var meals = World.ComponentBuffer<TargetMeal>(slice.GroupIndex).Write;
+                var velocities = World.ComponentBuffer<Velocity>(slice.GroupIndex).Write;
+                var destPositions = World
+                    .ComponentBuffer<DestinationPosition>(slice.GroupIndex)
+                    .Write;
+                var rotations = World.ComponentBuffer<Rotation>(slice.GroupIndex).Write;
 
                 for (int fi = 0; fi < slice.Count; fi++)
                 {
@@ -133,11 +135,11 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
                             return;
 
                         var mealSlice = mealSliceIter.Current;
-                        mealPositions = World.ComponentBuffer<Position>(mealSlice.Group).Read;
+                        mealPositions = World.ComponentBuffer<Position>(mealSlice.GroupIndex).Read;
                         mealApproachingFish = World
-                            .ComponentBuffer<ApproachingFish>(mealSlice.Group)
+                            .ComponentBuffer<ApproachingFish>(mealSlice.GroupIndex)
                             .Write;
-                        mealGroup = mealSlice.Group;
+                        mealGroup = mealSlice.GroupIndex;
                         mealGroupCount = mealSlice.Count;
                         mi = 0;
                     }
@@ -145,7 +147,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
                     var mealEntityIndex = new EntityIndex(mi, mealGroup);
                     var mealPos = mealPositions[mi].Value;
 
-                    var fishEntityIndex = new EntityIndex(fi, slice.Group);
+                    var fishEntityIndex = new EntityIndex(fi, slice.GroupIndex);
 
                     meals[fi].Value = mealEntityIndex.ToHandle(World);
                     mealApproachingFish[mi].Value = fishEntityIndex.ToHandle(World);
@@ -158,8 +160,8 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
                     rotations[fi].Value = quaternion.LookRotationSafe(dir, math.up());
                     velocities[fi].Value = dir * speeds[fi].Value;
 
-                    World.MoveTo<FrenzyTags.Fish, FrenzyTags.Eating>(fishEntityIndex);
-                    World.MoveTo<FrenzyTags.Meal, FrenzyTags.Eating>(mealEntityIndex);
+                    fishEntityIndex.SetTag<FrenzyTags.Eating>(World);
+                    mealEntityIndex.SetTag<FrenzyTags.Eating>(World);
 
                     mi++;
                 }
@@ -169,51 +171,51 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
         [BurstCompile]
         partial struct RawComponentBuffersJob : IJobFor
         {
-            [FromWorld(Tags = new[] { typeof(FrenzyTags.Meal), typeof(FrenzyTags.NotEating) })]
+            [FromWorld(typeof(FrenzyTags.Meal), typeof(FrenzyTags.NotEating))]
             public NativeComponentBufferRead<Position> MealPositions;
 
-            [FromWorld(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+            [FromWorld(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
             public NativeComponentBufferRead<Position> FishPositions;
 
-            [FromWorld(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+            [FromWorld(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
             public NativeComponentBufferRead<Speed> FishSpeeds;
 
             [NativeDisableParallelForRestriction]
-            [FromWorld(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+            [FromWorld(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
             public NativeComponentBufferWrite<TargetMeal> Meals;
 
             [NativeDisableParallelForRestriction]
-            [FromWorld(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+            [FromWorld(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
             public NativeComponentBufferWrite<Velocity> Velocities;
 
             [NativeDisableParallelForRestriction]
-            [FromWorld(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+            [FromWorld(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
             public NativeComponentBufferWrite<DestinationPosition> DestinationPositions;
 
             [NativeDisableParallelForRestriction]
-            [FromWorld(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+            [FromWorld(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
             public NativeComponentBufferWrite<Rotation> Rotations;
 
             [NativeDisableParallelForRestriction]
-            [FromWorld(Tags = new[] { typeof(FrenzyTags.Meal), typeof(FrenzyTags.NotEating) })]
+            [FromWorld(typeof(FrenzyTags.Meal), typeof(FrenzyTags.NotEating))]
             public NativeComponentBufferWrite<ApproachingFish> MealApproachingFish;
 
             // We could also call World.GetEntityHandle instead but by injecting the NativeEntityHandleBuffer
             // we save a dictionary lookup per entity
-            [FromWorld(Tags = new[] { typeof(FrenzyTags.Meal), typeof(FrenzyTags.NotEating) })]
+            [FromWorld(typeof(FrenzyTags.Meal), typeof(FrenzyTags.NotEating))]
             public NativeEntityHandleBuffer MealEntityHandles;
 
-            [FromWorld(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
+            [FromWorld(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
             public NativeEntityHandleBuffer FishEntityHandles;
 
             [FromWorld]
             public NativeWorldAccessor World;
 
-            [FromWorld(Tags = new[] { typeof(FrenzyTags.Meal), typeof(FrenzyTags.NotEating) })]
-            public Group MealGroup;
+            [FromWorld(typeof(FrenzyTags.Meal), typeof(FrenzyTags.NotEating))]
+            public GroupIndex MealGroup;
 
-            [FromWorld(Tags = new[] { typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating) })]
-            public Group FishGroup;
+            [FromWorld(typeof(FrenzyTags.Fish), typeof(FrenzyTags.NotEating))]
+            public GroupIndex FishGroup;
 
             public readonly void Execute(int i)
             {
@@ -234,8 +236,8 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark.Partitions
 
                 var mealEntityIndex = new EntityIndex(i, MealGroup);
                 var fishEntityIndex = new EntityIndex(i, FishGroup);
-                World.MoveTo<FrenzyTags.Fish, FrenzyTags.Eating>(fishEntityIndex);
-                World.MoveTo<FrenzyTags.Meal, FrenzyTags.Eating>(mealEntityIndex);
+                fishEntityIndex.SetTag<FrenzyTags.Eating>(World);
+                mealEntityIndex.SetTag<FrenzyTags.Eating>(World);
             }
         }
 

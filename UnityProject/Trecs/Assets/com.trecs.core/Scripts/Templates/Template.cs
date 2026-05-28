@@ -1,21 +1,25 @@
+using System;
 using System.Collections.Generic;
 
 namespace Trecs
 {
     /// <summary>
-    /// Declares an entity type's component layout, tags, valid partitions, and inheritance chain.
+    /// Describes an entity's component layout, tags, valid partitions, and inheritance chain.
     /// Templates are defined as classes implementing <see cref="ITemplate"/> — the source generator
     /// produces concrete <see cref="Template"/> instances automatically. Register via
-    /// <see cref="WorldBuilder.AddEntityType"/>.
+    /// <see cref="WorldBuilder.AddTemplate"/>.
     /// </summary>
-    public class Template
+    public sealed class Template
     {
         public Template(
             string debugName,
             IReadOnlyList<Template> localBaseTemplates,
             IReadOnlyList<TagSet> partitions,
             IReadOnlyList<IComponentDeclaration> localComponentDeclarations,
-            IReadOnlyList<Tag> localTags
+            IReadOnlyList<Tag> localTags,
+            bool localVariableUpdateOnly = false,
+            IReadOnlyList<TagSet> dimensions = null,
+            bool isAbstract = false
         )
         {
             DebugName = debugName;
@@ -23,7 +27,19 @@ namespace Trecs
             LocalComponentDeclarations = localComponentDeclarations;
             LocalTags = localTags;
             Partitions = partitions;
+            Dimensions = dimensions ?? Array.Empty<TagSet>();
+            LocalVariableUpdateOnly = localVariableUpdateOnly;
+            IsAbstract = isAbstract;
         }
+
+        /// <summary>
+        /// True iff this exact template class is declared <c>[VariableUpdateOnly]</c>.
+        /// Does NOT account for inheritance — a derived template that inherits VUO
+        /// from a base will still report <c>false</c> here. Production access-rule
+        /// code should read <see cref="ResolvedTemplate.VariableUpdateOnly"/> instead,
+        /// which transitively ORs the flag across the full base-template chain.
+        /// </summary>
+        public bool LocalVariableUpdateOnly { get; }
 
         public override string ToString()
         {
@@ -35,6 +51,13 @@ namespace Trecs
         /// An empty list means the template has a single implicit partition.
         /// </summary>
         public IReadOnlyList<TagSet> Partitions { get; }
+
+        /// <summary>
+        /// Partition dimensions declared on this template. Each entry is a TagSet of
+        /// mutually exclusive variant tags for one dimension (e.g. {Alive, Dead}).
+        /// <see cref="Partitions"/> is the cross product across all dimensions.
+        /// </summary>
+        public IReadOnlyList<TagSet> Dimensions { get; }
 
         /// <summary>
         /// Tags declared directly on this template (not inherited from base templates).
@@ -52,5 +75,12 @@ namespace Trecs
         /// Component declarations defined directly on this template (not inherited).
         /// </summary>
         public IReadOnlyList<IComponentDeclaration> LocalComponentDeclarations { get; }
+
+        /// <summary>
+        /// True when the source template class is declared <c>abstract</c>. Abstract templates
+        /// may appear as <c>IExtends&lt;&gt;</c> bases of concrete templates, but they cannot be
+        /// passed to <see cref="WorldBuilder.AddTemplate"/> — that throws.
+        /// </summary>
+        public bool IsAbstract { get; }
     }
 }

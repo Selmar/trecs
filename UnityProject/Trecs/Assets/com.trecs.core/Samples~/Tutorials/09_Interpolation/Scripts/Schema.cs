@@ -22,15 +22,18 @@ namespace Trecs.Samples.Interpolation
         /// InterpolatedPrevious wrapper components. The interpolation system
         /// blends between fixed-frame snapshots for smooth variable-rate rendering.
         /// </summary>
-        public partial class SmoothOrbitEntity : ITemplate, IHasTags<OrbitTags.Smooth>
+        public partial class SmoothOrbitEntity
+            : ITemplate,
+                IExtends<CommonTemplates.RenderableGameObject>,
+                ITagged<OrbitTags.Smooth>
         {
             [Interpolated]
-            public Position Position = default;
+            Position Position = default;
 
             [Interpolated]
-            public Rotation Rotation = default;
-            public OrbitParams OrbitParams;
-            public GameObjectId GameObjectId;
+            Rotation Rotation = default;
+            OrbitParams OrbitParams;
+            PrefabId PrefabId = new(InterpolationPrefabs.SmoothCube);
         }
 
         /// <summary>
@@ -38,12 +41,15 @@ namespace Trecs.Samples.Interpolation
         /// The renderer reads Position directly, which may appear jittery
         /// when fixed and variable update rates differ.
         /// </summary>
-        public partial class RawOrbitEntity : ITemplate, IHasTags<OrbitTags.Raw>
+        public partial class RawOrbitEntity
+            : ITemplate,
+                IExtends<CommonTemplates.RenderableGameObject>,
+                ITagged<OrbitTags.Raw>
         {
-            public Position Position = default;
-            public Rotation Rotation = default;
-            public OrbitParams OrbitParams;
-            public GameObjectId GameObjectId;
+            Position Position = default;
+            Rotation Rotation = default;
+            OrbitParams OrbitParams;
+            PrefabId PrefabId = new(InterpolationPrefabs.RawCube);
         }
     }
 }

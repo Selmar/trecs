@@ -16,7 +16,7 @@ namespace Trecs.Tests
             var a = env.Accessor;
 
             a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 123 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
             var comp = a.Component<TestInt>(new EntityIndex(0, group));
@@ -34,7 +34,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 456 })
                 .AssertComplete();
             var entityHandle = init.Handle;
-            a.SubmitEntities();
+            a.Submit();
 
             var comp = a.Component<TestInt>(entityHandle);
 
@@ -48,7 +48,7 @@ namespace Trecs.Tests
             var a = env.Accessor;
 
             a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 10 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
             var comp = a.Component<TestInt>(new EntityIndex(0, group));
@@ -69,7 +69,7 @@ namespace Trecs.Tests
             var a = env.Accessor;
 
             a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 55 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
             var found = a.TryComponent<TestInt>(new EntityIndex(0, group), out var comp);
@@ -85,13 +85,44 @@ namespace Trecs.Tests
             var a = env.Accessor;
 
             a.AddEntity(TestTags.Alpha).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
             a.RemoveEntity(new EntityIndex(0, group));
-            a.SubmitEntities();
+            a.Submit();
 
             var found = a.TryComponent<TestInt>(new EntityIndex(0, group), out _);
+
+            NAssert.IsFalse(found);
+        }
+
+        [Test]
+        public void Component_TryGet_ByHandle_Existing_ReturnsTrue()
+        {
+            using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
+            var a = env.Accessor;
+
+            var init = a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 77 }).AssertComplete();
+            var handle = init.Handle;
+            a.Submit();
+
+            var found = a.TryComponent<TestInt>(handle, out var comp);
+
+            NAssert.IsTrue(found);
+            NAssert.AreEqual(77, comp.Read.Value);
+        }
+
+        [Test]
+        public void Component_TryGet_ByHandle_MissingComponent_ReturnsFalse()
+        {
+            using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
+            var a = env.Accessor;
+
+            var init = a.AddEntity(TestTags.Alpha).AssertComplete();
+            var handle = init.Handle;
+            a.Submit();
+
+            var found = a.TryComponent<TestFloat>(handle, out _);
 
             NAssert.IsFalse(found);
         }
@@ -110,7 +141,7 @@ namespace Trecs.Tests
             {
                 a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = i }).AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
             var count = a.CountEntitiesInGroup(group);
@@ -131,7 +162,7 @@ namespace Trecs.Tests
                     .Set(new TestFloat { Value = i * 0.5f })
                     .AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Beta);
             var count = a.CountEntitiesInGroup(group);
@@ -147,7 +178,7 @@ namespace Trecs.Tests
 
             a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 100 }).AssertComplete();
             a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 200 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
             var comp0 = a.Component<TestInt>(new EntityIndex(0, group));
@@ -180,9 +211,9 @@ namespace Trecs.Tests
             var a = env.Accessor;
 
             a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 999 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
-            var comp = a.Query().WithTags(TestTags.Alpha).Single().Get<TestInt>();
+            var comp = a.Query().WithTags(TestTags.Alpha).SingleHandle().Component<TestInt>(a);
 
             NAssert.AreEqual(999, comp.Read.Value);
         }
@@ -193,7 +224,7 @@ namespace Trecs.Tests
             using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
             var a = env.Accessor;
 
-            var found = a.Query().WithTags(TestTags.Alpha).TrySingle(out _);
+            var found = a.Query().WithTags(TestTags.Alpha).TrySingleHandle(out _);
 
             NAssert.IsFalse(found);
         }
@@ -211,7 +242,7 @@ namespace Trecs.Tests
             // Global entity exists after init - verify via WorldInfo
             NAssert.IsNotNull(a.WorldInfo.GlobalTemplate);
             var globalEntityIndex = a.WorldInfo.GlobalEntityIndex;
-            NAssert.AreEqual(a.WorldInfo.GlobalGroup, globalEntityIndex.Group);
+            NAssert.AreEqual(a.WorldInfo.GlobalGroup, globalEntityIndex.GroupIndex);
         }
 
         #endregion
@@ -231,7 +262,7 @@ namespace Trecs.Tests
                     .Set(new TestFloat { Value = i * 0.5f })
                     .AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Beta);
             var buf1 = a.ComponentBuffer<TestInt>(group).Read;
@@ -261,7 +292,7 @@ namespace Trecs.Tests
             {
                 a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = i }).AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
             var buffer = a.ComponentBuffer<TestInt>(group).Write;
@@ -296,13 +327,13 @@ namespace Trecs.Tests
                     .Set(new TestVec { X = i * 1.0f, Y = i * 2.0f })
                     .AssertComplete();
             }
-            a.SubmitEntities();
+            a.Submit();
 
             int totalEntities = 0;
             foreach (var slice in a.Query().WithTags(tags).GroupSlices())
             {
-                var intBuf = a.ComponentBuffer<TestInt>(slice.Group).Read;
-                var vecBuf = a.ComponentBuffer<TestVec>(slice.Group).Read;
+                var intBuf = a.ComponentBuffer<TestInt>(slice.GroupIndex).Read;
+                var vecBuf = a.ComponentBuffer<TestVec>(slice.GroupIndex).Read;
                 for (int i = 0; i < slice.Count; i++)
                 {
                     NAssert.AreEqual(
@@ -335,7 +366,7 @@ namespace Trecs.Tests
 
             a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 77 }).AssertComplete();
             a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 88 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
             using var lookup = a.CreateNativeComponentLookupRead<TestInt>(
@@ -362,7 +393,7 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 20 })
                 .Set(new TestFloat { Value = 1.0f })
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             // Lookup scoped to Alpha only
             using var lookup = a.CreateNativeComponentLookupRead<TestInt>(
@@ -393,7 +424,7 @@ namespace Trecs.Tests
 
             a.AddEntity(partitionA).Set(new TestInt { Value = 100 }).AssertComplete();
             a.AddEntity(partitionB).Set(new TestInt { Value = 200 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             // Lookup scoped to all Gamma-tagged groups
             using var lookup = a.CreateNativeComponentLookupRead<TestInt>(
@@ -420,7 +451,7 @@ namespace Trecs.Tests
 
             a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 10 }).AssertComplete();
             a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 20 }).AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             int groupCount = 0;
             int totalEntities = 0;
@@ -454,7 +485,7 @@ namespace Trecs.Tests
             a.AddEntity(TagSet.FromTags(TestTags.Gamma, TestTags.PartitionB))
                 .Set(new TestInt { Value = 2 })
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             int groupCount = 0;
             int totalEntities = 0;
@@ -478,7 +509,7 @@ namespace Trecs.Tests
             a.AddEntity(TagSet.FromTags(TestTags.Gamma, TestTags.PartitionA))
                 .Set(new TestInt { Value = 1 })
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             int groupCount = 0;
 
@@ -500,14 +531,14 @@ namespace Trecs.Tests
                 .Set(new TestInt { Value = 5 })
                 .Set(new TestFloat { Value = 1.5f })
                 .AssertComplete();
-            a.SubmitEntities();
+            a.Submit();
 
             int groupCount = 0;
 
             foreach (var slice in a.Query().WithTags(TestTags.Beta).GroupSlices())
             {
-                var buf1 = a.ComponentBuffer<TestInt>(slice.Group).Read;
-                var buf2 = a.ComponentBuffer<TestFloat>(slice.Group).Read;
+                var buf1 = a.ComponentBuffer<TestInt>(slice.GroupIndex).Read;
+                var buf2 = a.ComponentBuffer<TestFloat>(slice.GroupIndex).Read;
                 groupCount++;
                 NAssert.AreEqual(1, (int)slice.Count);
                 NAssert.AreEqual(5, buf1[0].Value);

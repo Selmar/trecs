@@ -5,7 +5,7 @@ using Unity.Mathematics;
 
 namespace Trecs.Samples.FeedingFrenzyBenchmark
 {
-    [VariableUpdate]
+    [ExecuteIn(SystemPhase.Presentation)]
     public partial class TextDisplaySystem : ISystem
     {
         readonly TMP_Text _displayText;
@@ -41,6 +41,22 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
 
             _sb.Clear();
             AppendStat("Entity Count", $"{stats.EntityCount:N0}");
+
+            if (config.SubsetApproach == FrenzySubsetApproach.Partitions)
+            {
+                int fishCount = World.CountEntitiesWithTags<FrenzyTags.Fish>();
+                int idleFishCount = World.CountEntitiesWithTags<
+                    FrenzyTags.Fish,
+                    FrenzyTags.NotEating
+                >();
+                float idlePercent = fishCount > 0 ? idleFishCount * 100f / fishCount : 0f;
+                AppendStat(
+                    "Idle Fish",
+                    $"{idleFishCount:N0}",
+                    secondary: $"({idlePercent:F1}% of {fishCount:N0})"
+                );
+            }
+
             int presetIndex = World.GlobalComponent<DesiredPreset>().Read.Value;
             int desiredFishCount = _fishCountPresets[
                 math.clamp(presetIndex, 0, _fishCountPresets.Length - 1)
@@ -122,7 +138,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
             _sb.AppendLine($"<i><color={SecondaryColor}>{text}</color></i>");
         }
 
-        const float RefreshInterval = 0.5f;
+        const float RefreshInterval = 0.2f;
 
         const string LabelColor = "#E0E0E0";
         const string ValueColor = "#00E5FF";

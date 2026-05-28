@@ -32,12 +32,15 @@ namespace Trecs.Samples.Sets
 
     public static partial class SampleTemplates
     {
-        public partial class ParticleEntity : ITemplate, IHasTags<SampleTags.Particle>
+        public partial class ParticleEntity
+            : ITemplate,
+                IExtends<CommonTemplates.RenderableGameObject>,
+                ITagged<SampleTags.Particle>
         {
-            public Position Position = default;
-            public WarmIntensity WarmIntensity = default;
-            public CoolIntensity CoolIntensity = default;
-            public GameObjectId GameObjectId;
+            Position Position = default;
+            WarmIntensity WarmIntensity = default;
+            CoolIntensity CoolIntensity = default;
+            PrefabId PrefabId = new(SetsPrefabs.Particle);
         }
     }
 }

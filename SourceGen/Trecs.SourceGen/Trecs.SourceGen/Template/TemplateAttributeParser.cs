@@ -19,9 +19,7 @@ namespace Trecs.SourceGen.Template
         /// </summary>
         public static TemplateDefinitionData Parse(
             INamedTypeSymbol symbol,
-            TypeDeclarationSyntax syntax,
-            Action<Diagnostic>? reportDiagnostic = null,
-            Location? location = null
+            TypeDeclarationSyntax syntax
         )
         {
             var typeName = symbol.Name;
@@ -29,38 +27,45 @@ namespace Trecs.SourceGen.Template
             var accessibility = SymbolAnalyzer.GetAccessibilityModifier(symbol);
             var containingTypes = SymbolAnalyzer.GetContainingTypeChain(symbol).ToImmutableArray();
             var isClass = symbol.TypeKind == TypeKind.Class;
+            var isAbstract = symbol.IsAbstract;
 
             var tagTypeNames = ExtractTagTypeNames(symbol);
             var baseTemplateTypeNames = ExtractBaseTemplateTypeNames(symbol);
             var isGlobals = IsGlobalsTemplate(symbol);
-            var partitions = ExtractPartitions(symbol);
+            var isVariableUpdateOnly = HasAttribute(
+                symbol.GetAttributes(),
+                "VariableUpdateOnlyAttribute"
+            );
+            var dimensions = ExtractDimensions(symbol);
             var defaultInitializedFields = GetDefaultInitializedFields(syntax);
             var components = ExtractComponents(symbol, defaultInitializedFields);
 
             return new TemplateDefinitionData(
-                typeName,
-                namespaceName,
-                accessibility,
-                isClass,
-                isGlobals,
-                containingTypes,
-                tagTypeNames,
-                baseTemplateTypeNames,
-                components,
-                partitions
+                TypeName: typeName,
+                NamespaceName: namespaceName,
+                Accessibility: accessibility,
+                IsClass: isClass,
+                IsAbstract: isAbstract,
+                IsGlobals: isGlobals,
+                IsVariableUpdateOnly: isVariableUpdateOnly,
+                ContainingTypes: containingTypes.ToEquatableArray(),
+                TagTypeNames: tagTypeNames,
+                BaseTemplateTypeNames: baseTemplateTypeNames,
+                Components: components,
+                Dimensions: dimensions
             );
         }
 
         /// <summary>
-        /// Extracts tag type names from IHasTags&lt;T1, T2, ...&gt; interfaces
+        /// Extracts tag type names from ITagged&lt;T1, T2, ...&gt; interfaces
         /// </summary>
-        private static ImmutableArray<string> ExtractTagTypeNames(INamedTypeSymbol symbol)
+        private static EquatableArray<string> ExtractTagTypeNames(INamedTypeSymbol symbol)
         {
             var tags = new List<string>();
 
             foreach (var iface in symbol.Interfaces)
             {
-                if (IsIHasTagsInterface(iface))
+                if (IsITaggedInterface(iface))
                 {
                     foreach (var typeArg in iface.TypeArguments)
                     {
@@ -69,13 +74,13 @@ namespace Trecs.SourceGen.Template
                 }
             }
 
-            return tags.ToImmutableArray();
+            return tags.ToEquatableArray();
         }
 
         /// <summary>
         /// Extracts base template type names from IExtends&lt;T1, T2, ...&gt; interfaces
         /// </summary>
-        private static ImmutableArray<string> ExtractBaseTemplateTypeNames(INamedTypeSymbol symbol)
+        private static EquatableArray<string> ExtractBaseTemplateTypeNames(INamedTypeSymbol symbol)
         {
             var baseTemplates = new List<string>();
 
@@ -90,36 +95,38 @@ namespace Trecs.SourceGen.Template
                 }
             }
 
-            return baseTemplates.ToImmutableArray();
+            return baseTemplates.ToEquatableArray();
         }
 
         /// <summary>
-        /// Extracts partition combinations from IHasPartition&lt;T1, T2, ...&gt; interfaces
+        /// Extracts partition dimensions from IPartitionedBy&lt;T1, T2, ...&gt; interfaces.
+        /// Each interface declares one dimension whose type arguments are mutually exclusive
+        /// variant tags.
         /// </summary>
-        private static ImmutableArray<TemplatePartitionData> ExtractPartitions(
+        private static EquatableArray<TemplateDimensionData> ExtractDimensions(
             INamedTypeSymbol symbol
         )
         {
-            var partitions = new List<TemplatePartitionData>();
+            var dimensions = new List<TemplateDimensionData>();
 
             foreach (var iface in symbol.Interfaces)
             {
-                if (IsIHasPartitionInterface(iface))
+                if (IsIPartitionedByInterface(iface))
                 {
-                    var tagNames = iface
+                    var variantTagNames = iface
                         .TypeArguments.Select(t => PerformanceCache.GetDisplayString(t))
-                        .ToImmutableArray();
-                    partitions.Add(new TemplatePartitionData(tagNames));
+                        .ToEquatableArray();
+                    dimensions.Add(new TemplateDimensionData(variantTagNames));
                 }
             }
 
-            return partitions.ToImmutableArray();
+            return dimensions.ToEquatableArray();
         }
 
         /// <summary>
         /// Extracts component field data from the struct's fields
         /// </summary>
-        private static ImmutableArray<TemplateComponentData> ExtractComponents(
+        private static EquatableArray<TemplateComponentData> ExtractComponents(
             INamedTypeSymbol symbol,
             ImmutableHashSet<string>? defaultInitializedFields
         )
@@ -133,7 +140,6 @@ namespace Trecs.SourceGen.Template
                     var attrs = field.GetAttributes();
 
                     bool isInterpolated = HasAttribute(attrs, "InterpolatedAttribute");
-                    bool isFixedUpdateOnly = HasAttribute(attrs, "FixedUpdateOnlyAttribute");
                     bool isVariableUpdateOnly = HasAttribute(attrs, "VariableUpdateOnlyAttribute");
                     bool isConstant = HasAttribute(attrs, "ConstantAttribute");
                     bool hasExplicitDefault =
@@ -141,7 +147,6 @@ namespace Trecs.SourceGen.Template
 
                     bool isInput = false;
                     string? inputFrameBehaviour = null;
-                    bool inputWarnOnMissing = false;
 
                     var inputAttr = attrs.FirstOrDefault(a =>
                         a.AttributeClass?.Name == "InputAttribute"
@@ -172,33 +177,24 @@ namespace Trecs.SourceGen.Template
                                 }
                             }
                         }
-                        if (
-                            inputAttr.ConstructorArguments.Length >= 2
-                            && inputAttr.ConstructorArguments[1].Value is bool warn
-                        )
-                        {
-                            inputWarnOnMissing = warn;
-                        }
                     }
 
                     components.Add(
                         new TemplateComponentData(
-                            fieldName: field.Name,
-                            componentTypeFullName: PerformanceCache.GetDisplayString(field.Type),
-                            isInterpolated: isInterpolated,
-                            isFixedUpdateOnly: isFixedUpdateOnly,
-                            isVariableUpdateOnly: isVariableUpdateOnly,
-                            isConstant: isConstant,
-                            isInput: isInput,
-                            inputFrameBehaviour: inputFrameBehaviour ?? string.Empty,
-                            inputWarnOnMissing: inputWarnOnMissing,
-                            hasExplicitDefault: hasExplicitDefault
+                            FieldName: field.Name,
+                            ComponentTypeFullName: PerformanceCache.GetDisplayString(field.Type),
+                            IsInterpolated: isInterpolated,
+                            IsVariableUpdateOnly: isVariableUpdateOnly,
+                            IsConstant: isConstant,
+                            IsInput: isInput,
+                            OnMissing: inputFrameBehaviour ?? string.Empty,
+                            HasExplicitDefault: hasExplicitDefault
                         )
                     );
                 }
             }
 
-            return components.ToImmutableArray();
+            return components.ToEquatableArray();
         }
 
         /// <summary>
@@ -240,9 +236,9 @@ namespace Trecs.SourceGen.Template
                 if (!iface.IsGenericType || !IsInTrecsNamespace(iface))
                     continue;
 
-                // Check IHasTags<TrecsTags.Globals> (the base globals template itself)
+                // Check ITagged<TrecsTags.Globals> (the base globals template itself)
                 if (
-                    iface.OriginalDefinition.Name == "IHasTags"
+                    iface.OriginalDefinition.Name == "ITagged"
                     && iface.TypeArguments.Length >= 1
                     && iface.TypeArguments[0].Name == "Globals"
                     && iface.TypeArguments[0].ContainingType?.Name == "TrecsTags"
@@ -266,10 +262,10 @@ namespace Trecs.SourceGen.Template
             return false;
         }
 
-        private static bool IsIHasTagsInterface(INamedTypeSymbol iface)
+        private static bool IsITaggedInterface(INamedTypeSymbol iface)
         {
             return iface.IsGenericType
-                && iface.OriginalDefinition.Name == "IHasTags"
+                && iface.OriginalDefinition.Name == "ITagged"
                 && IsInTrecsNamespace(iface);
         }
 
@@ -280,10 +276,10 @@ namespace Trecs.SourceGen.Template
                 && IsInTrecsNamespace(iface);
         }
 
-        private static bool IsIHasPartitionInterface(INamedTypeSymbol iface)
+        private static bool IsIPartitionedByInterface(INamedTypeSymbol iface)
         {
             return iface.IsGenericType
-                && iface.OriginalDefinition.Name == "IHasPartition"
+                && iface.OriginalDefinition.Name == "IPartitionedBy"
                 && IsInTrecsNamespace(iface);
         }
 

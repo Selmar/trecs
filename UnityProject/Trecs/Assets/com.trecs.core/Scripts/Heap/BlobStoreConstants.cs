@@ -1,5 +1,3 @@
-using Trecs.Collections;
-
 namespace Trecs
 {
     /// <summary>
@@ -7,14 +5,12 @@ namespace Trecs
     /// </summary>
     public static class BlobStoreConstants
     {
-        // Use .bytes since this can be directly used as assets inside the unity project
-        // Unity seems to prefer this extension for binary files
+        // .bytes is Unity's convention for binary asset files.
         public const string FileExtension = ".bytes";
 
         public const string BlobDirName = "blobs";
         public const string ManifestFileName = "manifest" + FileExtension;
 
-        public static readonly ReadOnlyDenseHashSet<int> SerializationFlags =
-            new DenseHashSet<int>();
+        public const long SerializationFlags = 0;
     }
 }

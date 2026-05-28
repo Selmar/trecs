@@ -7,14 +7,12 @@ namespace Trecs.SourceGen
     /// </summary>
     internal static class TrecsAttributeNames
     {
-        public const string AspectInterface = "AspectInterfaceAttribute";
-
         // Iteration markers. Aspect-vs-components routing is decided by inspecting the
         // method's parameter types (does it take an IAspect or a ref/in IEntityComponent),
-        // not by the attribute name itself. EntityFilter marks a normal iteration method;
-        // SingleEntity is the same shape but adds a post-loop assertion that the iteration
-        // count is exactly 1.
-        public const string EntityFilter = "ForEachEntityAttribute";
+        // not by the attribute name itself. ForEachEntity marks an iteration method;
+        // SingleEntity is per-parameter / per-field and resolves a singleton entity
+        // for that one parameter (with an assertion that exactly one entity matches).
+        public const string ForEachEntity = "ForEachEntityAttribute";
         public const string SingleEntity = "SingleEntityAttribute";
 
         public const string Unwrap = "UnwrapAttribute";
@@ -29,6 +27,24 @@ namespace Trecs.SourceGen
     internal static class TrecsNamespaces
     {
         public const string Trecs = "Trecs";
+        public const string TrecsInternal = "Trecs.Internal";
+    }
+
+    /// <summary>
+    /// Centralized <c>[GeneratedCode]</c> attribute text emitted into every
+    /// generator-produced type declaration. Updating <c>Version</c> here
+    /// updates every generated file.
+    /// </summary>
+    internal static class GeneratedCodeAttributes
+    {
+        public const string Tool = "Trecs.SourceGen";
+        public const string Version = "0.2.0";
+        public const string Line =
+            "[global::System.CodeDom.Compiler.GeneratedCode(\""
+            + Tool
+            + "\", \""
+            + Version
+            + "\")]";
     }
 
     internal static class TrecsCodeGenConstants

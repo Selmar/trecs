@@ -3,9 +3,13 @@ using UnityEngine;
 
 namespace Trecs.Samples.FeedingFrenzyBenchmark
 {
-    [InputSystem]
+    [ExecuteIn(SystemPhase.Input)]
     public partial class ConfigInputSystem : ISystem
     {
+        // Lets play-mode tests cycle IterationStyle without simulating keystrokes.
+        // Consumed (and cleared) on the next Execute().
+        public static IterationStyle? TestPendingIterationStyle;
+
         int _pendingIterationStyleDelta;
 
         public void Tick()
@@ -18,12 +22,27 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
 
         public void Execute()
         {
+            if (TestPendingIterationStyle.HasValue)
+            {
+                World.GlobalEntityHandle.AddInput(
+                    World,
+                    new DesiredIterationStyle { Value = TestPendingIterationStyle.Value }
+                );
+                TestPendingIterationStyle = null;
+                _pendingIterationStyleDelta = 0;
+                return;
+            }
+
             if (_pendingIterationStyleDelta != 0)
             {
-                ref var config = ref World.GlobalComponent<FrenzyConfig>().Write;
+                var current = World.GlobalComponent<DesiredIterationStyle>().Read.Value;
                 int count = Enum.GetValues(typeof(IterationStyle)).Length;
-                config.IterationStyle = (IterationStyle)(
-                    ((int)config.IterationStyle + _pendingIterationStyleDelta + count) % count
+                var next = (IterationStyle)(
+                    ((int)current + _pendingIterationStyleDelta + count) % count
+                );
+                World.GlobalEntityHandle.AddInput(
+                    World,
+                    new DesiredIterationStyle { Value = next }
                 );
                 _pendingIterationStyleDelta = 0;
             }

@@ -13,14 +13,17 @@ namespace Trecs.SourceGen.Shared
     /// </summary>
     internal enum ParamSlotKind
     {
-        /// <summary>An iteration component (in/ref IEntityComponent). Used by [ForEachEntity] / [SingleEntity] (components path).</summary>
+        /// <summary>An iteration component (in/ref IEntityComponent). Used by [ForEachEntity] (components path).</summary>
         LoopComponent,
 
-        /// <summary>The iteration aspect view (in IAspect). Used by [ForEachEntity] / [SingleEntity] (aspect path) — at most one per method.</summary>
+        /// <summary>The iteration aspect view (in IAspect). Used by [ForEachEntity] (aspect path) — at most one per method.</summary>
         LoopAspect,
 
         /// <summary>The loop's entity index (Trecs.EntityIndex, no modifiers, no [PassThroughArgument]).</summary>
         LoopEntityIndex,
+
+        /// <summary>The loop's stable entity handle (Trecs.EntityHandle, no modifiers, no [PassThroughArgument]).</summary>
+        LoopEntityHandle,
 
         /// <summary>The loop's world accessor (Trecs.WorldAccessor, no modifiers, no [PassThroughArgument]).</summary>
         LoopWorldAccessor,
@@ -36,90 +39,102 @@ namespace Trecs.SourceGen.Shared
 
         /// <summary>A SetWrite&lt;T&gt; parameter (main-thread only). Created via World.Set&lt;T&gt;().Write.</summary>
         LoopSetWrite,
+
+        /// <summary>
+        /// A parameter marked <c>[SingleEntity]</c> that is hoisted out of the iteration
+        /// loop. The framework resolves the entity once per call via
+        /// <c>Query().WithTags&lt;...&gt;().SingleIndex()</c> and binds the resulting
+        /// aspect view (or component value) to the parameter. Index points into
+        /// <see cref="ClassifiedParameters.HoistedSingletons"/> /
+        /// <see cref="ValidatedMethodInfo.HoistedSingletons"/>.
+        /// </summary>
+        HoistedSingleton,
     }
 
     /// <summary>
-    /// One slot in the user's [ForEach*] method parameter list.
+    /// Info for a parameter (or field) marked <c>[SingleEntity]</c>. The source
+    /// generator emits a hoist preamble before the iteration loop (or run-once
+    /// method body) that resolves the singleton via
+    /// <c>Query().WithTags&lt;...&gt;().SingleIndex()</c>, materializes the
+    /// aspect / fetches the component, and binds it to <c>__&lt;ParamName&gt;</c>.
     /// </summary>
-    internal struct ParamSlot
+    internal class HoistedSingletonInfo
     {
-        public ParamSlotKind Kind;
+        /// <summary>The user's parameter / field name.</summary>
+        public string ParamName { get; }
+
+        /// <summary>True for an aspect-typed singleton; false for a component-typed one.</summary>
+        public bool IsAspect { get; }
+
+        /// <summary>Inline tag types from <c>[SingleEntity(Tag = ...)]</c> / <c>[SingleEntity(Tags = ...)]</c>.</summary>
+        public List<ITypeSymbol> TagTypes { get; }
+
+        // Aspect-singleton fields:
+
+        /// <summary>Display string of the aspect type (e.g. <c>"Svkj.Tusk.PlayerView"</c>). Null for component singletons.</summary>
+        public string? AspectTypeDisplay { get; }
 
         /// <summary>
-        /// For LoopComponent, index into the generator's component-parameters list.
-        /// For Custom, index into the generator's custom-parameters list.
-        /// For LoopSetAccessor, index into set-accessor list.
-        /// For LoopSetRead, index into set-read list.
-        /// For LoopSetWrite, index into set-write list.
-        /// Unused for LoopAspect, LoopEntityIndex, and LoopWorldAccessor.
+        /// Parsed aspect data — IRead/IWrite component lists and the canonical
+        /// <see cref="Trecs.SourceGen.Aspect.AspectAttributeData.AllComponentTypes"/>
+        /// list whose order MUST match the aspect's generated EntityIndex constructor.
+        /// Null for component singletons.
         /// </summary>
-        public int Index;
+        public Trecs.SourceGen.Aspect.AspectAttributeData? AspectData { get; }
 
-        public ParamSlot(ParamSlotKind kind, int index)
+        /// <summary>Resolved aspect type symbol (used for namespace collection). Null for component singletons.</summary>
+        public ITypeSymbol? AspectTypeSymbol { get; }
+
+        // Component-singleton fields:
+
+        /// <summary>Display string of the component type (e.g. <c>"Svkj.Tusk.CHealth"</c>). Null for aspect singletons.</summary>
+        public string? ComponentTypeDisplay { get; }
+
+        /// <summary>Resolved component type symbol. Null for aspect singletons.</summary>
+        public ITypeSymbol? ComponentTypeSymbol { get; }
+
+        /// <summary>True if the parameter uses <c>ref</c> (writable). False for <c>in</c> (read-only). Only meaningful for component singletons.</summary>
+        public bool IsRef { get; }
+
+        public HoistedSingletonInfo(
+            string paramName,
+            bool isAspect,
+            List<ITypeSymbol> tagTypes,
+            string? aspectTypeDisplay = null,
+            Trecs.SourceGen.Aspect.AspectAttributeData? aspectData = null,
+            ITypeSymbol? aspectTypeSymbol = null,
+            string? componentTypeDisplay = null,
+            ITypeSymbol? componentTypeSymbol = null,
+            bool isRef = false
+        )
         {
-            Kind = kind;
-            Index = index;
+            ParamName = paramName;
+            IsAspect = isAspect;
+            TagTypes = tagTypes;
+            AspectTypeDisplay = aspectTypeDisplay;
+            AspectData = aspectData;
+            AspectTypeSymbol = aspectTypeSymbol;
+            ComponentTypeDisplay = componentTypeDisplay;
+            ComponentTypeSymbol = componentTypeSymbol;
+            IsRef = isRef;
         }
     }
 
     /// <summary>
-    /// Validated method info extracted from [ForEachEntity] or [SingleEntity] methods (aspect path).
-    /// Shared by ForEachAspectGenerator and ForSingleAspectGenerator.
+    /// One slot in the user's [ForEach*] method parameter list. A value-equality
+    /// record struct so it's safe to carry through Roslyn's incremental-pipeline
+    /// cache as an <see cref="EquatableArray{ParamSlot}"/>.
+    /// <para><see cref="Index"/> meaning depends on <see cref="Kind"/>:
+    /// <list type="bullet">
+    ///   <item><c>LoopComponent</c>: component-parameters list.</item>
+    ///   <item><c>Custom</c>: custom-parameters list.</item>
+    ///   <item><c>LoopSetAccessor</c> / <c>LoopSetRead</c> / <c>LoopSetWrite</c>: the matching set-* list.</item>
+    ///   <item><c>HoistedSingleton</c>: hoisted-singletons list.</item>
+    ///   <item><c>LoopAspect</c>, <c>LoopEntityIndex</c>, <c>LoopEntityHandle</c>, <c>LoopWorldAccessor</c>: unused.</item>
+    /// </list>
+    /// </para>
     /// </summary>
-    internal class ValidatedMethodInfo
-    {
-        public string AspectTypeName { get; set; } = string.Empty;
-        public INamedTypeSymbol? AspectTypeSymbol { get; set; }
-
-        public List<ITypeSymbol> ComponentTypes { get; set; } = new();
-        public List<ITypeSymbol> ReadComponentTypes { get; set; } = new();
-        public List<ITypeSymbol> WriteComponentTypes { get; set; } = new();
-
-        /// <summary>Component parameters (IEntityComponent). Only populated in components mode.</summary>
-        public List<ParameterInfo> ComponentParameters { get; set; } = new();
-
-        public List<ParameterInfo> CustomParameters { get; set; } = new();
-        public List<ITypeSymbol> AttributeTagTypes { get; set; } = new();
-        public bool HasAttributeTags => AttributeTagTypes.Count > 0;
-        public bool HasEntityIndexParameter { get; set; }
-
-        /// <summary>
-        /// Parameter slots in declaration order. Used by the code generator to emit
-        /// the call to the user's method respecting their chosen parameter order.
-        /// </summary>
-        public List<ParamSlot> ParameterSlots { get; set; } = new();
-
-        public List<ITypeSymbol> SetTypes { get; set; } = new();
-        public bool HasSet => SetTypes.Count > 0;
-        public bool MatchByComponents { get; set; }
-
-        /// <summary>
-        /// SetAccessor&lt;T&gt; parameters detected in the method signature. Each entry
-        /// produces a <c>var {ParamName} = __world.Set&lt;{SetTypeArg}&gt;();</c> before the loop.
-        /// </summary>
-        public List<SetAccessorParameterInfo> SetAccessorParameters { get; set; } = new();
-
-        /// <summary>
-        /// SetRead&lt;T&gt; parameters detected in the method signature. Each entry
-        /// produces a <c>var {ParamName} = __world.Set&lt;{SetTypeArg}&gt;().Read;</c> before the loop.
-        /// </summary>
-        public List<SetAccessorParameterInfo> SetReadParameters { get; set; } = new();
-
-        /// <summary>
-        /// SetWrite&lt;T&gt; parameters detected in the method signature. Each entry
-        /// produces a <c>var {ParamName} = __world.Set&lt;{SetTypeArg}&gt;().Write;</c> before the loop.
-        /// </summary>
-        public List<SetAccessorParameterInfo> SetWriteParameters { get; set; } = new();
-
-        /// <summary>
-        /// Returns true if the given component type is read-only (in ReadComponentTypes but not WriteComponentTypes).
-        /// </summary>
-        public bool IsReadOnly(ITypeSymbol type)
-        {
-            return ReadComponentTypes.Any(t => SymbolEqualityComparer.Default.Equals(t, type))
-                && !WriteComponentTypes.Any(t => SymbolEqualityComparer.Default.Equals(t, type));
-        }
-    }
+    internal readonly record struct ParamSlot(ParamSlotKind Kind, int Index);
 
     /// <summary>
     /// Info about a SetAccessor&lt;T&gt; parameter injected into an [ForEachEntity] method.

@@ -8,7 +8,7 @@ namespace Trecs.Samples.FeedingFrenzy101
     /// Only spawns meals in the NotEating partition. When removing,
     /// prefers removing uneaten (NotEating) meals first.
     /// </summary>
-    [ExecutesAfter(typeof(FishAdderAndRemover))]
+    [ExecuteAfter(typeof(FishAdderAndRemover))]
     public partial class MealAdderAndRemover : ISystem
     {
         readonly float _spawnSpread;
@@ -61,13 +61,13 @@ namespace Trecs.Samples.FeedingFrenzy101
 
             // Prefer removing uneaten meals
             foreach (
-                var entityIndex in World
+                var entity in World
                     .Query()
                     .WithTags<FrenzyTags.Meal, FrenzyTags.NotEating>()
-                    .EntityIndices()
+                    .Handles()
             )
             {
-                World.RemoveEntity(entityIndex);
+                entity.Remove(World);
                 removed++;
                 if (removed >= count)
                     return;
@@ -75,13 +75,10 @@ namespace Trecs.Samples.FeedingFrenzy101
 
             // Then remove eaten meals if needed
             foreach (
-                var entityIndex in World
-                    .Query()
-                    .WithTags<FrenzyTags.Meal, FrenzyTags.Eating>()
-                    .EntityIndices()
+                var entity in World.Query().WithTags<FrenzyTags.Meal, FrenzyTags.Eating>().Handles()
             )
             {
-                World.RemoveEntity(entityIndex);
+                entity.Remove(World);
                 removed++;
                 if (removed >= count)
                     return;

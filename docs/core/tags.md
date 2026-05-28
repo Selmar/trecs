@@ -1,8 +1,8 @@
 # Tags
 
-Tags are zero-cost markers that classify entities. They carry no data — they exist purely to categorize entities for use in templates, systems, and queries.
+Tags are zero-cost markers that classify entities. They carry no data — they categorize entities for templates, systems, and queries.
 
-## Defining Tags
+## Defining tags
 
 Tags are empty structs implementing `ITag`:
 
@@ -15,57 +15,48 @@ public static class GameTags
 }
 ```
 
-## Tags in Templates
+## Tags on templates
 
-Tags are declared on templates via `IHasTags`:
+Tags are declared via `ITagged`:
 
 ```csharp
-public partial class SpinnerEntity : ITemplate, IHasTags<SampleTags.Spinner>
+public partial class SpinnerEntity : ITemplate, ITagged<SampleTags.Spinner>
 {
-    public Rotation Rotation;
+    Rotation Rotation;
 }
 ```
 
-See [Templates](templates.md) for details on partitions (`IHasPartition`) and template inheritance.
+See [Templates](templates.md).
 
-## Tags in Systems
+## Tags in systems
 
-Systems target specific tag combinations to iterate only matching entities:
+Systems target tag combinations to iterate only matching entities:
 
 ```csharp
-// Iterate only entities with the Spinner tag
-[ForEachEntity(Tag = typeof(SampleTags.Spinner))]
-void Execute(ref Rotation rotation) { ... }
+[ForEachEntity(typeof(SampleTags.Spinner))]
+void Execute(ref Rotation rotation) { /* ... */ }
 
-// Iterate entities with both Ball and Active tags
-[ForEachEntity(Tags = new[] { typeof(BallTags.Ball), typeof(BallTags.Active) })]
-void Execute(in ActiveBall ball) { ... }
+[ForEachEntity(typeof(BallTags.Ball), typeof(BallTags.Active))]
+void Execute(in ActiveBall ball) { /* ... */ }
 ```
 
-Tags can also be used with `World.Query()` for manual iteration:
+Tags also drive manual iteration. `World.Query()` and aspect queries both accept tag filters:
 
 ```csharp
-// Iterate with an aspect
+// Aspect query — bundled component access through the aspect's properties.
 foreach (var player in PlayerView.Query(World).WithTags<GameTags.Player>())
 {
     player.Position += player.Velocity * World.DeltaTime;
 }
 
-// Get a single entity
-var boss = BossView.Query(World).WithTags<GameTags.Boss>().Single();
+// World.Query().SingleHandle() — returns an EntityHandle; useful when no aspect fits.
+EntityHandle boss = World.Query().WithTags<GameTags.Boss>().SingleHandle();
 ```
 
-See [Queries & Iteration](../data-access/queries-and-iteration.md) for the full query API.
+See [Queries & Iteration](../data-access/queries-and-iteration.md) for the full filter / terminator API.
 
-## Tags in Queries
+## Storage
 
-```csharp
-int count = world.CountEntitiesWithTags<GameTags.Player>();
-world.RemoveEntitiesWithTags<GameTags.Bullet>();
-```
+Entities with the same tag combination are stored together in contiguous memory for cache-friendly iteration.
 
-## How Tags Affect Storage
-
-Behind the scenes, entities with the same tag combination are stored together in contiguous memory for cache-friendly iteration. This means that iterating all entities with a given tag is fast — they are packed together, and unrelated entities are skipped entirely.
-
-For more on the underlying storage model and low-level APIs like `TagSet`, `Group`, and `Tag<T>`, see [Groups & TagSets](../advanced/groups-and-tagsets.md).
+For the storage model and the low-level `TagSet` / `GroupIndex` / `Tag<T>` APIs, see [Groups, GroupIndex & TagSets](../advanced/groups-and-tagsets.md).

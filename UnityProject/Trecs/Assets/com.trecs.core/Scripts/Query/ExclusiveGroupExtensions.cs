@@ -8,7 +8,7 @@ namespace Trecs.Internal
     public static class ExclusiveGroupExtensions
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static bool FoundIn(this in Group group, Group[] groups)
+        public static bool FoundIn(this in GroupIndex group, GroupIndex[] groups)
         {
             for (int i = 0; i < groups.Length; ++i)
                 if (groups[i] == group)
@@ -18,17 +18,7 @@ namespace Trecs.Internal
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static bool FoundIn(this in Group group, FastList<Group> groups)
-        {
-            for (int i = 0; i < groups.Count; ++i)
-                if (groups[i] == group)
-                    return true;
-
-            return false;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static bool FoundIn(this in Group group, LocalReadOnlyFastList<Group> groups)
+        public static bool FoundIn(this in GroupIndex group, ReadOnlyList<GroupIndex> groups)
         {
             for (int i = 0; i < groups.Count; ++i)
                 if (groups[i] == group)

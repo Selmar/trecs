@@ -9,32 +9,43 @@ using Unity.Jobs.LowLevel.Unsafe;
 namespace Trecs.Internal
 {
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public unsafe struct AtomicNativeBags : IDisposable
+    internal unsafe struct AtomicNativeBags : IDisposable
     {
-        int _threadsCount;
+        readonly int _threadsCount;
 
         [NoAlias]
         [NativeDisableUnsafePtrRestriction]
         NativeBag* _data;
 
-        public int Count => _threadsCount;
+        readonly AllocatorManager.AllocatorHandle _allocator;
 
-        public static AtomicNativeBags Create()
+        public AtomicNativeBags(int threadsCount, AllocatorManager.AllocatorHandle allocator)
         {
-            var result = new AtomicNativeBags();
-            result._threadsCount = JobsUtility.MaxJobThreadCount + 1;
+            _threadsCount = threadsCount;
+            _allocator = allocator;
+            _data = null;
+        }
+
+        public readonly int ThreadSlotCount => _threadsCount;
+
+        public static AtomicNativeBags Create(AllocatorManager.AllocatorHandle allocator)
+        {
+            var result = new AtomicNativeBags(
+                threadsCount: JobsUtility.MaxJobThreadCount + 1,
+                allocator
+            );
 
             var bufferSize = Unsafe.SizeOf<NativeBag>();
             var bufferCount = result._threadsCount;
             var allocationSize = bufferSize * bufferCount;
 
-            var ptr = (byte*)UnsafeUtility.Malloc(allocationSize, 16, Allocator.Persistent);
+            var ptr = (byte*)UnsafeUtility.Malloc(allocationSize, 16, allocator.ToAllocator);
             UnsafeUtility.MemClear(ptr, allocationSize);
 
             for (int i = 0; i < bufferCount; i++)
             {
                 var bufferPtr = (NativeBag*)(ptr + bufferSize * i);
-                var buffer = NativeBag.Create();
+                var buffer = NativeBag.Create(allocator);
                 Unsafe.Write(bufferPtr, buffer);
             }
 
@@ -64,7 +75,7 @@ namespace Trecs.Internal
             {
                 GetBag(i).Dispose();
             }
-            UnsafeUtility.Free(_data, Allocator.Persistent);
+            UnsafeUtility.Free(_data, _allocator.ToAllocator);
             _data = null;
         }
 

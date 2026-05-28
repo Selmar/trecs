@@ -1,102 +1,110 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using Trecs.Collections;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 
 namespace Trecs.Internal
 {
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public class SetStore : IDisposable
+    public sealed class SetStore : IDisposable
     {
-        internal NativeDenseDictionary<SetId, EntitySet> EntitySets;
-        internal NativeDenseDictionary<SetId, NativeSetDeferredQueues> DeferredQueues;
+        internal NativeHashMap<SetId, EntitySetStorage> EntitySets;
+        internal NativeHashMap<SetId, NativeSetDeferredQueues> DeferredQueues;
+        internal NativeList<SetId> SetIds;
 
-        // Routing index: maps Group to set IDs registered for that group.
-        // When an entity in group G is removed/swapped, we look up all set IDs
-        // registered under G and update them.
-        internal NativeDenseDictionary<Group, NativeList<SetId>> SetIdsByGroup;
+        // Routing index: per-group list of set IDs registered for that group,
+        // indexed by GroupIndex.Index. When an entity in group G is
+        // removed/swapped, we look up all set IDs registered under G and
+        // update them. Inner is UnsafeList<SetId> so the outer NativeList holds
+        // non-NativeContainer values — same pattern as EntityHandleMap's reverse map.
+        [NativeDisableContainerSafetyRestriction]
+        internal NativeList<UnsafeList<SetId>> SetIdsByGroup;
 
-        public SetStore()
+        public SetStore(int groupCount)
         {
-            EntitySets = new NativeDenseDictionary<SetId, EntitySet>(0, Allocator.Persistent);
-            DeferredQueues = new NativeDenseDictionary<SetId, NativeSetDeferredQueues>(
+            EntitySets = new NativeHashMap<SetId, EntitySetStorage>(0, Allocator.Persistent);
+            DeferredQueues = new NativeHashMap<SetId, NativeSetDeferredQueues>(
                 0,
                 Allocator.Persistent
             );
-            SetIdsByGroup = new NativeDenseDictionary<Group, NativeList<SetId>>(
-                0,
-                Allocator.Persistent
-            );
+            SetIds = new NativeList<SetId>(0, Allocator.Persistent);
+            SetIdsByGroup = new NativeList<UnsafeList<SetId>>(groupCount, Allocator.Persistent);
+            SetIdsByGroup.Resize(groupCount, NativeArrayOptions.UninitializedMemory);
+            for (int i = 0; i < groupCount; i++)
+            {
+                SetIdsByGroup[i] = new UnsafeList<SetId>(0, Allocator.Persistent);
+            }
         }
 
         /// <summary>
-        /// Registers a set during world initialization. Creates the EntitySet,
+        /// Registers a set during world initialization. Creates the EntitySetStorage,
         /// pre-populates group entries, and populates the group-based routing index.
         /// </summary>
-        public void RegisterSet(SetDef setDef, WorldInfo worldInfo)
+        public void RegisterSet(EntitySet entitySet, WorldInfo worldInfo)
         {
-            Assert.That(
-                !EntitySets.ContainsKey(setDef.Id),
-                "Set '{}' is already registered",
-                setDef.DebugName
+            TrecsDebugAssert.That(
+                !EntitySets.ContainsKey(entitySet.Id),
+                "Set '{0}' is already registered",
+                entitySet.DebugName
             );
 
-            var groups = setDef.Tags.IsNull
+            var groups = entitySet.Tags.IsNull
                 ? worldInfo.AllGroups
-                : worldInfo.GetGroupsWithTags(setDef.Tags);
-            Assert.That(
+                : worldInfo.GetGroupsWithTags(entitySet.Tags);
+            TrecsDebugAssert.That(
                 groups.Count > 0,
-                "Set '{}' matched no groups. Are the tags used by a template added to the WorldBuilder?",
-                setDef.DebugName
+                "Set '{0}' matched no groups. Are the tags used by a template added to the WorldBuilder?",
+                entitySet.DebugName
             );
 
-            var validGroups = new DenseHashSet<Group>(groups.Count);
+            var validGroups = new IterableHashSet<GroupIndex>(groups.Count);
             foreach (var group in groups)
             {
                 validGroups.Add(group);
             }
 
-            EntitySets.Add(setDef.Id, new EntitySet(setDef.Id, validGroups));
-            DeferredQueues.Add(
-                setDef.Id,
-                new NativeSetDeferredQueues(AtomicNativeBags.Create(), AtomicNativeBags.Create())
+            EntitySets.Add(
+                entitySet.Id,
+                new EntitySetStorage(entitySet.Id, worldInfo.AllGroups.Count, validGroups)
             );
+            DeferredQueues.Add(
+                entitySet.Id,
+                new NativeSetDeferredQueues(
+                    AtomicNativeBags.Create(Allocator.Persistent),
+                    AtomicNativeBags.Create(Allocator.Persistent),
+                    Allocator.Persistent
+                )
+            );
+            SetIds.Add(entitySet.Id);
 
             foreach (var group in groups)
             {
-                if (!SetIdsByGroup.TryGetIndex(group, out var routingIdx))
-                {
-                    var newList = new NativeList<SetId>(1, Allocator.Persistent);
-                    newList.Add(setDef.Id);
-                    SetIdsByGroup.Add(group, newList);
-                }
-                else
-                {
-                    ref var list = ref SetIdsByGroup.GetValueAtIndexByRef(routingIdx);
-                    list.Add(setDef.Id);
-                }
+                ref var list = ref SetIdsByGroup.ElementAt(group.Index);
+                list.Add(entitySet.Id);
             }
         }
 
-        internal ref EntitySet GetSet(SetId setId)
+        internal EntitySetStorage GetSet(SetId setId)
         {
-            var success = EntitySets.TryGetIndex(setId, out var index);
-            Assert.That(
-                success,
-                "Set with ID '{}' not registered. Add it to the WorldBuilder via AddSet<T>().",
+            var found = EntitySets.TryGetValue(setId, out var result);
+            TrecsDebugAssert.That(
+                found,
+                "Set with ID '{0}' not registered. Add it to the WorldBuilder via AddSet<T>().",
                 setId
             );
-            return ref EntitySets.GetValueAtIndexByRef(index);
+            return result;
         }
 
-        internal ref EntitySet GetSet(SetDef setDef)
+        internal EntitySetStorage GetSet(EntitySet entitySet)
         {
-            return ref EntitySets.GetValueByRef(setDef.Id);
+            return EntitySets[entitySet.Id];
         }
 
-        internal ref NativeSetDeferredQueues GetDeferredQueues(SetId setId)
+        internal NativeSetDeferredQueues GetDeferredQueues(SetId setId)
         {
-            return ref DeferredQueues.GetValueByRef(setId);
+            return DeferredQueues[setId];
         }
 
         /// <summary>
@@ -105,110 +113,94 @@ namespace Trecs.Internal
         /// </summary>
         public void FlushAllSetJobWrites()
         {
-            var sets = EntitySets.GetValuesWrite(out var count);
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i < SetIds.Length; i++)
             {
-                sets[i].FlushJobWrites();
+                EntitySets[SetIds[i]].FlushJobWrites();
             }
         }
 
         /// <summary>
         /// Flush all pending deferred Add/Remove operations on all sets.
         /// Handles both main-thread and job-side deferred ops (unified into
-        /// shared per-thread bags). Called during SubmitEntities.
+        /// shared per-thread bags). Called during Submit.
         /// </summary>
-        public void FlushAllDeferredOps(bool requireDeterministic)
+        public void FlushAllDeferredOps()
         {
-            foreach (var entry in DeferredQueues)
+            for (int i = 0; i < SetIds.Length; i++)
             {
-                ref var set = ref EntitySets.GetValueByRef(entry.Key);
-                ref var queues = ref DeferredQueues.GetValueByRef(entry.Key);
-                FlushDeferredOpsForSet(ref set, ref queues, requireDeterministic);
+                var setId = SetIds[i];
+                var set = EntitySets[setId];
+                var queues = DeferredQueues[setId];
+                FlushDeferredOpsForSet(ref set, ref queues);
             }
         }
 
         static void FlushDeferredOpsForSet(
-            ref EntitySet set,
-            ref NativeSetDeferredQueues queues,
-            bool requireDeterministic
-        )
-        {
-            if (requireDeterministic)
-                FlushDeferredOpsDeterministic(ref set, ref queues);
-            else
-                FlushDeferredOpsNonDeterministic(ref set, ref queues);
-        }
-
-        static void FlushDeferredOpsNonDeterministic(
-            ref EntitySet set,
+            ref EntitySetStorage set,
             ref NativeSetDeferredQueues queues
         )
         {
-            for (int i = 0; i < queues.RemoveQueue.Count; i++)
+            // Clear supersedes pending Add/Remove for this set, regardless of
+            // call order — analogous to remove-supersedes-move on entity ops.
+            // Job-side write queues (_jobAddQueue / _jobRemoveQueue inside
+            // EntitySetStorage) are already empty by submission time — their
+            // SetFlushJobs ran when the writer jobs completed — so the
+            // deferred-clear path uses ClearEntriesOnly() rather than the
+            // full Clear() that the immediate path needs.
+            if (queues.ConsumeClearRequest())
             {
-                ref var bag = ref queues.RemoveQueue.GetBag(i);
-                while (!bag.IsEmpty())
-                    set.RemoveImmediateUnchecked(bag.Dequeue<EntityIndex>());
+                EntitySetStorage.DrainEntityIndexBags(queues.AddQueue);
+                EntitySetStorage.DrainEntityIndexBags(queues.RemoveQueue);
+                set.ClearEntriesOnly();
+                return;
             }
 
-            for (int i = 0; i < queues.AddQueue.Count; i++)
-            {
-                ref var bag = ref queues.AddQueue.GetBag(i);
-                while (!bag.IsEmpty())
-                    set.AddImmediateUnchecked(bag.Dequeue<EntityIndex>());
-            }
-        }
-
-        static void FlushDeferredOpsDeterministic(
-            ref EntitySet set,
-            ref NativeSetDeferredQueues queues
-        )
-        {
             var allRemoves = new NativeList<EntityIndex>(64, Allocator.Temp);
-            for (int i = 0; i < queues.RemoveQueue.Count; i++)
+            for (int i = 0; i < queues.RemoveQueue.ThreadSlotCount; i++)
             {
                 ref var bag = ref queues.RemoveQueue.GetBag(i);
-                while (!bag.IsEmpty())
+                while (!bag.IsEmpty)
                     allRemoves.Add(bag.Dequeue<EntityIndex>());
             }
             allRemoves.Sort();
             for (int i = 0; i < allRemoves.Length; i++)
-                set.RemoveImmediateUnchecked(allRemoves[i]);
+                set.RemoveUnchecked(allRemoves[i]);
             allRemoves.Dispose();
 
             var allAdds = new NativeList<EntityIndex>(64, Allocator.Temp);
-            for (int i = 0; i < queues.AddQueue.Count; i++)
+            for (int i = 0; i < queues.AddQueue.ThreadSlotCount; i++)
             {
                 ref var bag = ref queues.AddQueue.GetBag(i);
-                while (!bag.IsEmpty())
+                while (!bag.IsEmpty)
                     allAdds.Add(bag.Dequeue<EntityIndex>());
             }
             allAdds.Sort();
             for (int i = 0; i < allAdds.Length; i++)
-                set.AddImmediateUnchecked(allAdds[i]);
+                set.AddUnchecked(allAdds[i]);
             allAdds.Dispose();
         }
 
         public void Dispose()
         {
-            foreach (var setCollection in EntitySets)
+            for (int i = 0; i < SetIds.Length; i++)
             {
-                setCollection.Value.Dispose();
+                var setId = SetIds[i];
+                EntitySets[setId].Dispose();
+                DeferredQueues[setId].Dispose();
             }
 
-            foreach (var queues in DeferredQueues)
+            for (int i = 0; i < SetIdsByGroup.Length; i++)
             {
-                queues.Value.AddQueue.Dispose();
-                queues.Value.RemoveQueue.Dispose();
-            }
-
-            foreach (var entry in SetIdsByGroup)
-            {
-                entry.Value.Dispose();
+                ref var list = ref SetIdsByGroup.ElementAt(i);
+                if (list.IsCreated)
+                {
+                    list.Dispose();
+                }
             }
 
             EntitySets.Dispose();
             DeferredQueues.Dispose();
+            SetIds.Dispose();
             SetIdsByGroup.Dispose();
         }
 
@@ -217,23 +209,23 @@ namespace Trecs.Internal
         /// from the database the sets are updated consequently.
         /// </summary>
         public void RemoveEntitiesFromSets(
-            FastList<int> entityIndicesRemoved,
-            Group fromGroup,
-            DenseDictionary<int, int> entityIdsAffectedByRemoveAtSwapBack
+            List<int> entityIndicesRemoved,
+            GroupIndex fromGroup,
+            IterableDictionary<int, int> entityIdsAffectedByRemoveAtSwapBack
         )
         {
-            if (!SetIdsByGroup.TryGetValue(fromGroup, out NativeList<SetId> setIds))
+            var setIds = SetIdsByGroup[fromGroup.Index];
+            var numberOfSets = setIds.Length;
+            if (numberOfSets == 0)
             {
                 return;
             }
 
-            var numberOfSets = setIds.Length;
-
             for (int i = 0; i < numberOfSets; ++i)
             {
-                ref var setCollection = ref EntitySets.GetValueByRef(setIds[i]);
+                var setCollection = EntitySets[setIds[i]];
 
-                if (!setCollection._entriesPerGroup.TryGetValue(fromGroup, out var fromGroupEntry))
+                if (!setCollection.TryGetGroupEntry(fromGroup, out var fromGroupEntry))
                 {
                     continue;
                 }
@@ -258,24 +250,24 @@ namespace Trecs.Internal
         }
 
         public void SwapEntityBetweenSets(
-            DenseDictionary<int, MoveInfo> fromEntityToEntityIDs,
-            Group fromGroup,
-            Group toGroup,
-            DenseDictionary<int, int> entityIdsAffectedByRemoveAtSwapBack
+            NativeList<MoveInfoEntry> fromEntityToEntityIDs,
+            GroupIndex fromGroup,
+            GroupIndex toGroup,
+            IterableDictionary<int, int> entityIdsAffectedByRemoveAtSwapBack
         )
         {
-            if (!SetIdsByGroup.TryGetValue(fromGroup, out NativeList<SetId> setIds))
+            var setIds = SetIdsByGroup[fromGroup.Index];
+            var numberOfSets = setIds.Length;
+            if (numberOfSets == 0)
             {
                 return;
             }
 
-            var numberOfSets = setIds.Length;
-
             for (int i = 0; i < numberOfSets; ++i)
             {
-                ref var setCollection = ref EntitySets.GetValueByRef(setIds[i]);
+                var setCollection = EntitySets[setIds[i]];
 
-                if (!setCollection._entriesPerGroup.TryGetValue(fromGroup, out var fromGroupEntry))
+                if (!setCollection.TryGetGroupEntry(fromGroup, out var fromGroupEntry))
                 {
                     continue;
                 }
@@ -283,26 +275,29 @@ namespace Trecs.Internal
                 SetGroupEntry groupEntryTo = default;
                 bool resolvedToGroup = false;
 
-                var countOfEntitiesToSwap = fromEntityToEntityIDs.Count;
-                MoveInfo[] moveInfosOfEntitiesToSwap = fromEntityToEntityIDs.UnsafeValues;
-                var keysOfEntitiesToSwap = fromEntityToEntityIDs.UnsafeKeys;
+                var countOfEntitiesToSwap = fromEntityToEntityIDs.Length;
 
-                for (var index = 0; index < countOfEntitiesToSwap; index++)
+                unsafe
                 {
-                    int fromEntityIndex = keysOfEntitiesToSwap[index].key;
-                    int toIndex = (int)moveInfosOfEntitiesToSwap[index].ToIndex;
-
-                    if (fromGroupEntry.Remove(fromEntityIndex))
+                    var entriesPtr = (MoveInfoEntry*)fromEntityToEntityIDs.GetUnsafeReadOnlyPtr();
+                    for (var index = 0; index < countOfEntitiesToSwap; index++)
                     {
-                        if (!resolvedToGroup)
-                        {
-                            resolvedToGroup = true;
-                            setCollection.TryGetGroupEntry(toGroup, out groupEntryTo);
-                        }
+                        var swapEntry = entriesPtr[index];
+                        int fromEntityIndex = swapEntry.EntityIndex;
+                        int toIndex = swapEntry.Info.ToIndex;
 
-                        if (groupEntryTo.IsValid)
+                        if (fromGroupEntry.Remove(fromEntityIndex))
                         {
-                            groupEntryTo.Add(toIndex);
+                            if (!resolvedToGroup)
+                            {
+                                resolvedToGroup = true;
+                                setCollection.TryGetGroupEntry(toGroup, out groupEntryTo);
+                            }
+
+                            if (groupEntryTo.IsValid)
+                            {
+                                groupEntryTo.Add(toIndex);
+                            }
                         }
                     }
                 }
@@ -318,7 +313,7 @@ namespace Trecs.Internal
             }
         }
 
-        public bool HasAnySets => SetIdsByGroup.Count > 0;
+        public bool HasAnySets => SetIds.Length > 0;
 
         public EntityQuerier.TrecsSets GetTrecsSets()
         {

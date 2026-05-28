@@ -1,22 +1,20 @@
 # Sets
 
-Sets let you dynamically mark entities as belonging to a subset, without affecting how they are stored or what components they have. You can think of them like lightweight boolean flags — an entity is either in a set or it isn't — but with efficient iteration over just the members.
+A set is a lightweight membership flag: an entity is either in the set or it isn't. Sets are independent of an entity's components and tags, and iteration visits only the members.
 
-## Defining a Set
+## Defining a set
 
 ```csharp
 public struct HighlightedParticle : IEntitySet { }
 ```
 
-Optionally, you can scope a set to entities with specific tags. Adding an entity without the required tags will result in an error:
+To restrict membership to entities carrying specific tags, use the generic form. Adding an entity without those tags asserts:
 
 ```csharp
 public struct EatingFish : IEntitySet<FrenzyTags.Fish> { }
 ```
 
-## Registering Sets
-
-Sets must be registered with the world builder:
+## Registering sets
 
 ```csharp
 new WorldBuilder()
@@ -25,63 +23,78 @@ new WorldBuilder()
     // ...
 ```
 
-## Adding and Removing Entities
+## Adding, removing, and clearing
+
+All set access goes through `World.Set<T>()`, which exposes three timing modes:
+
+| Call shape | Timing | Description |
+|---|---|---|
+| `.DeferredAdd` / `.DeferredRemove` / `.DeferredClear` | Submission-deferred | Queued; applied at the next `Submit()` |
+| `.Write` | Synchronous | Read+write view (main thread, syncs outstanding jobs) |
+| `.Read`  | Synchronous | Read-only view (main thread, syncs outstanding writers) |
 
 ### Deferred
 
-The standard API queues changes that take effect at the next submission. Safe to call during iteration:
+Queued during system execution; applied at the next submission. Safe during iteration:
 
 ```csharp
-World.SetAdd<HighlightedParticle>(particle.EntityIndex);
-World.SetRemove<HighlightedParticle>(particle.EntityIndex);
+World.Set<HighlightedParticle>().DeferredAdd(particle.Handle(World));
+World.Set<HighlightedParticle>().DeferredRemove(particle.Handle(World));
+World.Set<HighlightedParticle>().DeferredClear();
 ```
+
+A queued `DeferredClear()` **supersedes** any `DeferredAdd` / `DeferredRemove` queued for the same set in the same submission, regardless of call order. For sequential semantics within a single frame ("clear, then add these"), use the immediate APIs below.
+
+From a Burst job, `NativeWorldAccessor.Set<T>()` returns a `NativeSetAccessor<T>` with the same `DeferredAdd` / `DeferredRemove` / `DeferredClear` methods. For non-deferred mutations from jobs, use a `NativeSetCommandBuffer<T>` instead — see the [immediate section below](#immediate).
 
 ### Immediate
 
-`AddImmediate` / `RemoveImmediate` take effect right away. These are thread-safe and can be used from both the main thread and jobs:
+`Set<T>().Write` returns a synced view; its `Add` / `Remove` / `Clear` take effect right away. The sync runs once at acquisition, so cache the view for tight loops.
 
 ```csharp
-// Main thread
-World.Set<HighlightedParticle>().Write.AddImmediate(entityIndex);
-World.Set<HighlightedParticle>().Write.RemoveImmediate(entityIndex);
-
-// In a job (via NativeSetWrite)
-highlighted.AddImmediate(entityIndex);
-highlighted.RemoveImmediate(entityIndex);
+// Main thread — via SetWrite<T>
+var highlighted = World.Set<HighlightedParticle>().Write;
+highlighted.Add(handle);
+highlighted.Remove(handle);
+highlighted.Clear();
 ```
 
-## Querying by Set
-
-### With ForEachEntity
+In a Burst job, use a `NativeSetCommandBuffer<T>` captured as a job field:
 
 ```csharp
+// In a Burst job
+highlightedBuffer.Add(handle, world);
+highlightedBuffer.Remove(handle, world);
+highlightedBuffer.Clear();
+```
+
+!!! warning "Don't mutate a set while iterating it"
+    An immediate `Add` / `Remove` / `Clear` on the **same set you're currently iterating** throws in debug builds. In release builds iteration corrupts silently — entries get skipped, revisited, or (when an `Add` grows the buffer) read from freed memory.
+
+    To mutate a set you're iterating, prefer the deferred APIs — or stage the changes in a `NativeList<EntityHandle>` and apply them after the loop.
+
+## Querying by set
+
+```csharp
+// ForEachEntity
 [ForEachEntity(Set = typeof(HighlightedParticle))]
-void Execute(in ParticleView particle)
-{
-    // Only visits entities in the HighlightedParticle set
-}
-```
+void Execute(in ParticleView particle) { /* only visits set members */ }
 
-### With Aspect Queries
-
-```csharp
+// Aspect query
 foreach (var particle in ParticleView.Query(World).InSet<HighlightedParticle>())
 {
     particle.Color = Color.yellow;
 }
-```
 
-### Counting
-
-```csharp
+// Count
 int highlighted = World.Query().InSet<HighlightedParticle>().Count();
 ```
 
-## Per-Frame Staging
+## Per-frame staging
 
-A useful pattern is to use a set as a **per-frame scratch list** for cross-system communication: clear it at the start of the frame, have one system populate it with entities matching some criterion, then have downstream systems iterate just those members. This avoids re-evaluating the criterion in every consumer (rendering, physics sync, audio cues, etc.).
+A common pattern: use a set as a **per-frame scratch list**. One system clears and populates it; downstream systems iterate only the members. Avoids recomputing the same predicate in every consumer (rendering, physics sync, audio cues, etc.).
 
-For this to work *within a single frame*, you must use the **immediate** APIs (`AddImmediate`, `RemoveImmediate`, `Clear`). The deferred `SetAdd` / `SetRemove` calls queue until the next entity submission, so any system reading the set later in the same frame would see only the previous frame's contents.
+To make this work *within a single frame*, use the **immediate** APIs. Deferred set ops only land at the next submission, so a downstream system in the same frame would see last frame's contents.
 
 ```csharp
 public partial class CullingSystem : ISystem
@@ -91,41 +104,41 @@ public partial class CullingSystem : ISystem
         // Cache the writer once — Set<T>().Write does a sync up front.
         var visible = World.Set<VisibleThisFrame>().Write;
 
-        // Reset the staging set at the start of the frame.
         visible.Clear();
 
-        // Populate it with whatever the camera can see.
         foreach (var r in Renderable.Query(World).WithTags<GameTags.Renderable>())
         {
             if (Frustum.Intersects(r.Bounds))
-                visible.AddImmediate(r.EntityIndex);
+                visible.Add(r.Handle(World));
         }
     }
 
     partial struct Renderable : IAspect, IRead<Bounds> { }
 }
 
-[ExecutesAfter(typeof(CullingSystem))]
+[ExecuteAfter(typeof(CullingSystem))]
 public partial class RenderSystem : ISystem
 {
-    // Iterates only the entities CullingSystem flagged this frame.
     [ForEachEntity(Set = typeof(VisibleThisFrame))]
     void Render(in MeshInfo mesh, in WorldTransform xform) { ... }
 }
 ```
 
-A few notes:
+Notes:
 
-- Trecs does not auto-clear sets between frames. If you want a fresh set each frame, do the clear yourself in the producer system before populating.
-- Cache the `SetWrite<T>` view (returned by `Set<T>().Write`) outside the loop. The accessor performs a job sync on each access; caching it does the sync once and then writes go straight to the underlying buffer.
-- From a Burst job, use `NativeSetWrite` for the same `AddImmediate` / `RemoveImmediate` semantics with thread-safe writes.
+- Cache the `SetWrite<T>` returned by `Set<T>().Write` outside the loop. Each `.Write` access syncs outstanding job writes; caching syncs once, then writes hit the buffer directly.
+- From a Burst job, capture a `NativeSetCommandBuffer<T>` as a field for thread-safe `Add` / `Remove` / `Clear`. Job-side `Clear` wipes pre-existing contents and supersedes any `Add` / `Remove` queued in the same writer-job-cycle — analogous to `Set<T>().DeferredClear()`.
 
-## When to Use Sets vs Tags
+## Sets vs Partitions
 
-| | Tags | Sets |
+| | Partitions | Sets |
 |---|---|---|
-| **Cost of change** | Structural change (deferred, moves data) | Lightweight add/remove from index |
+| **Cost of change** | All memory move to new buffer | Lightweight add/remove from index |
 | **Iteration** | All entities with that tag are contiguous in memory | Sparse — only set members are visited |
 | **Best for** | Core identity, maximum cache locality | Dynamic membership, temporary flags, filtering |
 
-Both tags (via [partitions](../core/templates.md#partitions)) and sets can represent state, but the trade-offs differ. Tag changes move entity data in memory, giving you dense iteration. Set changes are cheap but iteration is sparse. See [Entity Subset Patterns](../recipes/entity-subset-patterns.md) for a deeper comparison.
+Both [partitions](../core/templates.md#partitions) and sets can represent state. Tag changes move entity data in memory, giving dense iteration. Set changes are cheap but iteration is sparse. See [Entity Subset Patterns](../guides/entity-subset-patterns.md) for a deeper comparison.
+
+## See also
+
+- [Sample 08 — Sets](../samples/08-sets.md): a complete example of producer/consumer set membership across systems.
