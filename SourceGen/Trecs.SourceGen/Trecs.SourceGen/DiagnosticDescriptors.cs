@@ -40,7 +40,7 @@ namespace Trecs.SourceGen
         public static readonly DiagnosticDescriptor NotPartialClass = new(
             id: "TRECS004",
             title: "Class must be partial",
-            messageFormat: "Class '{0}' must be marked as partial since it contains a source-generated [ForEachEntity] iteration method, [SingleEntity] parameters, or a [WrapAsJob] method",
+            messageFormat: "Class '{0}' must be marked as partial since it contains a source-generated [ForEachEntity] iteration method, [FromSingleEntity] parameters, or a [WrapAsJob] method",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -336,7 +336,7 @@ namespace Trecs.SourceGen
         public static readonly DiagnosticDescriptor IterationMethodCannotBeStatic = new(
             id: "TRECS050",
             title: "Iteration method cannot be static",
-            messageFormat: "Method '{0}' cannot be static when marked with [ForEachEntity] or when it carries [SingleEntity] parameters",
+            messageFormat: "Method '{0}' cannot be static when marked with [ForEachEntity] or when it carries [FromSingleEntity] parameters",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -345,7 +345,7 @@ namespace Trecs.SourceGen
         public static readonly DiagnosticDescriptor IterationMethodCannotBeAbstract = new(
             id: "TRECS051",
             title: "Iteration method cannot be abstract",
-            messageFormat: "Method '{0}' cannot be abstract when marked with [ForEachEntity] or when it carries [SingleEntity] parameters",
+            messageFormat: "Method '{0}' cannot be abstract when marked with [ForEachEntity] or when it carries [FromSingleEntity] parameters",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
@@ -604,34 +604,35 @@ namespace Trecs.SourceGen
             isEnabledByDefault: true
         );
 
-        // ── per-parameter / per-field [SingleEntity] (TRECS112-116) ────────
+        // ── per-parameter / per-field [FromSingleEntity] / [FromGlobalEntity] (TRECS112-116) ──
 
-        public static readonly DiagnosticDescriptor SingleEntityWrongType = new(
+        public static readonly DiagnosticDescriptor FromSingleEntityWrongType = new(
             id: "TRECS112",
-            title: "[SingleEntity] parameter or field must be an aspect or component",
-            messageFormat: "[SingleEntity] target '{0}' has type '{1}' which is neither an IAspect nor an IEntityComponent. "
-                + "[SingleEntity] resolves to a single matched entity, so the type must be a Trecs aspect "
+            title: "[FromSingleEntity] parameter or field must be an aspect or component",
+            messageFormat: "'{0}' has type '{1}' which is neither an IAspect nor an IEntityComponent. "
+                + "[FromSingleEntity] / [FromGlobalEntity] resolves to a single matched entity, so the type must be a Trecs aspect "
                 + "(implementing IAspect) or a component (implementing IEntityComponent).",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
         );
 
-        public static readonly DiagnosticDescriptor SingleEntityWrongModifier = new(
+        public static readonly DiagnosticDescriptor FromSingleEntityWrongModifier = new(
             id: "TRECS113",
-            title: "[SingleEntity] parameter has wrong modifier",
-            messageFormat: "[SingleEntity] parameter '{0}' must be declared 'in' for an aspect or read-only component, "
+            title: "[FromSingleEntity] parameter has wrong modifier",
+            messageFormat: "Parameter '{0}' must be declared 'in' for an aspect or read-only component, "
                 + "or 'ref' for a writable component. Bare-by-value and 'out' are not supported.",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
         );
 
-        public static readonly DiagnosticDescriptor SingleEntityRequiresInlineTags = new(
+        public static readonly DiagnosticDescriptor FromSingleEntityRequiresInlineTags = new(
             id: "TRECS114",
-            title: "[SingleEntity] requires inline Tag or Tags",
-            messageFormat: "[SingleEntity] target '{0}' must specify an inline Tag or Tags "
-                + "(e.g. [SingleEntity(typeof(MyTag))]). [SingleEntity] has no runtime override "
+            title: "[FromSingleEntity] requires inline Tag or Tags",
+            messageFormat: "[FromSingleEntity] target '{0}' must specify an inline Tag or Tags "
+                + "(e.g. [FromSingleEntity(typeof(MyTag))]). Use [FromGlobalEntity] for the global entity. "
+                + "[FromSingleEntity] has no runtime override "
                 + "— the singleton is resolved at the same site every call. "
                 + "If you need a runtime-supplied query, use "
                 + "World.Query().WithTags(...).Single() directly inside the method body.",
@@ -640,26 +641,37 @@ namespace Trecs.SourceGen
             isEnabledByDefault: true
         );
 
-        public static readonly DiagnosticDescriptor SingleEntityConflictingAttributes = new(
+        public static readonly DiagnosticDescriptor FromSingleEntityConflictingAttributes = new(
             id: "TRECS115",
-            title: "[SingleEntity] conflicts with [FromWorld] or [PassThroughArgument]",
-            messageFormat: "[SingleEntity] on '{0}' cannot be combined with [{1}]. [SingleEntity] alone is the carrier "
+            title: "[FromSingleEntity] conflicts with [FromWorld] or [PassThroughArgument]",
+            messageFormat: "'{0}' cannot combine [FromSingleEntity] / [FromGlobalEntity] with [{1}]. "
+                + "The single-entity attribute alone is the carrier "
                 + "for world-sourced single-entity values (it implies [FromWorld] semantics).",
             category: TrecsCategory,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true
         );
 
-        public static readonly DiagnosticDescriptor SingleEntityWriteAspectMissingNativeDisableParallelForRestriction =
+        public static readonly DiagnosticDescriptor FromSingleEntityWriteAspectMissingNativeDisableParallelForRestriction =
             new(
                 id: "TRECS116",
-                title: "[SingleEntity] write-aspect field on a parallel job needs [NativeDisableParallelForRestriction]",
-                messageFormat: "Field '{0}' on parallel job '{1}' has [SingleEntity] with aspect '{2}' that contains IWrite components. "
+                title: "[FromSingleEntity] write-aspect field on a parallel job needs [NativeDisableParallelForRestriction]",
+                messageFormat: "Field '{0}' on parallel job '{1}' has a single-entity aspect '{2}' that contains IWrite components. "
                     + "Add [NativeDisableParallelForRestriction] to the field — Unity's parallel-job safety walker rejects the materialized aspect's NativeComponentBufferWrite without it.",
                 category: TrecsCategory,
                 DiagnosticSeverity.Warning,
                 isEnabledByDefault: true
             );
+
+        public static readonly DiagnosticDescriptor FromGlobalEntityCouldNotResolveGlobalsTag = new(
+            id: "TRECS119",
+            title: "[FromGlobalEntity] could not resolve TrecsTags.Globals",
+            messageFormat: "[FromGlobalEntity] on '{0}' could not resolve the built-in TrecsTags.Globals tag type. "
+                + "Ensure the assembly references com.trecs.core.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true
+        );
 
         public static readonly DiagnosticDescriptor GlobalIndexParamMustBeInt = new(
             id: "TRECS117",

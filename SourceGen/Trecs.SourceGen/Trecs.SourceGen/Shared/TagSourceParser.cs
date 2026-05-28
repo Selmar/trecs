@@ -53,7 +53,7 @@ namespace Trecs.SourceGen.Shared
     /// three forms (and <c>Tag</c> vs <c>Tags</c> within Named) by emitting
     /// TRECS053 (<see cref="DiagnosticDescriptors.TagAndTagsBothSpecified"/>).
     /// <para>
-    /// Each call site (iteration attributes, FromWorld/SingleEntity inline tags)
+    /// Each call site (iteration attributes, FromWorld/FromSingleEntity inline tags)
     /// wraps this parser to layer on its own attribute-specific extras (<c>Set</c>
     /// / <c>MatchByComponents</c> for iteration; tag-count cap for FromWorld).
     /// </para>

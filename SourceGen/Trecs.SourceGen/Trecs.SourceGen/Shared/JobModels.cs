@@ -110,12 +110,12 @@ namespace Trecs.SourceGen.Shared
     );
 
     /// <summary>
-    /// Value-equatable carrier shape consumed by <see cref="SingleEntityEmitter"/>.
-    /// Both <c>JobGenerator</c>'s hand-written <c>[SingleEntity]</c> job fields and
-    /// <c>AutoJobGenerator</c>'s <c>[SingleEntity]</c> wrapper params project into
+    /// Value-equatable carrier shape consumed by <see cref="FromSingleEntityEmitter"/>.
+    /// Both <c>JobGenerator</c>'s hand-written <c>[FromSingleEntity]</c> job fields and
+    /// <c>AutoJobGenerator</c>'s <c>[FromSingleEntity]</c> wrapper params project into
     /// this shape at the transform-phase boundary.
     /// </summary>
-    internal readonly record struct SingleEntityEmitTargetModel(
+    internal readonly record struct FromSingleEntityEmitTargetModel(
         string LocalNameRoot,
         string JobFieldAssignmentLhs,
         bool IsAspect,
@@ -182,16 +182,16 @@ namespace Trecs.SourceGen.Shared
     }
 
     /// <summary>
-    /// A single hand-written <c>[SingleEntity]</c> field on a Trecs job struct,
+    /// A single hand-written <c>[FromSingleEntity]</c> field on a Trecs job struct,
     /// projected into the value-equatable pipeline. The <see cref="JobModel"/>'s
-    /// <c>SingleEntityFields</c> list materializes via
-    /// <see cref="SingleEntityEmitter.IEmitTarget"/>-compatible
-    /// <see cref="SingleEntityEmitTargetModel"/>s for emit; this carrier is the
+    /// <c>FromSingleEntityFields</c> list materializes via
+    /// <see cref="FromSingleEntityEmitter.IEmitTarget"/>-compatible
+    /// <see cref="FromSingleEntityEmitTargetModel"/>s for emit; this carrier is the
     /// JobGenerator-specific shape, with the field name doubling as both
     /// <c>LocalNameRoot</c> and <c>JobFieldAssignmentLhs</c> per the existing
-    /// <c>SingleEntityFieldEntry</c> convention.
+    /// <c>FromSingleEntityFieldEntry</c> convention.
     /// </summary>
-    internal readonly record struct SingleEntityFieldModel(
+    internal readonly record struct FromSingleEntityFieldModel(
         string FieldName,
         bool IsAspect,
         EquatableArray<string> TagTypeDisplays,
@@ -203,13 +203,13 @@ namespace Trecs.SourceGen.Shared
     )
     {
         /// <summary>
-        /// View this field as a <see cref="SingleEntityEmitTargetModel"/> for
-        /// <see cref="SingleEntityEmitter"/>'s model-taking overloads — Phase 4
+        /// View this field as a <see cref="FromSingleEntityEmitTargetModel"/> for
+        /// <see cref="FromSingleEntityEmitter"/>'s model-taking overloads — Phase 4
         /// emits directly to the user's field (so root, LHS, and field name are
         /// all the same), and write-ness derives from the <c>ref</c> flag the
         /// validator recorded.
         /// </summary>
-        public SingleEntityEmitTargetModel ToEmitTarget() =>
+        public FromSingleEntityEmitTargetModel ToEmitTarget() =>
             new(
                 LocalNameRoot: FieldName,
                 JobFieldAssignmentLhs: FieldName,
@@ -236,7 +236,7 @@ namespace Trecs.SourceGen.Shared
         AspectIterationModel AspectIteration,
         ComponentsIterationModel ComponentsIteration,
         EquatableArray<FromWorldFieldEmitModel> FromWorldFields,
-        EquatableArray<SingleEntityFieldModel> SingleEntityFields,
+        EquatableArray<FromSingleEntityFieldModel> FromSingleEntityFields,
         string AttributeCriteriaChain,
         bool HasBurstCompile,
         bool IsValid,

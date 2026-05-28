@@ -41,7 +41,7 @@ namespace Trecs.SourceGen.Shared
         LoopSetWrite,
 
         /// <summary>
-        /// A parameter marked <c>[SingleEntity]</c> that is hoisted out of the iteration
+        /// A parameter marked <c>[FromSingleEntity]</c> that is hoisted out of the iteration
         /// loop. The framework resolves the entity once per call via
         /// <c>Query().WithTags&lt;...&gt;().SingleIndex()</c> and binds the resulting
         /// aspect view (or component value) to the parameter. Index points into
@@ -52,7 +52,7 @@ namespace Trecs.SourceGen.Shared
     }
 
     /// <summary>
-    /// Info for a parameter (or field) marked <c>[SingleEntity]</c>. The source
+    /// Info for a parameter (or field) marked <c>[FromSingleEntity]</c>. The source
     /// generator emits a hoist preamble before the iteration loop (or run-once
     /// method body) that resolves the singleton via
     /// <c>Query().WithTags&lt;...&gt;().SingleIndex()</c>, materializes the
@@ -66,7 +66,7 @@ namespace Trecs.SourceGen.Shared
         /// <summary>True for an aspect-typed singleton; false for a component-typed one.</summary>
         public bool IsAspect { get; }
 
-        /// <summary>Inline tag types from <c>[SingleEntity(Tag = ...)]</c> / <c>[SingleEntity(Tags = ...)]</c>.</summary>
+        /// <summary>Inline tag types from <c>[FromSingleEntity(Tag = ...)]</c> / <c>[FromSingleEntity(Tags = ...)]</c>.</summary>
         public List<ITypeSymbol> TagTypes { get; }
 
         // Aspect-singleton fields:

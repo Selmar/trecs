@@ -6,26 +6,41 @@ using Trecs.SourceGen.Performance;
 namespace Trecs.SourceGen.Shared
 {
     /// <summary>
-    /// Routing helper for the <c>[ForEachEntity]</c> / <c>[SingleEntity]</c> markers.
+    /// Routing helper for the <c>[ForEachEntity]</c> / <c>[FromSingleEntity]</c> markers.
     /// <para>
     /// <c>[ForEachEntity]</c> is a method-level iteration attribute. The aspect-vs-components
     /// kind is determined by inspecting the method's parameter types.
     /// </para>
     /// <para>
-    /// <c>[SingleEntity]</c> is a per-parameter (and per-field) attribute that resolves to
-    /// the unique entity matching the inline tag(s). A method whose only iteration parameters
-    /// are <c>[SingleEntity]</c>-annotated runs once (RunOnceGenerator). A method that mixes
-    /// <c>[SingleEntity]</c> parameters with <c>[ForEachEntity]</c> hoists the singletons
-    /// before the iteration loop.
+    /// <c>[FromSingleEntity]</c> (and its shorthand <c>[FromGlobalEntity]</c>) is a per-parameter
+    /// (and per-field) attribute that resolves to the unique entity matching the inline
+    /// tag(s). A method whose only iteration parameters are <c>[FromSingleEntity]</c>-annotated
+    /// runs once (RunOnceGenerator). A method that mixes <c>[FromSingleEntity]</c> parameters
+    /// with <c>[ForEachEntity]</c> hoists the singletons before the iteration loop.
     /// </para>
     /// </summary>
     internal static class IterationAttributeRouting
     {
         /// <summary>
+        /// True if the symbol carries <c>[FromSingleEntity]</c> or <c>[FromGlobalEntity]</c>.
+        /// </summary>
+        public static bool HasFromSingleEntityAttribute(ISymbol symbol) =>
+            PerformanceCache.HasAttributeByName(
+                symbol,
+                TrecsAttributeNames.FromSingleEntity,
+                TrecsNamespaces.Trecs
+            )
+            || PerformanceCache.HasAttributeByName(
+                symbol,
+                TrecsAttributeNames.FromGlobalEntity,
+                TrecsNamespaces.Trecs
+            );
+
+        /// <summary>
         /// Returns true if the method has at least one iteration-target parameter whose
-        /// type implements <c>Trecs.IAspect</c> AND is not marked <c>[SingleEntity]</c> /
-        /// <c>[PassThroughArgument]</c>. Used by aspect-iteration generators to decide
-        /// whether to claim a method.
+        /// type implements <c>Trecs.IAspect</c> AND is not marked <c>[FromSingleEntity]</c> /
+        /// <c>[FromGlobalEntity]</c> / <c>[PassThroughArgument]</c>. Used by aspect-iteration
+        /// generators to decide whether to claim a method.
         /// </summary>
         public static bool HasAspectParameter(IMethodSymbol method)
         {
@@ -39,13 +54,7 @@ namespace Trecs.SourceGen.Shared
                     )
                 )
                     continue;
-                if (
-                    PerformanceCache.HasAttributeByName(
-                        p,
-                        TrecsAttributeNames.SingleEntity,
-                        TrecsNamespaces.Trecs
-                    )
-                )
+                if (HasFromSingleEntityAttribute(p))
                     continue;
                 if (SymbolAnalyzer.ImplementsInterface(p.Type, "IAspect", TrecsNamespaces.Trecs))
                     return true;
@@ -64,19 +73,14 @@ namespace Trecs.SourceGen.Shared
             );
 
         /// <summary>
-        /// True if any parameter on the method carries <c>[SingleEntity]</c>.
+        /// True if any parameter on the method carries <c>[FromSingleEntity]</c> or
+        /// <c>[FromGlobalEntity]</c>.
         /// </summary>
-        public static bool HasSingleEntityParameter(IMethodSymbol method)
+        public static bool HasFromSingleEntityParameter(IMethodSymbol method)
         {
             foreach (var p in method.Parameters)
             {
-                if (
-                    PerformanceCache.HasAttributeByName(
-                        p,
-                        TrecsAttributeNames.SingleEntity,
-                        TrecsNamespaces.Trecs
-                    )
-                )
+                if (HasFromSingleEntityAttribute(p))
                     return true;
             }
             return false;
@@ -84,12 +88,13 @@ namespace Trecs.SourceGen.Shared
 
         /// <summary>
         /// True if the method should be claimed by RunOnceGenerator: has at least one
-        /// <c>[SingleEntity]</c> parameter, no <c>[ForEachEntity]</c>, no <c>[WrapAsJob]</c>.
-        /// Such a method is generated as a single-shot (<c>WorldAccessor</c>) overload that
-        /// hoists each singleton then calls the user method exactly once.
+        /// <c>[FromSingleEntity]</c> / <c>[FromGlobalEntity]</c> parameter, no <c>[ForEachEntity]</c>,
+        /// no <c>[WrapAsJob]</c>. Such a method is generated as a single-shot
+        /// (<c>WorldAccessor</c>) overload that hoists each singleton then calls the user
+        /// method exactly once.
         /// </summary>
         public static bool IsRunOnceMethod(IMethodSymbol method) =>
-            HasSingleEntityParameter(method)
+            HasFromSingleEntityParameter(method)
             && !HasEntityFilter(method)
             && !HasWrapAsJobAttribute(method);
 

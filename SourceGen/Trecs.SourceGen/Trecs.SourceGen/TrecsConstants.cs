@@ -10,10 +10,12 @@ namespace Trecs.SourceGen
         // Iteration markers. Aspect-vs-components routing is decided by inspecting the
         // method's parameter types (does it take an IAspect or a ref/in IEntityComponent),
         // not by the attribute name itself. ForEachEntity marks an iteration method;
-        // SingleEntity is per-parameter / per-field and resolves a singleton entity
+        // FromSingleEntity is per-parameter / per-field and resolves a singleton entity
         // for that one parameter (with an assertion that exactly one entity matches).
+        // FromGlobalEntity is shorthand for [FromSingleEntity(typeof(TrecsTags.Globals))].
         public const string ForEachEntity = "ForEachEntityAttribute";
-        public const string SingleEntity = "SingleEntityAttribute";
+        public const string FromSingleEntity = "FromSingleEntityAttribute";
+        public const string FromGlobalEntity = "FromGlobalEntityAttribute";
 
         public const string Unwrap = "UnwrapAttribute";
         public const string GenerateInterpolatorSystem = "GenerateInterpolatorSystemAttribute";

@@ -467,21 +467,24 @@ internal static class TrecsStubs
             }
 
             [System.AttributeUsage(System.AttributeTargets.Parameter | System.AttributeTargets.Field, AllowMultiple = false)]
-            public sealed class SingleEntityAttribute : System.Attribute
+            public sealed class FromSingleEntityAttribute : System.Attribute
             {
                 public System.Type[]? Tags { get; set; }
                 public System.Type? Tag { get; set; }
-                public SingleEntityAttribute() { }
-                public SingleEntityAttribute(params System.Type[] tags) { Tags = tags; }
+                public FromSingleEntityAttribute() { }
+                public FromSingleEntityAttribute(params System.Type[] tags) { Tags = tags; }
             }
             [System.AttributeUsage(System.AttributeTargets.Parameter | System.AttributeTargets.Field, AllowMultiple = false)]
-            public sealed class SingleEntityAttribute<T1> : System.Attribute { }
+            public sealed class FromSingleEntityAttribute<T1> : System.Attribute { }
             [System.AttributeUsage(System.AttributeTargets.Parameter | System.AttributeTargets.Field, AllowMultiple = false)]
-            public sealed class SingleEntityAttribute<T1, T2> : System.Attribute { }
+            public sealed class FromSingleEntityAttribute<T1, T2> : System.Attribute { }
             [System.AttributeUsage(System.AttributeTargets.Parameter | System.AttributeTargets.Field, AllowMultiple = false)]
-            public sealed class SingleEntityAttribute<T1, T2, T3> : System.Attribute { }
+            public sealed class FromSingleEntityAttribute<T1, T2, T3> : System.Attribute { }
             [System.AttributeUsage(System.AttributeTargets.Parameter | System.AttributeTargets.Field, AllowMultiple = false)]
-            public sealed class SingleEntityAttribute<T1, T2, T3, T4> : System.Attribute { }
+            public sealed class FromSingleEntityAttribute<T1, T2, T3, T4> : System.Attribute { }
+
+            [System.AttributeUsage(System.AttributeTargets.Parameter | System.AttributeTargets.Field, AllowMultiple = false)]
+            public sealed class FromGlobalEntityAttribute : System.Attribute { }
 
             [System.AttributeUsage(System.AttributeTargets.Method, AllowMultiple = false)]
             public sealed class WrapAsJobAttribute : System.Attribute { }

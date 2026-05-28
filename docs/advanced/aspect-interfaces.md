@@ -30,6 +30,6 @@ Rules:
 
 - The interface must be `partial` and list `IAspect` in its base list.
 - Aspect interfaces compose: one can extend another, and all `IRead<>` / `IWrite<>` types merge into the concrete aspect.
-- Iteration entry points (`[ForEachEntity]`, `[SingleEntity]`) still require a concrete aspect struct. Aspect interfaces are for polymorphic helpers called *from* iteration, not the iteration parameter itself.
+- Iteration entry points (`[ForEachEntity]`, `[FromSingleEntity]`) still require a concrete aspect struct. Aspect interfaces are for polymorphic helpers called *from* iteration, not the iteration parameter itself.
 
 See [Sample 13 — Aspect Interfaces](../samples/13-aspect-interfaces.md) for a complete example.

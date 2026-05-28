@@ -399,13 +399,13 @@ namespace Trecs.SourceGen
             if (fromWorldFields == null)
                 return null;
 
-            var singleEntityFields = ScanSingleEntityFields(
+            var fromEntityFields = ScanFromSingleEntityFields(
                 diagnostics,
                 structDecl,
                 semanticModel,
                 isParallelJob: true
             );
-            if (singleEntityFields == null)
+            if (fromEntityFields == null)
                 return null;
 
             // Decide aspect-vs-components routing: aspect path iff the first parameter
@@ -460,7 +460,7 @@ namespace Trecs.SourceGen
                     aspectInfo,
                     null,
                     fromWorldFields,
-                    singleEntityFields
+                    fromEntityFields
                 );
             }
             else
@@ -481,7 +481,7 @@ namespace Trecs.SourceGen
                     null,
                     componentsInfo,
                     fromWorldFields,
-                    singleEntityFields
+                    fromEntityFields
                 );
             }
         }
@@ -980,13 +980,13 @@ namespace Trecs.SourceGen
             if (fromWorldFields == null)
                 return null;
 
-            var singleEntityFields = ScanSingleEntityFields(
+            var fromEntityFields = ScanFromSingleEntityFields(
                 diagnostics,
                 structDecl,
                 semanticModel,
                 isParallelJob: false
             );
-            if (singleEntityFields == null)
+            if (fromEntityFields == null)
                 return null;
 
             return new JobInfo(
@@ -996,7 +996,7 @@ namespace Trecs.SourceGen
                 aspect: null,
                 components: null,
                 fromWorldFields: fromWorldFields,
-                singleEntityFields: singleEntityFields
+                fromEntityFields: fromEntityFields
             );
         }
 
@@ -1071,13 +1071,13 @@ namespace Trecs.SourceGen
             if (fromWorldFields == null)
                 return null;
 
-            var singleEntityFields = ScanSingleEntityFields(
+            var fromEntityFields = ScanFromSingleEntityFields(
                 diagnostics,
                 structDecl,
                 semanticModel,
                 isParallelJob: true
             );
-            if (singleEntityFields == null)
+            if (fromEntityFields == null)
                 return null;
 
             return new JobInfo(
@@ -1087,7 +1087,7 @@ namespace Trecs.SourceGen
                 aspect: null,
                 components: null,
                 fromWorldFields: fromWorldFields,
-                singleEntityFields: singleEntityFields
+                fromEntityFields: fromEntityFields
             );
         }
 
@@ -1264,28 +1264,30 @@ namespace Trecs.SourceGen
         }
 
         /// <summary>
-        /// Scans the job struct for fields decorated with <c>[SingleEntity(Tag/Tags)]</c>.
+        /// Scans the job struct for fields decorated with <c>[FromSingleEntity(Tag/Tags)]</c> or <c>[FromGlobalEntity]</c>.
         /// Each entry becomes a hidden hoist + assignment in the generated <c>ScheduleParallel</c>
         /// path. Validates: type is an <c>IAspect</c> or a <c>NativeComponentRead/Write&lt;T&gt;</c>;
         /// inline tags are present; not stacked with <c>[FromWorld]</c>.
         /// </summary>
-        static List<SingleEntityFieldEntry>? ScanSingleEntityFields(
+        static List<FromSingleEntityFieldEntry>? ScanFromSingleEntityFields(
             Action<DiagnosticInfo> diagnostics,
             StructDeclarationSyntax structDecl,
             SemanticModel semanticModel,
             bool isParallelJob
         )
         {
-            var result = new List<SingleEntityFieldEntry>();
+            var result = new List<FromSingleEntityFieldEntry>();
             foreach (var field in structDecl.Members.OfType<FieldDeclarationSyntax>())
             {
-                bool hasSingleEntity = field
+                bool hasFromSingleEntity = field
                     .AttributeLists.SelectMany(al => al.Attributes)
                     .Any(attr =>
-                        IterationCriteriaParser.ExtractAttributeName(attr.Name.ToString())
-                        == TrecsAttributeNames.SingleEntity
-                    );
-                if (!hasSingleEntity)
+                    {
+                        var name = IterationCriteriaParser.ExtractAttributeName(attr.Name.ToString());
+                        return name == TrecsAttributeNames.FromSingleEntity
+                            || name == TrecsAttributeNames.FromGlobalEntity;
+                    });
+                if (!hasFromSingleEntity)
                     continue;
 
                 bool hasFromWorld = field
@@ -1298,7 +1300,7 @@ namespace Trecs.SourceGen
                 {
                     diagnostics(
                         DiagnosticInfo.Create(
-                            DiagnosticDescriptors.SingleEntityConflictingAttributes,
+                            DiagnosticDescriptors.FromSingleEntityConflictingAttributes,
                             field.GetLocation(),
                             field.Declaration.Variables[0].Identifier.Text,
                             "FromWorld"
@@ -1346,9 +1348,8 @@ namespace Trecs.SourceGen
                     );
                     return null;
                 }
-                var tagTypes = InlineTagsParser.ParseFromSymbol(
+                var tagTypes = InlineTagsParser.ParseFromSingleEntitySymbol(
                     fieldSymbol,
-                    "SingleEntity",
                     field.GetLocation(),
                     v.Identifier.Text,
                     ToBridge(diagnostics)
@@ -1359,7 +1360,7 @@ namespace Trecs.SourceGen
                 {
                     diagnostics(
                         DiagnosticInfo.Create(
-                            DiagnosticDescriptors.SingleEntityRequiresInlineTags,
+                            DiagnosticDescriptors.FromSingleEntityRequiresInlineTags,
                             field.GetLocation(),
                             v.Identifier.Text
                         )
@@ -1389,7 +1390,7 @@ namespace Trecs.SourceGen
                 {
                     diagnostics(
                         DiagnosticInfo.Create(
-                            DiagnosticDescriptors.SingleEntityWrongType,
+                            DiagnosticDescriptors.FromSingleEntityWrongType,
                             field.GetLocation(),
                             v.Identifier.Text,
                             PerformanceCache.GetDisplayString(typeSymbol)
@@ -1401,7 +1402,7 @@ namespace Trecs.SourceGen
                 if (isAspect)
                 {
                     var aspectData = AspectAttributeParser.ParseAspectData(typeSymbol);
-                    CheckSingleEntityAspectWriteAttributes(
+                    CheckFromSingleEntityAspectWriteAttributes(
                         diagnostics,
                         field,
                         typeSymbol,
@@ -1410,7 +1411,7 @@ namespace Trecs.SourceGen
                         isParallelJob
                     );
                     result.Add(
-                        new SingleEntityFieldEntry(
+                        new FromSingleEntityFieldEntry(
                             fieldName: v.Identifier.Text,
                             isAspect: true,
                             tagTypes: tagTypes,
@@ -1423,7 +1424,7 @@ namespace Trecs.SourceGen
                 {
                     var compType = typeSymbol.TypeArguments[0];
                     result.Add(
-                        new SingleEntityFieldEntry(
+                        new FromSingleEntityFieldEntry(
                             fieldName: v.Identifier.Text,
                             isAspect: false,
                             tagTypes: tagTypes,
@@ -1457,13 +1458,15 @@ namespace Trecs.SourceGen
                         IterationCriteriaParser.ExtractAttributeName(attr.Name.ToString())
                         == TrecsAttributeNames.FromWorld
                     );
-                bool hasSingleEntity = field
+                bool hasFromSingleEntity = field
                     .AttributeLists.SelectMany(al => al.Attributes)
                     .Any(attr =>
-                        IterationCriteriaParser.ExtractAttributeName(attr.Name.ToString())
-                        == TrecsAttributeNames.SingleEntity
-                    );
-                if (hasFromWorld || hasSingleEntity)
+                    {
+                        var name = IterationCriteriaParser.ExtractAttributeName(attr.Name.ToString());
+                        return name == TrecsAttributeNames.FromSingleEntity
+                            || name == TrecsAttributeNames.FromGlobalEntity;
+                    });
+                if (hasFromWorld || hasFromSingleEntity)
                     continue;
 
                 var typeSyntax = field.Declaration.Type;
@@ -1552,14 +1555,14 @@ namespace Trecs.SourceGen
         }
 
         // Mirror of CheckFromWorldFieldWriteAttributes for hand-written
-        // [SingleEntity] aspect fields. If the aspect carries IWrite
+        // [FromSingleEntity] aspect fields. If the aspect carries IWrite
         // components the materialized aspect stores a NativeComponentBufferWrite,
         // which Unity's parallel-job safety walker rejects on a field without
         // [NativeDisableParallelForRestriction]. Auto-generated [WrapAsJob]
         // wrappers add the attribute themselves; hand-written job structs need
         // this warning so users learn at compile time rather than via a Burst
         // safety error at runtime.
-        static void CheckSingleEntityAspectWriteAttributes(
+        static void CheckFromSingleEntityAspectWriteAttributes(
             Action<DiagnosticInfo> diagnostics,
             FieldDeclarationSyntax field,
             INamedTypeSymbol aspectTypeSymbol,
@@ -1591,7 +1594,7 @@ namespace Trecs.SourceGen
                 var variable = field.Declaration.Variables[0];
                 diagnostics(
                     DiagnosticInfo.Create(
-                        DiagnosticDescriptors.SingleEntityWriteAspectMissingNativeDisableParallelForRestriction,
+                        DiagnosticDescriptors.FromSingleEntityWriteAspectMissingNativeDisableParallelForRestriction,
                         field.GetLocation(),
                         variable.Identifier.Text,
                         structName,
@@ -1645,7 +1648,7 @@ namespace Trecs.SourceGen
                     AspectIteration: JobModelBuilders.EmptyAspectIteration,
                     ComponentsIteration: JobModelBuilders.EmptyComponentsIteration,
                     FromWorldFields: EquatableArray<FromWorldFieldEmitModel>.Empty,
-                    SingleEntityFields: EquatableArray<SingleEntityFieldModel>.Empty,
+                    FromSingleEntityFields: EquatableArray<FromSingleEntityFieldModel>.Empty,
                     AttributeCriteriaChain: string.Empty,
                     HasBurstCompile: false,
                     IsValid: false,
@@ -1724,8 +1727,8 @@ namespace Trecs.SourceGen
                 )
                 .ToArray();
 
-            var singleEntityModels = info
-                .SingleEntityFields.Select(f => ProjectSingleEntityField(f, globalNamespaceName))
+            var fromEntityModels = info
+                .FromSingleEntityFields.Select(f => ProjectFromSingleEntityField(f, globalNamespaceName))
                 .ToArray();
 
             string attributeChain = string.Empty;
@@ -1753,7 +1756,7 @@ namespace Trecs.SourceGen
                 AspectIteration: aspectIteration,
                 ComponentsIteration: componentsIteration,
                 FromWorldFields: new EquatableArray<FromWorldFieldEmitModel>(fromWorldEmits),
-                SingleEntityFields: new EquatableArray<SingleEntityFieldModel>(singleEntityModels),
+                FromSingleEntityFields: new EquatableArray<FromSingleEntityFieldModel>(fromEntityModels),
                 AttributeCriteriaChain: attributeChain,
                 HasBurstCompile: HasBurstCompile(symbol),
                 IsValid: true,
@@ -1761,8 +1764,8 @@ namespace Trecs.SourceGen
             );
         }
 
-        static SingleEntityFieldModel ProjectSingleEntityField(
-            SingleEntityFieldEntry entry,
+        static FromSingleEntityFieldModel ProjectFromSingleEntityField(
+            FromSingleEntityFieldEntry entry,
             string globalNamespaceName
         )
         {
@@ -1773,7 +1776,7 @@ namespace Trecs.SourceGen
                         globalNamespaceName
                     )
                     : AspectAttributeDataModel.Empty;
-            return new SingleEntityFieldModel(
+            return new FromSingleEntityFieldModel(
                 FieldName: entry.FieldName,
                 IsAspect: entry.IsAspect,
                 TagTypeDisplays: entry
@@ -2078,10 +2081,10 @@ namespace Trecs.SourceGen
                 sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}queryIndexOffset = 0;");
 
             FromWorldEmitter.EmitFromWorldHoistedSetup(sb, body, orderedEmits);
-            var singleEntityTargets = model
-                .SingleEntityFields.Select(f => f.ToEmitTarget())
+            var fromEntityTargets = model
+                .FromSingleEntityFields.Select(f => f.ToEmitTarget())
                 .ToList();
-            SingleEntityEmitter.EmitHoistedSetup(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitHoistedSetup(sb, body, fromEntityTargets);
 
             sb.AppendLine(
                 $"{body}foreach (var {FromWorldEmitter.GenPrefix}slice in {FromWorldEmitter.GenPrefix}builder.GroupSlices())"
@@ -2098,7 +2101,7 @@ namespace Trecs.SourceGen
             sb.AppendLine($"{innerBody}if ({FromWorldEmitter.GenPrefix}count == 0) continue;");
             sb.AppendLine();
 
-            EmitPerGroupBody(sb, model, innerBody, orderedEmits, singleEntityTargets);
+            EmitPerGroupBody(sb, model, innerBody, orderedEmits, fromEntityTargets);
 
             if (model.NeedsGlobalIndexOffset)
                 sb.AppendLine(
@@ -2126,14 +2129,14 @@ namespace Trecs.SourceGen
 
         // Iteration-buffer materialization is identical between dense and sparse
         // paths — common per-group body covering both. The orderedEmits and
-        // singleEntityTargets are pre-projected at the caller so this helper
+        // fromEntityTargets are pre-projected at the caller so this helper
         // doesn't repeat the projection per group.
         static void EmitPerGroupBody(
             StringBuilder sb,
             in JobModel model,
             string body,
             List<FromWorldFieldEmitModel> orderedEmits,
-            List<SingleEntityEmitTargetModel> singleEntityTargets
+            List<FromSingleEntityEmitTargetModel> fromEntityTargets
         )
         {
             sb.AppendLine(
@@ -2144,7 +2147,7 @@ namespace Trecs.SourceGen
             IterationBufferEmitter.EmitDepRegistration(sb, body, buffers);
 
             FromWorldEmitter.EmitFromWorldDepRegistration(sb, body, orderedEmits);
-            SingleEntityEmitter.EmitDepRegistration(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitDepRegistration(sb, body, fromEntityTargets);
 
             IterationBufferEmitter.EmitMaterialization(sb, body, buffers);
 
@@ -2165,7 +2168,7 @@ namespace Trecs.SourceGen
             );
 
             FromWorldEmitter.EmitFromWorldFieldAssignments(sb, body, orderedEmits);
-            SingleEntityEmitter.EmitFieldAssignment(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitFieldAssignment(sb, body, fromEntityTargets);
 
             sb.AppendLine($"{body}#if SVKJ_IS_PROFILING");
             sb.AppendLine(
@@ -2188,7 +2191,7 @@ namespace Trecs.SourceGen
 
             IterationBufferEmitter.EmitOutputTracking(sb, body, buffers);
             FromWorldEmitter.EmitFromWorldTracking(sb, body, orderedEmits);
-            SingleEntityEmitter.EmitTracking(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitTracking(sb, body, fromEntityTargets);
 
             sb.AppendLine(
                 $"{body}{FromWorldEmitter.GenPrefix}allJobs = JobHandle.CombineDependencies({FromWorldEmitter.GenPrefix}allJobs, {FromWorldEmitter.GenPrefix}handle);"
@@ -2237,10 +2240,10 @@ namespace Trecs.SourceGen
                 sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}queryIndexOffset = 0;");
 
             FromWorldEmitter.EmitFromWorldHoistedSetup(sb, body, orderedEmits);
-            var singleEntityTargets = model
-                .SingleEntityFields.Select(f => f.ToEmitTarget())
+            var fromEntityTargets = model
+                .FromSingleEntityFields.Select(f => f.ToEmitTarget())
                 .ToList();
-            SingleEntityEmitter.EmitHoistedSetup(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitHoistedSetup(sb, body, fromEntityTargets);
 
             sb.AppendLine(
                 $"{body}foreach (var {FromWorldEmitter.GenPrefix}slice in {FromWorldEmitter.GenPrefix}builder.GroupSlices())"
@@ -2263,7 +2266,7 @@ namespace Trecs.SourceGen
             sb.AppendLine($"{innerBody}}}");
             sb.AppendLine();
 
-            EmitPerGroupBodyForSparse(sb, model, innerBody, orderedEmits, singleEntityTargets);
+            EmitPerGroupBodyForSparse(sb, model, innerBody, orderedEmits, fromEntityTargets);
 
             if (model.NeedsGlobalIndexOffset)
                 sb.AppendLine(
@@ -2280,7 +2283,7 @@ namespace Trecs.SourceGen
             in JobModel model,
             string body,
             List<FromWorldFieldEmitModel> orderedEmits,
-            List<SingleEntityEmitTargetModel> singleEntityTargets
+            List<FromSingleEntityEmitTargetModel> fromEntityTargets
         )
         {
             sb.AppendLine(
@@ -2291,7 +2294,7 @@ namespace Trecs.SourceGen
             IterationBufferEmitter.EmitDepRegistration(sb, body, buffers);
 
             FromWorldEmitter.EmitFromWorldDepRegistration(sb, body, orderedEmits);
-            SingleEntityEmitter.EmitDepRegistration(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitDepRegistration(sb, body, fromEntityTargets);
 
             IterationBufferEmitter.EmitMaterialization(sb, body, buffers);
 
@@ -2312,7 +2315,7 @@ namespace Trecs.SourceGen
             );
 
             FromWorldEmitter.EmitFromWorldFieldAssignments(sb, body, orderedEmits);
-            SingleEntityEmitter.EmitFieldAssignment(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitFieldAssignment(sb, body, fromEntityTargets);
 
             sb.AppendLine($"{body}#if SVKJ_IS_PROFILING");
             sb.AppendLine(
@@ -2338,7 +2341,7 @@ namespace Trecs.SourceGen
 
             IterationBufferEmitter.EmitOutputTracking(sb, body, buffers);
             FromWorldEmitter.EmitFromWorldTracking(sb, body, orderedEmits);
-            SingleEntityEmitter.EmitTracking(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitTracking(sb, body, fromEntityTargets);
 
             sb.AppendLine(
                 $"{body}var {FromWorldEmitter.GenPrefix}disposeHandle = {FromWorldEmitter.GenPrefix}indicesLifetime.Dispose({FromWorldEmitter.GenPrefix}handle);"
@@ -2377,27 +2380,27 @@ namespace Trecs.SourceGen
             );
 
             FromWorldEmitter.EmitFromWorldHoistedSetup(sb, body, orderedEmits);
-            var singleEntityTargets = model
-                .SingleEntityFields.Select(f => f.ToEmitTarget())
+            var fromEntityTargets = model
+                .FromSingleEntityFields.Select(f => f.ToEmitTarget())
                 .ToList();
-            SingleEntityEmitter.EmitHoistedSetup(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitHoistedSetup(sb, body, fromEntityTargets);
 
             sb.AppendLine(
                 $"{body}var {FromWorldEmitter.GenPrefix}deps = {FromWorldEmitter.GenPrefix}extraDeps;"
             );
             FromWorldEmitter.EmitFromWorldDepRegistration(sb, body, orderedEmits);
-            SingleEntityEmitter.EmitDepRegistration(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitDepRegistration(sb, body, fromEntityTargets);
 
             sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}job = this;");
             FromWorldEmitter.EmitFromWorldFieldAssignments(sb, body, orderedEmits);
-            SingleEntityEmitter.EmitFieldAssignment(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitFieldAssignment(sb, body, fromEntityTargets);
 
             sb.AppendLine(
                 $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}job.Schedule({FromWorldEmitter.GenPrefix}deps);"
             );
 
             FromWorldEmitter.EmitFromWorldTracking(sb, body, orderedEmits);
-            SingleEntityEmitter.EmitTracking(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitTracking(sb, body, fromEntityTargets);
 
             sb.AppendLine($"{body}return {FromWorldEmitter.GenPrefix}handle;");
             sb.AppendLine($"{ind}}}");
@@ -2432,27 +2435,27 @@ namespace Trecs.SourceGen
             );
 
             FromWorldEmitter.EmitFromWorldHoistedSetup(sb, body, orderedEmits);
-            var singleEntityTargets = model
-                .SingleEntityFields.Select(f => f.ToEmitTarget())
+            var fromEntityTargets = model
+                .FromSingleEntityFields.Select(f => f.ToEmitTarget())
                 .ToList();
-            SingleEntityEmitter.EmitHoistedSetup(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitHoistedSetup(sb, body, fromEntityTargets);
 
             sb.AppendLine(
                 $"{body}var {FromWorldEmitter.GenPrefix}deps = {FromWorldEmitter.GenPrefix}extraDeps;"
             );
             FromWorldEmitter.EmitFromWorldDepRegistration(sb, body, orderedEmits);
-            SingleEntityEmitter.EmitDepRegistration(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitDepRegistration(sb, body, fromEntityTargets);
 
             sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}job = this;");
             FromWorldEmitter.EmitFromWorldFieldAssignments(sb, body, orderedEmits);
-            SingleEntityEmitter.EmitFieldAssignment(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitFieldAssignment(sb, body, fromEntityTargets);
 
             sb.AppendLine(
                 $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}job.ScheduleParallel(count, JobsUtil.ChooseBatchSize(count), {FromWorldEmitter.GenPrefix}deps);"
             );
 
             FromWorldEmitter.EmitFromWorldTracking(sb, body, orderedEmits);
-            SingleEntityEmitter.EmitTracking(sb, body, singleEntityTargets);
+            FromSingleEntityEmitter.EmitTracking(sb, body, fromEntityTargets);
 
             sb.AppendLine($"{body}return {FromWorldEmitter.GenPrefix}handle;");
             sb.AppendLine($"{ind}}}");
@@ -2530,13 +2533,14 @@ namespace Trecs.SourceGen
             public List<FromWorldFieldInfo> FromWorldFields { get; }
 
             /// <summary>
-            /// <c>[SingleEntity]</c>-decorated fields on the job struct. Each entry is
-            /// resolved at schedule time via <c>Query().WithTags&lt;...&gt;().SingleIndex()</c>
-            /// and assigned into the per-group job instance. Aspect-typed fields are
-            /// constructed from the singleton's group buffers; component fields use
+            /// <c>[FromSingleEntity]</c>/<c>[FromGlobalEntity]</c>-decorated fields on the job struct.
+            /// Each entry is resolved at schedule time via
+            /// <c>Query().WithTags&lt;...&gt;().SingleIndex()</c> and assigned into the
+            /// per-group job instance. Aspect-typed fields are constructed from the
+            /// singleton's group buffers; component fields use
             /// <c>NativeComponentRead/Write&lt;T&gt;</c>.
             /// </summary>
-            public List<SingleEntityFieldEntry> SingleEntityFields { get; }
+            public List<FromSingleEntityFieldEntry> FromSingleEntityFields { get; }
 
             public IterationCriteria IterationCriteria =>
                 Kind switch
@@ -2574,7 +2578,7 @@ namespace Trecs.SourceGen
                 AspectIterationInfo? aspect,
                 ComponentsIterationInfo? components,
                 List<FromWorldFieldInfo> fromWorldFields,
-                List<SingleEntityFieldEntry> singleEntityFields
+                List<FromSingleEntityFieldEntry> fromEntityFields
             )
             {
                 Symbol = symbol;
@@ -2583,14 +2587,14 @@ namespace Trecs.SourceGen
                 Aspect = aspect;
                 Components = components;
                 FromWorldFields = fromWorldFields;
-                SingleEntityFields = singleEntityFields;
+                FromSingleEntityFields = fromEntityFields;
             }
         }
 
         /// <summary>
-        /// Field on a hand-written Trecs job struct that carries <c>[SingleEntity(Tag/Tags)]</c>.
+        /// Field on a hand-written Trecs job struct that carries <c>[FromSingleEntity(Tag/Tags)]</c> or <c>[FromGlobalEntity]</c>.
         /// </summary>
-        internal class SingleEntityFieldEntry
+        internal class FromSingleEntityFieldEntry
         {
             public string FieldName { get; }
             public bool IsAspect { get; }
@@ -2612,7 +2616,7 @@ namespace Trecs.SourceGen
             public ITypeSymbol? ComponentTypeSymbol { get; }
             public bool IsRef { get; }
 
-            public SingleEntityFieldEntry(
+            public FromSingleEntityFieldEntry(
                 string fieldName,
                 bool isAspect,
                 List<ITypeSymbol> tagTypes,

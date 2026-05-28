@@ -211,8 +211,8 @@ public class IncrementalCacheTests
     [Test]
     public void RunOnceGenerator_CachesAcrossUnrelatedEdits()
     {
-        // A partial system with one run-once method: a [SingleEntity] aspect param +
-        // a [SingleEntity] component param. Exercises the hoisted-singleton model
+        // A partial system with one run-once method: a [FromSingleEntity] aspect param +
+        // a [FromSingleEntity] component param. Exercises the hoisted-singleton model
         // (HoistedSingletonModel + HoistedAspectComponent) plus the equatable param-
         // slot list. If anything in those carries a non-equatable value (symbols,
         // syntax, raw Diagnostic), the SourceOutput step won't cache.
@@ -226,8 +226,8 @@ public class IncrementalCacheTests
                 public partial class GameSystem : Trecs.ISystem
                 {
                     void DoOnce(
-                        [Trecs.SingleEntity(Tag = typeof(Trecs.TrecsTags.Globals))] in PlayerView player,
-                        [Trecs.SingleEntity(Tag = typeof(Trecs.TrecsTags.Globals))] in CScore score)
+                        [Trecs.FromSingleEntity(Tag = typeof(Trecs.TrecsTags.Globals))] in PlayerView player,
+                        [Trecs.FromSingleEntity(Tag = typeof(Trecs.TrecsTags.Globals))] in CScore score)
                     { }
                 }
             }
@@ -254,7 +254,7 @@ public class IncrementalCacheTests
     public void ForEachGenerator_CachesAcrossUnrelatedEdits()
     {
         // Components-mode iteration with: in/ref component params, a tagged criterion,
-        // a hoisted [SingleEntity] component param, and a [PassThroughArgument] custom
+        // a hoisted [FromSingleEntity] component param, and a [PassThroughArgument] custom
         // param. Exercises the value-equatable ForEachComponentValidation including
         // its precomputed criteria chain and namespace set.
         const string source = """
@@ -270,7 +270,7 @@ public class IncrementalCacheTests
                     void Move(
                         in CPos pos,
                         ref CVel vel,
-                        [Trecs.SingleEntity(Tag = typeof(Trecs.TrecsTags.Globals))] in CScore score,
+                        [Trecs.FromSingleEntity(Tag = typeof(Trecs.TrecsTags.Globals))] in CScore score,
                         [Trecs.PassThroughArgument] float dt)
                     { }
                 }
@@ -292,7 +292,7 @@ public class IncrementalCacheTests
     [Test]
     public void ForEachEntityAspectGenerator_CachesAcrossUnrelatedEdits()
     {
-        // Aspect-mode iteration with: an in IAspect view, a hoisted [SingleEntity]
+        // Aspect-mode iteration with: an in IAspect view, a hoisted [FromSingleEntity]
         // component param, a [PassThroughArgument] custom param, and a tagged
         // criterion. Exercises the value-equatable ForEachAspectValidation
         // including the precomputed AspectBufferEntry list (with VarName) and
@@ -310,7 +310,7 @@ public class IncrementalCacheTests
                     [Trecs.ForEachEntity(Tag = typeof(Trecs.TrecsTags.Globals))]
                     void Move(
                         in MoverView view,
-                        [Trecs.SingleEntity(Tag = typeof(Trecs.TrecsTags.Globals))] in CScore score,
+                        [Trecs.FromSingleEntity(Tag = typeof(Trecs.TrecsTags.Globals))] in CScore score,
                         [Trecs.PassThroughArgument] float dt)
                     { }
                 }
@@ -338,9 +338,9 @@ public class IncrementalCacheTests
     public void JobGenerator_CachesAcrossUnrelatedEdits()
     {
         // Aspect-iteration job struct with [FromWorld] container, a hoisted
-        // [SingleEntity] aspect field, and tagged criterion. Exercises the
+        // [FromSingleEntity] aspect field, and tagged criterion. Exercises the
         // JobModel projection: AspectIterationModel.AspectComponents,
-        // FromWorldFieldEmitModel projection, SingleEntityFieldModel projection,
+        // FromWorldFieldEmitModel projection, FromSingleEntityFieldModel projection,
         // and the precomputed AttributeCriteriaChain string.
         const string source = """
             namespace Sample
@@ -356,7 +356,7 @@ public class IncrementalCacheTests
                 {
                     [Trecs.FromWorld] private Trecs.NativeComponentBufferRead<CHealth> healths;
 
-                    [Trecs.SingleEntity(Tag = typeof(Trecs.TrecsTags.Globals))]
+                    [Trecs.FromSingleEntity(Tag = typeof(Trecs.TrecsTags.Globals))]
                     private ScoreView score;
 
                     [Trecs.ForEachEntity(Tag = typeof(Trecs.TrecsTags.Globals))]
@@ -386,11 +386,11 @@ public class IncrementalCacheTests
     public void AutoJobGenerator_CachesAcrossUnrelatedEdits()
     {
         // Aspect-iteration [WrapAsJob] method with a [FromWorld] container, a
-        // hoisted [SingleEntity] aspect parameter, a PassThrough parameter, and
+        // hoisted [FromSingleEntity] aspect parameter, a PassThrough parameter, and
         // a tagged criterion. Exercises the AutoJobModel projection:
         // AutoJobAspectModel.Components, FromWorldFieldEmitModel /
-        // SingleEntityEmitTargetModel projections (cross-referenced via the
-        // FromWorldIndex / SingleEntityIndex slots on AutoJobParamModel), and
+        // FromSingleEntityEmitTargetModel projections (cross-referenced via the
+        // FromWorldIndex / FromSingleEntityIndex slots on AutoJobParamModel), and
         // the precomputed AttributeCriteriaChain string + AdditionalUsings.
         const string source = """
             namespace Sample
@@ -409,7 +409,7 @@ public class IncrementalCacheTests
                     static void Tick(
                         in MoverView view,
                         [Trecs.FromWorld] in Trecs.NativeComponentBufferRead<CHealth> healths,
-                        [Trecs.SingleEntity(Tag = typeof(Trecs.TrecsTags.Globals))] in ScoreView score,
+                        [Trecs.FromSingleEntity(Tag = typeof(Trecs.TrecsTags.Globals))] in ScoreView score,
                         [Trecs.PassThroughArgument] float dt)
                     { }
                 }
@@ -818,11 +818,11 @@ public class IncrementalCacheTests
     }
 
     [Test]
-    public void AutoJobGenerator_SingleEntityComponent_CachesAcrossUnrelatedEdits()
+    public void AutoJobGenerator_FromSingleEntityComponent_CachesAcrossUnrelatedEdits()
     {
-        // AutoJobParamRoleKind.SingleEntityComponentRead/Write — exercises the
-        // SingleEntity per-param projection on a [WrapAsJob] method with component
-        // params (not aspect). Tests that the SingleEntityEmitTargetModel projection
+        // AutoJobParamRoleKind.FromSingleEntityComponentRead/Write — exercises the
+        // FromSingleEntity per-param projection on a [WrapAsJob] method with component
+        // params (not aspect). Tests that the FromSingleEntityEmitTargetModel projection
         // doesn't leak symbols.
         const string source = """
             namespace Sample
@@ -839,7 +839,7 @@ public class IncrementalCacheTests
                     [Trecs.WrapAsJob]
                     static void Tally(
                         in CPos pos,
-                        [Trecs.SingleEntity(Tag = typeof(Trecs.TrecsTags.Globals))] ref CScore score) { }
+                        [Trecs.FromSingleEntity(Tag = typeof(Trecs.TrecsTags.Globals))] ref CScore score) { }
                 }
             }
             """;
@@ -857,7 +857,7 @@ public class IncrementalCacheTests
         Assert.That(
             result.IsCached(SourceOutputStepName),
             Is.True,
-            $"AutoJobGenerator (SingleEntityComponent variant) did not cache.\n{result.Format()}"
+            $"AutoJobGenerator (FromSingleEntityComponent variant) did not cache.\n{result.Format()}"
         );
     }
 

@@ -6,7 +6,7 @@ namespace Trecs.SourceGen.Tests;
 
 /// <summary>
 /// Compile-cleanliness tests for RunOnceGenerator. Routed to from any method whose
-/// parameters are decorated with one or more <c>[SingleEntity]</c> attributes (and which
+/// parameters are decorated with one or more <c>[FromSingleEntity]</c> attributes (and which
 /// has no <c>[ForEachEntity]</c> attribute). The generator hoists each singleton lookup
 /// via <c>__world.Query().WithTags&lt;...&gt;().SingleIndex()</c> and calls the user
 /// method exactly once with the resolved aspects/components plugged in.
@@ -27,7 +27,7 @@ public class RunOnceGeneratorTests
                 public partial class MySystem
                 {
                     void Initialize(
-                        [Trecs.SingleEntity(Tag = typeof(GlobalsTag))] in GlobalsView globals
+                        [Trecs.FromSingleEntity(Tag = typeof(GlobalsTag))] in GlobalsView globals
                     ) { }
                 }
             }
@@ -48,9 +48,9 @@ public class RunOnceGeneratorTests
     }
 
     [Test]
-    public void RunOnce_TwoSingleEntityParams_CompilesCleanly()
+    public void RunOnce_TwoFromSingleEntityParams_CompilesCleanly()
     {
-        // Multiple [SingleEntity] params each get their own hoisted lookup. Catches a
+        // Multiple [FromSingleEntity] params each get their own hoisted lookup. Catches a
         // regression in per-param lookup variable naming or ordering.
         const string source = """
             namespace Sample
@@ -67,8 +67,8 @@ public class RunOnceGeneratorTests
                 public partial class MySystem
                 {
                     void Run(
-                        [Trecs.SingleEntity(Tag = typeof(PlayerTag))] in PlayerView player,
-                        [Trecs.SingleEntity(Tag = typeof(GlobalsTag))] in GlobalsView globals
+                        [Trecs.FromSingleEntity(Tag = typeof(PlayerTag))] in PlayerView player,
+                        [Trecs.FromSingleEntity(Tag = typeof(GlobalsTag))] in GlobalsView globals
                     ) { }
                 }
             }
@@ -104,7 +104,7 @@ public class RunOnceGeneratorTests
                     public partial class InnerSystem
                     {
                         void Apply(
-                            [Trecs.SingleEntity(Tag = typeof(GlobalsTag))] in CConfig config
+                            [Trecs.FromSingleEntity(Tag = typeof(GlobalsTag))] in CConfig config
                         ) { }
                     }
                 }
@@ -126,7 +126,7 @@ public class RunOnceGeneratorTests
     [Test]
     public void RunOnce_ComponentParam_CompilesCleanly()
     {
-        // [SingleEntity] on a component param (rather than aspect) routes through the
+        // [FromSingleEntity] on a component param (rather than aspect) routes through the
         // ComponentBuffer lookup path instead of the aspect ctor path.
         const string source = """
             namespace Sample
@@ -137,7 +137,7 @@ public class RunOnceGeneratorTests
                 public partial class MySystem
                 {
                     void Apply(
-                        [Trecs.SingleEntity(Tag = typeof(GlobalsTag))] in CConfig config
+                        [Trecs.FromSingleEntity(Tag = typeof(GlobalsTag))] in CConfig config
                     ) { }
                 }
             }
@@ -158,8 +158,8 @@ public class RunOnceGeneratorTests
     [Test]
     public void RunOnce_PositionalCtorTag_CompilesCleanly()
     {
-        // Positional-ctor shorthand: [SingleEntity(typeof(Tag))] — must resolve the
-        // tag the same way as [SingleEntity(Tag = typeof(Tag))].
+        // Positional-ctor shorthand: [FromSingleEntity(typeof(Tag))] — must resolve the
+        // tag the same way as [FromSingleEntity(Tag = typeof(Tag))].
         const string source = """
             namespace Sample
             {
@@ -170,7 +170,7 @@ public class RunOnceGeneratorTests
                 public partial class MySystem
                 {
                     void Initialize(
-                        [Trecs.SingleEntity(typeof(GlobalsTag))] in GlobalsView globals
+                        [Trecs.FromSingleEntity(typeof(GlobalsTag))] in GlobalsView globals
                     ) { }
                 }
             }
@@ -193,7 +193,7 @@ public class RunOnceGeneratorTests
     [Test]
     public void RunOnce_PositionalCtorMultipleTags_CompilesCleanly()
     {
-        // params Type[] expansion: [SingleEntity(typeof(A), typeof(B))].
+        // params Type[] expansion: [FromSingleEntity(typeof(A), typeof(B))].
         const string source = """
             namespace Sample
             {
@@ -205,7 +205,7 @@ public class RunOnceGeneratorTests
                 public partial class MySystem
                 {
                     void Initialize(
-                        [Trecs.SingleEntity(typeof(PlayerTag), typeof(AliveTag))] in PlayerView p
+                        [Trecs.FromSingleEntity(typeof(PlayerTag), typeof(AliveTag))] in PlayerView p
                     ) { }
                 }
             }
@@ -228,7 +228,7 @@ public class RunOnceGeneratorTests
     [Test]
     public void RunOnce_GenericAttribute_CompilesCleanly()
     {
-        // C# 11 generic-attribute shorthand: [SingleEntity<GlobalsTag>] —
+        // C# 11 generic-attribute shorthand: [FromSingleEntity<GlobalsTag>] —
         // tags pulled from AttributeClass.TypeArguments.
         const string source = """
             namespace Sample
@@ -240,7 +240,7 @@ public class RunOnceGeneratorTests
                 public partial class MySystem
                 {
                     void Initialize(
-                        [Trecs.SingleEntity<GlobalsTag>] in GlobalsView globals
+                        [Trecs.FromSingleEntity<GlobalsTag>] in GlobalsView globals
                     ) { }
                 }
             }
@@ -263,7 +263,7 @@ public class RunOnceGeneratorTests
     [Test]
     public void RunOnce_GenericAttributeMultipleTags_CompilesCleanly()
     {
-        // [SingleEntity<A, B>] — multi-arity generic variant.
+        // [FromSingleEntity<A, B>] — multi-arity generic variant.
         const string source = """
             namespace Sample
             {
@@ -275,7 +275,7 @@ public class RunOnceGeneratorTests
                 public partial class MySystem
                 {
                     void Initialize(
-                        [Trecs.SingleEntity<PlayerTag, AliveTag>] in PlayerView p
+                        [Trecs.FromSingleEntity<PlayerTag, AliveTag>] in PlayerView p
                     ) { }
                 }
             }
@@ -311,7 +311,7 @@ public class RunOnceGeneratorTests
                 public partial class MySystem
                 {
                     void Initialize(
-                        [Trecs.SingleEntity(typeof(GlobalsTag), Tag = typeof(OtherTag))] in GlobalsView g
+                        [Trecs.FromSingleEntity(typeof(GlobalsTag), Tag = typeof(OtherTag))] in GlobalsView g
                     ) { }
                 }
             }
@@ -326,5 +326,107 @@ public class RunOnceGeneratorTests
                 + "with named Tag/Tags. Got: "
                 + run.Format()
         );
+    }
+
+    [Test]
+    public void RunOnce_FromGlobalEntity_CompilesCleanly()
+    {
+        // [FromGlobalEntity] is shorthand for [FromSingleEntity(typeof(TrecsTags.Globals))].
+        // The source gen resolves TrecsTags.Globals from the attribute's containing assembly.
+        const string source = """
+            namespace Sample
+            {
+                public partial struct CScore : Trecs.IEntityComponent { public int V; }
+                public partial struct GlobalsView : Trecs.IAspect, Trecs.IRead<CScore> { }
+
+                public partial class MySystem
+                {
+                    void Execute(
+                        [Trecs.FromGlobalEntity] in GlobalsView globals
+                    ) { }
+                }
+            }
+            """;
+
+        var run = GeneratorTestHarness.Run(
+            new Microsoft.CodeAnalysis.IIncrementalGenerator[]
+            {
+                new RunOnceGenerator(),
+                new AspectGenerator(),
+                new EntityComponentGenerator(),
+            },
+            source
+        );
+
+        Assert.That(run.CompileErrors, Is.Empty, run.Format());
+        Assert.That(run.GenErrors, Is.Empty, run.Format());
+    }
+
+    [Test]
+    public void RunOnce_FromGlobalEntityComponent_CompilesCleanly()
+    {
+        // [FromGlobalEntity] on a component-typed parameter (not just aspects).
+        const string source = """
+            namespace Sample
+            {
+                public partial struct CScore : Trecs.IEntityComponent { public int V; }
+
+                public partial class MySystem
+                {
+                    void Execute(
+                        [Trecs.FromGlobalEntity] in CScore score
+                    ) { }
+                }
+            }
+            """;
+
+        var run = GeneratorTestHarness.Run(
+            new Microsoft.CodeAnalysis.IIncrementalGenerator[]
+            {
+                new RunOnceGenerator(),
+                new EntityComponentGenerator(),
+            },
+            source
+        );
+
+        Assert.That(run.CompileErrors, Is.Empty, run.Format());
+        Assert.That(run.GenErrors, Is.Empty, run.Format());
+    }
+
+    [Test]
+    public void RunOnce_FromGlobalEntityMixedWithFromSingleEntity_CompilesCleanly()
+    {
+        // Mix [FromGlobalEntity] and [FromSingleEntity] on different params.
+        const string source = """
+            namespace Sample
+            {
+                public partial struct CScore : Trecs.IEntityComponent { public int V; }
+                public partial struct CPos : Trecs.IEntityComponent { public float X; }
+                public partial struct GlobalsView : Trecs.IAspect, Trecs.IRead<CScore> { }
+                public partial struct PlayerView : Trecs.IAspect, Trecs.IRead<CPos> { }
+                public struct PlayerTag : Trecs.ITag { }
+
+                public partial class MySystem
+                {
+                    void Execute(
+                        [Trecs.FromGlobalEntity] in GlobalsView globals,
+                        [Trecs.FromSingleEntity(Tag = typeof(PlayerTag))] in PlayerView player
+                    ) { }
+                }
+            }
+            """;
+
+        var run = GeneratorTestHarness.Run(
+            new Microsoft.CodeAnalysis.IIncrementalGenerator[]
+            {
+                new RunOnceGenerator(),
+                new AspectGenerator(),
+                new EntityComponentGenerator(),
+            },
+            source
+        );
+
+        Assert.That(run.CompileErrors, Is.Empty, run.Format());
+        Assert.That(run.GenErrors, Is.Empty, run.Format());
     }
 }

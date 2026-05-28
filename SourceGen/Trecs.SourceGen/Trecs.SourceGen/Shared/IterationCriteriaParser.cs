@@ -44,7 +44,7 @@ namespace Trecs.SourceGen.Shared
         }
 
         /// <summary>
-        /// Parses an iteration attribute (<c>[ForEachEntity]</c> or <c>[SingleEntity]</c>)
+        /// Parses an iteration attribute (<c>[ForEachEntity]</c> or <c>[FromSingleEntity]</c>)
         /// for Tags / Tag / Set / MatchByComponents named arguments. Tag-source
         /// extraction (positional / generic / named) and the TRECS053
         /// mutual-exclusion check are delegated to <see cref="TagSourceParser"/>;
@@ -53,7 +53,7 @@ namespace Trecs.SourceGen.Shared
         /// </summary>
         /// <param name="attributeName">
         /// The attribute class name to match (e.g. <c>TrecsAttributeNames.ForEachEntity</c>
-        /// or <c>TrecsAttributeNames.SingleEntity</c>).
+        /// or <c>TrecsAttributeNames.FromSingleEntity</c>).
         /// </param>
         internal static IterationCriteria? ParseIterationAttribute(
             System.Action<Diagnostic> reportDiagnostic,

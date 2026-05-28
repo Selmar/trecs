@@ -93,7 +93,7 @@ Input components read like any other component during fixed update:
 ```csharp
 public partial class ProcessInputSystem : ISystem
 {
-    void Execute([SingleEntity(typeof(TrecsTags.Globals))] in MoveInput input)
+    void Execute([FromGlobalEntity] in MoveInput input)
     {
         // input.RequestedDirection is the value AddInput supplied this frame,
         // or the prior frame's value (Retain) / default (Reset) if none was queued.

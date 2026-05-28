@@ -14,9 +14,10 @@ namespace Trecs.SourceGen
 {
     /// <summary>
     /// Source generator for run-once methods on partial system classes — methods that
-    /// have one or more <c>[SingleEntity]</c> parameters and no other iteration attribute.
+    /// have one or more <c>[FromSingleEntity]</c> / <c>[FromGlobalEntity]</c> parameters and no
+    /// other iteration attribute.
     /// <para>
-    /// Each <c>[SingleEntity]</c> parameter is resolved via
+    /// Each <c>[FromSingleEntity]</c> parameter is resolved via
     /// <c>World.Query().WithTags&lt;...&gt;().SingleIndex()</c> (which asserts
     /// exactly one match) before the user method body. Aspect-typed parameters get a
     /// materialized aspect view; <c>in</c>/<c>ref</c> component parameters get a buffer
@@ -62,7 +63,7 @@ namespace Trecs.SourceGen
         private static bool IsCandidateMethod(SyntaxNode node)
         {
             // Cheap syntactic predicate: any parameter carries an attribute whose simple
-            // name (after stripping `Attribute`) matches "SingleEntity".
+            // name (after stripping `Attribute`) matches "FromSingleEntity" or "FromGlobalEntity".
             if (node is not MethodDeclarationSyntax methodDecl)
                 return false;
             foreach (var param in methodDecl.ParameterList.Parameters)
@@ -71,9 +72,12 @@ namespace Trecs.SourceGen
                 {
                     foreach (var attr in alist.Attributes)
                     {
+                        var name = IterationCriteriaParser.ExtractAttributeName(
+                            attr.Name.ToString()
+                        );
                         if (
-                            IterationCriteriaParser.ExtractAttributeName(attr.Name.ToString())
-                            == TrecsAttributeNames.SingleEntity
+                            name == TrecsAttributeNames.FromSingleEntity
+                            || name == TrecsAttributeNames.FromGlobalEntity
                         )
                             return true;
                     }
@@ -93,9 +97,9 @@ namespace Trecs.SourceGen
             if (methodSymbol == null)
                 return null;
 
-            // Only claim methods that are RunOnce (have [SingleEntity] params, no
-            // [ForEachEntity], no [WrapAsJob]). Mixed methods (e.g. [ForEachEntity] +
-            // [SingleEntity] params) belong to the ForEach generators, which honor the
+            // Only claim methods that are RunOnce (have [FromSingleEntity]/[FromGlobalEntity] params,
+            // no [ForEachEntity], no [WrapAsJob]). Mixed methods (e.g. [ForEachEntity] +
+            // [FromSingleEntity] params) belong to the ForEach generators, which honor the
             // hoisted-singleton slots emitted by ParameterClassifier.
             if (!IterationAttributeRouting.IsRunOnceMethod(methodSymbol))
                 return null;
@@ -266,13 +270,9 @@ namespace Trecs.SourceGen
                 }
 
                 var paramSymbol = semanticModel.GetDeclaredSymbol(param);
-                bool hasSingleEntity =
+                bool hasFromSingleEntity =
                     paramSymbol != null
-                    && PerformanceCache.HasAttributeByName(
-                        paramSymbol,
-                        TrecsAttributeNames.SingleEntity,
-                        TrecsNamespaces.Trecs
-                    );
+                    && IterationAttributeRouting.HasFromSingleEntityAttribute(paramSymbol);
                 bool hasFromWorld =
                     paramSymbol != null
                     && PerformanceCache.HasAttributeByName(
@@ -291,13 +291,13 @@ namespace Trecs.SourceGen
                 bool isRef = param.Modifiers.Any(m => m.IsKind(SyntaxKind.RefKeyword));
                 bool isIn = param.Modifiers.Any(m => m.IsKind(SyntaxKind.InKeyword));
 
-                if (hasSingleEntity)
+                if (hasFromSingleEntity)
                 {
                     if (hasFromWorld || hasPassThrough)
                     {
                         diagnostics.Add(
                             DiagnosticInfo.Create(
-                                DiagnosticDescriptors.SingleEntityConflictingAttributes,
+                                DiagnosticDescriptors.FromSingleEntityConflictingAttributes,
                                 param.GetLocation(),
                                 param.Identifier.Text,
                                 hasFromWorld ? "FromWorld" : "PassThroughArgument"
@@ -363,7 +363,7 @@ namespace Trecs.SourceGen
                 }
 
                 // Anything else is an error — RunOnce methods are nothing but
-                // [SingleEntity] params + WorldAccessor + [PassThroughArgument].
+                // [FromSingleEntity] params + WorldAccessor + [PassThroughArgument].
                 diagnostics.Add(
                     DiagnosticInfo.Create(
                         DiagnosticDescriptors.UnrecognizedParameterType,

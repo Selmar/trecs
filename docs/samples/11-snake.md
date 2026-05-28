@@ -86,12 +86,12 @@ Every N fixed frames (controlled by `MoveTickCounter`):
 3. Advances the head one cell in the current direction
 4. Wraps around grid edges
 
-`[SingleEntity]` is a per-parameter attribute that finds the one entity matching the given tag and binds it to the aspect parameter. Both the global entity and the snake head are bound this way. `World.Frame` stamps each segment with its creation frame:
+`[FromSingleEntity]` is a per-parameter attribute that finds the one entity matching the given tag and binds it to the aspect parameter. `[FromGlobalEntity]` is shorthand for `[FromSingleEntity(typeof(TrecsTags.Globals))]`. Both the global entity and the snake head are bound this way. `World.Frame` stamps each segment with its creation frame:
 
 ```csharp
 void Execute(
-    [SingleEntity(typeof(TrecsTags.Globals))] in Globals globals,
-    [SingleEntity(typeof(SnakeTags.SnakeHead))] in SnakeHead head
+    [FromGlobalEntity] in Globals globals,
+    [FromSingleEntity(typeof(SnakeTags.SnakeHead))] in SnakeHead head
 )
 {
     if (globals.MoveTickCounter > 0)
@@ -162,7 +162,7 @@ See [Serialization](../experimental/serialization.md) for custom-serializer auth
 - **`[Input(Retain)]`** on a template field — input persists until replaced
 - **`[ExecuteIn(SystemPhase.Input)]`** — runs in the input phase, before fixed update
 - **`entity.AddInput<T>(World, value)`** — queues input from outside the ECS tick
-- **`[SingleEntity(typeof(Tag))]`** parameter — binds the one tagged entity into the `Execute` signature
+- **`[FromSingleEntity(typeof(Tag))]`** / **`[FromGlobalEntity]`** parameter — binds the one tagged entity into the `Execute` signature
 - **Grid-based gameplay** — integer positions, discrete movement
 - **FIFO entity management** — `SegmentAge` tracks creation order for oldest-first removal
 - **Deterministic simulation** — seeded RNG + deterministic submission

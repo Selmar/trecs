@@ -35,16 +35,16 @@ namespace Trecs.SourceGen.Shared
         NativeSetRead,
         NativeSetCommandBuffer,
         FromWorld,
-        SingleEntityAspect,
-        SingleEntityComponentRead,
-        SingleEntityComponentWrite,
+        FromSingleEntityAspect,
+        FromSingleEntityComponentRead,
+        FromSingleEntityComponentWrite,
     }
 
     /// <summary>
     /// One parameter on the user's <c>[WrapAsJob]</c> static method as a value-equatable
     /// record. Parameters retain their original declaration order so the Execute shim's
     /// call args and the wrapper method's parameter list land in the same slots the user
-    /// wrote. <see cref="FromWorldIndex"/> and <see cref="SingleEntityIndex"/> reference
+    /// wrote. <see cref="FromWorldIndex"/> and <see cref="FromSingleEntityIndex"/> reference
     /// the parallel arrays on <see cref="AutoJobModel"/>; -1 means "not applicable."
     /// </summary>
     internal readonly record struct AutoJobParamModel(
@@ -55,8 +55,8 @@ namespace Trecs.SourceGen.Shared
         int BufferIndex,
         string SetTypeArg,
         int FromWorldIndex,
-        int SingleEntityIndex,
-        bool SingleEntityAspectHasWrites
+        int FromSingleEntityIndex,
+        bool FromSingleEntityAspectHasWrites
     );
 
     /// <summary>
@@ -83,9 +83,9 @@ namespace Trecs.SourceGen.Shared
     /// syntax nodes, or raw <see cref="Microsoft.CodeAnalysis.Diagnostic"/>s.
     ///
     /// <para>
-    /// <see cref="FromWorldFields"/> and <see cref="SingleEntityFields"/> are flat
+    /// <see cref="FromWorldFields"/> and <see cref="FromSingleEntityFields"/> are flat
     /// arrays; <see cref="AutoJobParamModel.FromWorldIndex"/> and
-    /// <see cref="AutoJobParamModel.SingleEntityIndex"/> on the per-param entries point
+    /// <see cref="AutoJobParamModel.FromSingleEntityIndex"/> on the per-param entries point
     /// back into them. <see cref="AdditionalUsings"/> collects all the namespaces the
     /// generated source needs to import (NativeSet type-arg namespaces, FromWorld param
     /// containers, inline tag namespaces) — these are inspected at the symbol-bearing
@@ -105,7 +105,7 @@ namespace Trecs.SourceGen.Shared
         IterationCriteriaModel Criteria,
         string AttributeCriteriaChain,
         EquatableArray<FromWorldFieldEmitModel> FromWorldFields,
-        EquatableArray<SingleEntityEmitTargetModel> SingleEntityFields,
+        EquatableArray<FromSingleEntityEmitTargetModel> FromSingleEntityFields,
         EquatableArray<string> AdditionalUsings,
         bool IsValid,
         EquatableArray<DiagnosticInfo> Diagnostics

@@ -236,7 +236,7 @@ public class Diagnostics_TRECS090_to_100_AutoJobTests
     [Test]
     public void TRECS100_UnrecognizedParameterType()
     {
-        // A [SingleEntity] (or [ForEachEntity]) parameter whose type isn't a
+        // A [FromSingleEntity] (or [ForEachEntity]) parameter whose type isn't a
         // recognized iteration / hoist / world / set shape needs explicit
         // [PassThroughArgument]. Triggered cleanly from RunOnceGenerator.
         const string source = """
@@ -252,7 +252,7 @@ public class Diagnostics_TRECS090_to_100_AutoJobTests
                     public void Execute() { }
 
                     void DoStuff(
-                        [Trecs.SingleEntity(Tag = typeof(PlayerTag))] in PlayerView player,
+                        [Trecs.FromSingleEntity(Tag = typeof(PlayerTag))] in PlayerView player,
                         UnknownType junk
                     ) { }
                 }

@@ -8,7 +8,7 @@ namespace Trecs.SourceGen.Shared
 {
     /// <summary>
     /// Shared parser for inline <c>Tag</c> / <c>Tags</c> named arguments on
-    /// <c>[FromWorld]</c> / <c>[SingleEntity]</c> attributes. Returns the resolved
+    /// <c>[FromWorld]</c> / <c>[FromSingleEntity]</c> attributes. Returns the resolved
     /// tag-type list, or <c>null</c> when validation fails (with a diagnostic already
     /// reported).
     /// <para>
@@ -28,10 +28,10 @@ namespace Trecs.SourceGen.Shared
         /// <summary>
         /// Parse inline <c>Tag</c> / <c>Tags</c> off a single attribute's named arguments.
         /// </summary>
-        /// <param name="attribute">The <c>[FromWorld]</c> or <c>[SingleEntity]</c> attribute data.</param>
+        /// <param name="attribute">The <c>[FromWorld]</c> or <c>[FromSingleEntity]</c> attribute data.</param>
         /// <param name="diagnosticLocation">Where to anchor any reported diagnostic.</param>
         /// <param name="targetName">Display name used in diagnostic messages (parameter / field name).</param>
-        /// <param name="attributeShortName">Attribute short name (<c>"FromWorld"</c> / <c>"SingleEntity"</c>) used in diagnostics.</param>
+        /// <param name="attributeShortName">Attribute short name (<c>"FromWorld"</c> / <c>"FromSingleEntity"</c>) used in diagnostics.</param>
         /// <param name="reportDiagnostic">Diagnostic sink.</param>
         /// <returns>The resolved tag list, or <c>null</c> on validation failure.</returns>
         public static List<ITypeSymbol>? Parse(
@@ -102,6 +102,82 @@ namespace Trecs.SourceGen.Shared
                 );
             }
             return new List<ITypeSymbol>();
+        }
+
+        /// <summary>
+        /// Parse tags for a <c>[FromSingleEntity]</c> or <c>[FromGlobalEntity]</c> attribute.
+        /// <c>[FromGlobalEntity]</c> resolves to the built-in <c>TrecsTags.Globals</c> tag.
+        /// Returns the resolved list, or <c>null</c> on validation failure.
+        /// </summary>
+        public static List<ITypeSymbol>? ParseFromSingleEntitySymbol(
+            ISymbol symbol,
+            Location diagnosticLocation,
+            string targetName,
+            System.Action<Diagnostic> reportDiagnostic
+        )
+        {
+            foreach (var attr in PerformanceCache.GetAttributes(symbol))
+            {
+                var attrName = attr.AttributeClass?.Name;
+
+                if (attrName == TrecsAttributeNames.FromSingleEntity)
+                {
+                    return Parse(
+                        attr,
+                        diagnosticLocation,
+                        targetName,
+                        "FromSingleEntity",
+                        reportDiagnostic
+                    );
+                }
+
+                if (attrName == TrecsAttributeNames.FromGlobalEntity)
+                {
+                    var globalsType = ResolveGlobalsTag(attr.AttributeClass!);
+                    if (globalsType != null)
+                        return new List<ITypeSymbol> { globalsType };
+                    reportDiagnostic(
+                        Diagnostic.Create(
+                            DiagnosticDescriptors.FromGlobalEntityCouldNotResolveGlobalsTag,
+                            diagnosticLocation,
+                            targetName
+                        )
+                    );
+                    return null;
+                }
+            }
+            return new List<ITypeSymbol>();
+        }
+
+        /// <summary>
+        /// Resolves <c>Trecs.TrecsTags.Globals</c> from the same assembly as the
+        /// <c>FromGlobalEntityAttribute</c> type (both live in <c>com.trecs.core</c>).
+        /// </summary>
+        private static INamedTypeSymbol? ResolveGlobalsTag(INamedTypeSymbol globalEntityAttrType)
+        {
+            var globalNs = globalEntityAttrType.ContainingAssembly.GlobalNamespace;
+            return FindNestedType(globalNs, "Trecs", "TrecsTags", "Globals");
+        }
+
+        private static INamedTypeSymbol? FindNestedType(
+            INamespaceSymbol globalNs,
+            string namespaceName,
+            string outerTypeName,
+            string nestedTypeName
+        )
+        {
+            foreach (var member in globalNs.GetMembers())
+            {
+                if (member is INamespaceSymbol childNs && childNs.Name == namespaceName)
+                {
+                    foreach (var typeMember in childNs.GetTypeMembers(outerTypeName))
+                    {
+                        foreach (var nested in typeMember.GetTypeMembers(nestedTypeName))
+                            return nested;
+                    }
+                }
+            }
+            return null;
         }
     }
 }

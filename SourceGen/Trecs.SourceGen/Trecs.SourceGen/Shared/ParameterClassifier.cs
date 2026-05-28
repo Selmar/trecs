@@ -65,9 +65,9 @@ namespace Trecs.SourceGen.Shared
         public List<ParameterInfo> CustomParameters { get; } = new();
 
         /// <summary>
-        /// <c>[SingleEntity]</c> parameters that are hoisted out of the iteration loop.
-        /// Each entry is referenced by a <see cref="ParamSlotKind.HoistedSingleton"/>
-        /// slot in <see cref="ParameterSlots"/>.
+        /// <c>[FromSingleEntity]</c> / <c>[FromGlobalEntity]</c> parameters that are hoisted out of
+        /// the iteration loop. Each entry is referenced by a
+        /// <see cref="ParamSlotKind.HoistedSingleton"/> slot in <see cref="ParameterSlots"/>.
         /// </summary>
         public List<HoistedSingletonInfo> HoistedSingletons { get; } = new();
     }
@@ -153,18 +153,15 @@ namespace Trecs.SourceGen.Shared
                         TrecsAttributeNames.PassThroughArgument,
                         TrecsNamespaces.Trecs
                     );
-                bool hasSingleEntity =
+                bool hasFromSingleEntity =
                     paramSymbol != null
-                    && PerformanceCache.HasAttributeByName(
-                        paramSymbol,
-                        TrecsAttributeNames.SingleEntity,
-                        TrecsNamespaces.Trecs
-                    );
+                    && IterationAttributeRouting.HasFromSingleEntityAttribute(paramSymbol);
 
-                // [SingleEntity] params are hoisted out of the loop. Validate and
-                // record before any iteration-target classification, so a [SingleEntity]
-                // aspect/component param is never mis-classified as a loop aspect/component.
-                if (hasSingleEntity)
+                // [FromSingleEntity] / [FromGlobalEntity] params are hoisted out of the loop.
+                // Validate and record before any iteration-target classification, so a
+                // [FromSingleEntity] aspect/component param is never mis-classified as a loop
+                // aspect/component.
+                if (hasFromSingleEntity)
                 {
                     bool hasFromWorld =
                         paramSymbol != null
@@ -177,7 +174,7 @@ namespace Trecs.SourceGen.Shared
                     {
                         reportDiagnostic(
                             Diagnostic.Create(
-                                DiagnosticDescriptors.SingleEntityConflictingAttributes,
+                                DiagnosticDescriptors.FromSingleEntityConflictingAttributes,
                                 param.GetLocation(),
                                 param.Identifier.Text,
                                 hasFromWorld ? "FromWorld" : "PassThroughArgument"
@@ -554,9 +551,9 @@ namespace Trecs.SourceGen.Shared
         }
 
         /// <summary>
-        /// Classifies a parameter marked <c>[SingleEntity]</c>. Validates type
-        /// (TRECS112), modifier (TRECS113), inline tags (TRECS114), and parses
-        /// the aspect's read/write component types when applicable. Returns
+        /// Classifies a parameter marked <c>[FromSingleEntity]</c> or <c>[FromGlobalEntity]</c>.
+        /// Validates type (TRECS112), modifier (TRECS113), inline tags (TRECS114), and
+        /// parses the aspect's read/write component types when applicable. Returns
         /// <c>null</c> on any validation failure (with diagnostics already reported).
         /// <para>
         /// Exposed as <c>internal</c> so generators that do their own parameter
@@ -573,9 +570,8 @@ namespace Trecs.SourceGen.Shared
             System.Action<Diagnostic> reportDiagnostic
         )
         {
-            var tagTypes = InlineTagsParser.ParseFromSymbol(
+            var tagTypes = InlineTagsParser.ParseFromSingleEntitySymbol(
                 paramSymbol,
-                "SingleEntity",
                 param.GetLocation(),
                 param.Identifier.Text,
                 reportDiagnostic
@@ -586,7 +582,7 @@ namespace Trecs.SourceGen.Shared
             {
                 reportDiagnostic(
                     Diagnostic.Create(
-                        DiagnosticDescriptors.SingleEntityRequiresInlineTags,
+                        DiagnosticDescriptors.FromSingleEntityRequiresInlineTags,
                         param.GetLocation(),
                         param.Identifier.Text
                     )
@@ -604,7 +600,7 @@ namespace Trecs.SourceGen.Shared
             {
                 reportDiagnostic(
                     Diagnostic.Create(
-                        DiagnosticDescriptors.SingleEntityWrongType,
+                        DiagnosticDescriptors.FromSingleEntityWrongType,
                         param.GetLocation(),
                         param.Identifier.Text,
                         PerformanceCache.GetDisplayString(paramType)
@@ -619,7 +615,7 @@ namespace Trecs.SourceGen.Shared
                 {
                     reportDiagnostic(
                         Diagnostic.Create(
-                            DiagnosticDescriptors.SingleEntityWrongModifier,
+                            DiagnosticDescriptors.FromSingleEntityWrongModifier,
                             param.GetLocation(),
                             param.Identifier.Text
                         )
@@ -644,7 +640,7 @@ namespace Trecs.SourceGen.Shared
             {
                 reportDiagnostic(
                     Diagnostic.Create(
-                        DiagnosticDescriptors.SingleEntityWrongModifier,
+                        DiagnosticDescriptors.FromSingleEntityWrongModifier,
                         param.GetLocation(),
                         param.Identifier.Text
                     )

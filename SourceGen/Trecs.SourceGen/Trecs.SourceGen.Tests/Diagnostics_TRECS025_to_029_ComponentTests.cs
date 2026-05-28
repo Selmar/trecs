@@ -6,7 +6,7 @@ namespace Trecs.SourceGen.Tests;
 
 /// <summary>
 /// Negative tests for the Component / iteration diagnostics group (TRECS025-029).
-/// These rules govern parameter shapes on [ForEachEntity] / [WrapAsJob] / [SingleEntity]
+/// These rules govern parameter shapes on [ForEachEntity] / [WrapAsJob] / [FromSingleEntity]
 /// methods — the parameter classifier and the AutoJob assembler are the main emitters.
 ///
 /// Codes covered: 025, 026, 027, 028, 029.

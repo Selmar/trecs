@@ -5,20 +5,20 @@ using NUnit.Framework;
 namespace Trecs.SourceGen.Tests;
 
 /// <summary>
-/// Negative tests for the per-parameter / per-field [SingleEntity] diagnostics
+/// Negative tests for the per-parameter / per-field [FromSingleEntity] diagnostics
 /// group (TRECS112-116). Most emit from JobGenerator / AutoJobGenerator /
-/// RunOnceGenerator's per-parameter validators when a [SingleEntity]-marked
+/// RunOnceGenerator's per-parameter validators when a [FromSingleEntity]-marked
 /// target violates a wiring rule. TRECS116 fires when a parallel job's
-/// [SingleEntity] aspect field carries IWrite components without
+/// [FromSingleEntity] aspect field carries IWrite components without
 /// [NativeDisableParallelForRestriction].
 /// </summary>
 [TestFixture]
-public class Diagnostics_TRECS112_to_115_SingleEntityTests
+public class Diagnostics_TRECS112_to_115_FromSingleEntityTests
 {
     [Test]
-    public void TRECS112_SingleEntityOnNonAspectOrComponentType()
+    public void TRECS112_FromSingleEntityOnNonAspectOrComponentType()
     {
-        // [SingleEntity] resolves to a matched entity, so the parameter must
+        // [FromSingleEntity] resolves to a matched entity, so the parameter must
         // either be an aspect (IAspect) or a component (IEntityComponent).
         const string source = """
             namespace Sample
@@ -31,7 +31,7 @@ public class Diagnostics_TRECS112_to_115_SingleEntityTests
                     public void Execute() { }
 
                     void DoStuff(
-                        [Trecs.SingleEntity(typeof(PlayerTag))] in NotAComponent target
+                        [Trecs.FromSingleEntity(typeof(PlayerTag))] in NotAComponent target
                     ) { }
                 }
             }
@@ -45,9 +45,9 @@ public class Diagnostics_TRECS112_to_115_SingleEntityTests
     }
 
     [Test]
-    public void TRECS113_SingleEntityWrongModifier()
+    public void TRECS113_FromSingleEntityWrongModifier()
     {
-        // [SingleEntity] aspect param must be `in`. A bare (no modifier)
+        // [FromSingleEntity] aspect param must be `in`. A bare (no modifier)
         // aspect parameter trips the modifier check.
         const string source = """
             namespace Sample
@@ -64,7 +64,7 @@ public class Diagnostics_TRECS112_to_115_SingleEntityTests
                     [Trecs.WrapAsJob]
                     static void Process(
                         in PlayerView player,
-                        [Trecs.SingleEntity(typeof(PlayerTag))] PlayerView singleton
+                        [Trecs.FromSingleEntity(typeof(PlayerTag))] PlayerView singleton
                     ) { }
                 }
             }
@@ -84,9 +84,9 @@ public class Diagnostics_TRECS112_to_115_SingleEntityTests
     }
 
     [Test]
-    public void TRECS114_SingleEntityMissingInlineTags()
+    public void TRECS114_FromSingleEntityMissingInlineTags()
     {
-        // [SingleEntity] needs inline Tag/Tags — there's no runtime override for
+        // [FromSingleEntity] needs inline Tag/Tags — there's no runtime override for
         // the singleton resolution.
         const string source = """
             namespace Sample
@@ -103,7 +103,7 @@ public class Diagnostics_TRECS112_to_115_SingleEntityTests
                     [Trecs.WrapAsJob]
                     static void Process(
                         in PlayerView player,
-                        [Trecs.SingleEntity] in PlayerView singleton
+                        [Trecs.FromSingleEntity] in PlayerView singleton
                     ) { }
                 }
             }
@@ -123,9 +123,9 @@ public class Diagnostics_TRECS112_to_115_SingleEntityTests
     }
 
     [Test]
-    public void TRECS115_SingleEntityWithFromWorld()
+    public void TRECS115_FromSingleEntityWithFromWorld()
     {
-        // [SingleEntity] alone carries the world-sourced semantics; combining
+        // [FromSingleEntity] alone carries the world-sourced semantics; combining
         // it with [FromWorld] is double-marking and rejected.
         const string source = """
             namespace Sample
@@ -139,7 +139,7 @@ public class Diagnostics_TRECS112_to_115_SingleEntityTests
                     public void Execute() { }
 
                     void DoStuff(
-                        [Trecs.SingleEntity(typeof(PlayerTag))][Trecs.FromWorld] in PlayerView player
+                        [Trecs.FromSingleEntity(typeof(PlayerTag))][Trecs.FromWorld] in PlayerView player
                     ) { }
                 }
             }
@@ -158,9 +158,9 @@ public class Diagnostics_TRECS112_to_115_SingleEntityTests
     }
 
     [Test]
-    public void TRECS116_ParallelJobSingleEntityWriteAspectMissingNativeDisableParallel()
+    public void TRECS116_ParallelJobFromSingleEntityWriteAspectMissingNativeDisableParallel()
     {
-        // A parallel iteration job with a hand-written [SingleEntity] aspect
+        // A parallel iteration job with a hand-written [FromSingleEntity] aspect
         // field whose aspect contains IWrite components ships a
         // NativeComponentBufferWrite via the materialized aspect — Unity's
         // parallel-job safety walker rejects it without
@@ -176,7 +176,7 @@ public class Diagnostics_TRECS112_to_115_SingleEntityTests
 
                 public partial struct ParallelJob : Unity.Jobs.IJobFor
                 {
-                    [Trecs.SingleEntity(typeof(GlobalsTag))]
+                    [Trecs.FromSingleEntity(typeof(GlobalsTag))]
                     public GlobalsView Globals;
 
                     [Trecs.ForEachEntity(Tag = typeof(EnemyTag))]

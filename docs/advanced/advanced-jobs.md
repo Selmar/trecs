@@ -82,7 +82,27 @@ ref Velocity vel = ref velocities[i];
 
 ### Lookups — Cross-Group
 
-For accessing components on arbitrary entities across groups. Lookups are wired into the job struct via `[FromWorld]` and consumed by generated aspect code — you rarely index into them directly. Prefer the higher-level `<Aspect>.NativeFactory` pattern (see [Aspects](../data-access/aspects.md)), which hides the lookup plumbing behind the same aspect interface you use on the main thread.
+For accessing components on arbitrary entities across groups. Lookups are wired into the job struct via `[FromWorld]` and resolve across all groups matching the tag set. Prefer the higher-level `<Aspect>.NativeFactory` pattern (see [Aspects](../data-access/aspects.md)) when working with multiple components, but direct lookups are useful for single-component access:
+
+```csharp
+[FromWorld(typeof(GameTags.Fish))]
+NativeComponentLookupRead<Position> posLookup;
+
+[FromWorld(typeof(GameTags.Fish))]
+NativeComponentLookupWrite<Velocity> velLookup;
+
+// Read by EntityIndex (throws if the entity's group is not in the lookup)
+ref readonly Position pos = ref posLookup[entityIndex];
+
+// Safe access — returns false if the entity's group is not in the lookup
+if (posLookup.TryGet(entityIndex, out Position p)) { /* use p */ }
+
+// Check existence without reading
+if (posLookup.Exists(entityIndex)) { /* ... */ }
+
+// Write by EntityIndex
+velLookup[entityIndex] = new Velocity { Value = float3.zero };
+```
 
 ## Native set operations
 

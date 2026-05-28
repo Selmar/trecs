@@ -10,10 +10,10 @@ using Trecs.SourceGen.Performance;
 namespace Trecs.SourceGen.Shared
 {
     /// <summary>
-    /// Shared <c>[SingleEntity]</c> schedule-time emit shared by Phase 3
+    /// Shared <c>[FromSingleEntity]</c> schedule-time emit shared by Phase 3
     /// (<c>[WrapAsJob]</c> static methods, lowered into auto-generated jobs by
     /// <c>AutoJobGenerator</c>) and Phase 4 (hand-written job structs whose
-    /// fields carry <c>[SingleEntity]</c>, processed by <c>JobGenerator</c>).
+    /// fields carry <c>[FromSingleEntity]</c>, processed by <c>JobGenerator</c>).
     /// <para>
     /// The two phases differ only in the carrier shape and the LHS of the
     /// per-job-instance field assignment — the rest of the emit (hoisted
@@ -21,20 +21,20 @@ namespace Trecs.SourceGen.Shared
     /// construction, dep tracking) is identical and lives here.
     /// </para>
     /// </summary>
-    internal static class SingleEntityEmitter
+    internal static class FromSingleEntityEmitter
     {
         const string GenPrefix = FromWorldEmitter.GenPrefix;
 
-        static string EiLocal(in SingleEntityEmitTargetModel e) =>
+        static string EiLocal(in FromSingleEntityEmitTargetModel e) =>
             $"{GenPrefix}se_{e.LocalNameRoot}_ei";
 
-        static string WithTagsClause(in SingleEntityEmitTargetModel e) =>
+        static string WithTagsClause(in FromSingleEntityEmitTargetModel e) =>
             $"WithTags<{string.Join(", ", e.TagTypeDisplays)}>()";
 
         internal static void EmitHoistedSetup(
             StringBuilder sb,
             string body,
-            IEnumerable<SingleEntityEmitTargetModel> targets
+            IEnumerable<FromSingleEntityEmitTargetModel> targets
         )
         {
             foreach (var e in targets)
@@ -49,7 +49,7 @@ namespace Trecs.SourceGen.Shared
         internal static void EmitDepRegistration(
             StringBuilder sb,
             string body,
-            IEnumerable<SingleEntityEmitTargetModel> targets
+            IEnumerable<FromSingleEntityEmitTargetModel> targets
         )
         {
             foreach (var e in targets)
@@ -84,7 +84,7 @@ namespace Trecs.SourceGen.Shared
         internal static void EmitFieldAssignment(
             StringBuilder sb,
             string body,
-            IEnumerable<SingleEntityEmitTargetModel> targets
+            IEnumerable<FromSingleEntityEmitTargetModel> targets
         )
         {
             foreach (var e in targets)
@@ -125,7 +125,7 @@ namespace Trecs.SourceGen.Shared
         internal static void EmitTracking(
             StringBuilder sb,
             string body,
-            IEnumerable<SingleEntityEmitTargetModel> targets
+            IEnumerable<FromSingleEntityEmitTargetModel> targets
         )
         {
             foreach (var e in targets)

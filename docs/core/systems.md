@@ -70,7 +70,7 @@ Beyond component refs or an aspect, a method can also receive any of these:
 - **`NativeWorldAccessor`** — job-safe world access (`[WrapAsJob]` only).
 - **`[GlobalIndex] int`** — see [Cross-partition index](#cross-partition-index).
 - **`[PassThroughArgument]`** — a value the caller forwards in. See [PassThroughArgument](#passthroughargument).
-- **`[SingleEntity]`** — a singleton entity hoisted out of the loop. See [SingleEntity](#singleentity).
+- **`[FromSingleEntity]`** / **`[FromGlobalEntity]`** — a singleton entity hoisted out of the loop. See [FromSingleEntity](#fromsingleentity).
 
 ### The Execute method
 
@@ -337,27 +337,29 @@ public partial class ParticleBoundSystem : ISystem
 
 Useful for configuration values or precomputed data that aren't components on the iterated entities. Works with both main-thread and `[WrapAsJob]` methods. Values must be unmanaged when used with jobs.
 
-## SingleEntity
+## FromSingleEntity
 
-`[SingleEntity]` resolves a parameter to the unique entity with a given tag. The framework runs the equivalent of `World.Query().WithTags<...>().SingleHandle()` once before the body, asserts exactly one match, and binds the result.
+`[FromSingleEntity]` resolves a parameter to the unique entity with a given tag. The framework runs the equivalent of `World.Query().WithTags<...>().SingleHandle()` once before the body, asserts exactly one match, and binds the result.
+
+`[FromGlobalEntity]` is shorthand for `[FromSingleEntity(typeof(TrecsTags.Globals))]` — use it when targeting the global entity.
 
 ```csharp
-void Execute([SingleEntity(typeof(GlobalTag))] ref Score score)
+void Execute([FromGlobalEntity] ref Score score)
 {
     score.Value += 1;
 }
 ```
 
-Tags must be hardcoded in the attribute (e.g. `[SingleEntity(typeof(MyTag))]`). This is similar to calling `World.Query().WithTags(...).SingleHandle()`.
+Tags must be hardcoded in the attribute (e.g. `[FromSingleEntity(typeof(MyTag))]`). This is similar to calling `World.Query().WithTags(...).SingleHandle()`.
 
-`[SingleEntity]` works in four contexts:
+`[FromSingleEntity]` works in four contexts:
 
 - **Plain `Execute`** — runs once per call; every singleton is hoisted before the body.
 - **Mixed with `[ForEachEntity]`** — the singleton is resolved once before the loop and reused for every iteration.
 - **`[WrapAsJob]` static methods** — singletons become job-struct fields wired up at schedule time.
-- **Hand-written job-struct fields** — `[SingleEntity]` directly on a field of an `IJobFor` makes the generator populate it (same as `[FromWorld]` for other field kinds).
+- **Hand-written job-struct fields** — `[FromSingleEntity]` directly on a field of an `IJobFor` makes the generator populate it (same as `[FromWorld]` for other field kinds).
 
-For a complete `[SingleEntity]` example tracking a single head entity, see [Sample 11 — Snake](../samples/11-snake.md).
+For a complete `[FromSingleEntity]` example tracking a single head entity, see [Sample 11 — Snake](../samples/11-snake.md).
 
 ## Cross-partition index
 

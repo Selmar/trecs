@@ -405,7 +405,7 @@ namespace Trecs.SourceGen
             }
             else if (iterationType == IterationType.RunOnce)
             {
-                // RunOnce methods consume [SingleEntity] params via RunOnceGenerator's
+                // RunOnce methods consume [FromSingleEntity] params via RunOnceGenerator's
                 // (WorldAccessor) overload. The auto-system wrapper just forwards
                 // [PassThroughArgument] params (typically none for Execute, since Execute
                 // can't have customs by design).
@@ -457,7 +457,7 @@ namespace Trecs.SourceGen
 
         // IterationType distinguishes the three code paths AutoSystemGenerator's emission
         // switches on: [ForEachEntity] aspect/components iteration, and RunOnce (methods
-        // with [SingleEntity] parameters and no [ForEachEntity] / [WrapAsJob]). The
+        // with [FromSingleEntity] parameters and no [ForEachEntity] / [WrapAsJob]). The
         // aspect-vs-components split for [ForEachEntity] is determined by the method's
         // parameter shape.
         private static IterationType? GetIterationType(IMethodSymbol methodSymbol)
@@ -481,7 +481,7 @@ namespace Trecs.SourceGen
         /// auto-wrapper that calls Method(__world): without any criteria there is no
         /// (WorldAccessor) overload to call.
         /// <para>
-        /// RunOnce methods always have criteria (the per-parameter <c>[SingleEntity]</c>
+        /// RunOnce methods always have criteria (the per-parameter <c>[FromSingleEntity]</c>
         /// inline tags), so we shortcut to <c>true</c> for them.
         /// </para>
         /// </summary>
@@ -689,7 +689,7 @@ namespace Trecs.SourceGen
         EntityFilterAspect,
 
         /// <summary>
-        /// Method has one or more <c>[SingleEntity]</c> parameters and no other
+        /// Method has one or more <c>[FromSingleEntity]</c> parameters and no other
         /// iteration attribute. <see cref="RunOnceGenerator"/> emits the
         /// <c>(WorldAccessor)</c> overload that resolves each singleton then calls
         /// the user method exactly once.

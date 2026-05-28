@@ -129,6 +129,24 @@ public partial class CleanupHandlers : IDisposable
 
 Components read inside `OnRemoved` are still valid even though the callback fires *after* removal — removed entities are parked at the end of the backing array (past the active count), so the buffers haven't been cleared. Removed components are contiguous in memory, which is cache-friendly for cleanup.
 
+Beyond `[ForEachEntity]` parameters, you can also read removed entity data dynamically via `EntityIndex.Component<T>()`. This is useful when the set of components you need isn't known at compile time:
+
+```csharp
+World.Events
+    .EntitiesWithTags<MyTag>()
+    .OnRemoved((group, indices) =>
+    {
+        for (int i = indices.Start; i < indices.End; i++)
+        {
+            var entityIndex = new EntityIndex(i, group);
+            var health = entityIndex.Component<Health>(World).Read;
+            // ...
+        }
+    });
+```
+
+Note that `EntityHandle.Exists()` returns `false` for removed entities during the callback — it reflects liveness, not data accessibility. Guard cross-entity cleanup with `Exists()` as usual to avoid operating on already-removed entities.
+
 ## Priorities
 
 Call `WithPriority(int)` before `OnAdded` / `OnRemoved` / `OnMoved` to control firing order across observers on the same scope (higher = later; default `0`):

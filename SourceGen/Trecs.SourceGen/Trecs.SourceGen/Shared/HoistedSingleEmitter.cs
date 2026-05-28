@@ -5,7 +5,7 @@ using System.Collections.Generic;
 namespace Trecs.SourceGen.Shared
 {
     /// <summary>
-    /// Shared emitter for <c>[SingleEntity]</c> hoist preambles. Used by
+    /// Shared emitter for <c>[FromSingleEntity]</c> hoist preambles. Used by
     /// <c>RunOnceGenerator</c> (the entire body) and the two <c>[ForEachEntity]</c>
     /// generators (before the iteration loop) so the hoist code shape stays in sync
     /// across all paths.
@@ -50,7 +50,7 @@ namespace Trecs.SourceGen.Shared
         {
             sb.AppendLine(
                 indentLevel,
-                $"// [SingleEntity] {model.ParamName} : {model.AspectTypeDisplay}"
+                $"// [FromSingleEntity] {model.ParamName} : {model.AspectTypeDisplay}"
             );
             var withTagsArgs = string.Join(", ", model.TagDisplays);
             var eiVar = $"__{model.ParamName}_ei";
@@ -88,7 +88,7 @@ namespace Trecs.SourceGen.Shared
         {
             sb.AppendLine(
                 indentLevel,
-                $"// [SingleEntity] {model.ParamName} : {model.ComponentTypeDisplay}"
+                $"// [FromSingleEntity] {model.ParamName} : {model.ComponentTypeDisplay}"
             );
             var withTagsArgs = string.Join(", ", model.TagDisplays);
             var eiVar = $"__{model.ParamName}_ei";

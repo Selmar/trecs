@@ -68,11 +68,12 @@ TRECS101 | Trecs | Error | Unsupported [FromWorld] parameter type on [WrapAsJob]
 TRECS102 | Trecs | Error | [FromWorld] on [WrapAsJob] requires inline Tag/Tags
 TRECS110 | Trecs | Error | NativeUniquePtr must not be copied to a by-value local
 TRECS111 | Trecs | Error | NativeUniquePtr must not be passed by value
-TRECS112 | Trecs | Error | [SingleEntity] parameter or field must be an aspect or component
-TRECS113 | Trecs | Error | [SingleEntity] parameter has wrong modifier
-TRECS114 | Trecs | Error | [SingleEntity] requires inline Tag or Tags
-TRECS115 | Trecs | Error | [SingleEntity] conflicts with [FromWorld] or [PassThroughArgument]
-TRECS116 | Trecs | Warning | [SingleEntity] write-aspect field on a parallel job needs [NativeDisableParallelForRestriction]
+TRECS112 | Trecs | Error | [FromSingleEntity] parameter or field must be an aspect or component
+TRECS113 | Trecs | Error | [FromSingleEntity] parameter has wrong modifier
+TRECS114 | Trecs | Error | [FromSingleEntity] requires inline Tag or Tags
+TRECS115 | Trecs | Error | [FromSingleEntity] conflicts with [FromWorld] or [PassThroughArgument]
+TRECS116 | Trecs | Warning | [FromSingleEntity] write-aspect field on a parallel job needs [NativeDisableParallelForRestriction]
 TRECS117 | Trecs | Error | [GlobalIndex] parameter must be int
+TRECS119 | Trecs | Error | [FromGlobalEntity] could not resolve TrecsTags.Globals
 TRECS996 | Trecs | Error | Source generation error
 TRECS999 | Trecs | Error | Source generation error

@@ -387,18 +387,14 @@ namespace Trecs.SourceGen
                     continue;
                 }
 
-                // [SingleEntity]-marked params must not be claimed by ANY of the
+                // [FromSingleEntity]-marked params must not be claimed by ANY of the
                 // accepting classifications below (NativeWorldAccessor, NativeSetRead/Write,
                 // EntityIndex, IAspect, IEntityComponent). Without this guard a user who
-                // accidentally writes e.g. `[SingleEntity] in NativeWorldAccessor` would
+                // accidentally writes e.g. `[FromSingleEntity] in NativeWorldAccessor` would
                 // get the param silently classified as a NativeWorldAccessor with the
-                // [SingleEntity] attribute dropped on the floor. Forbidden classifications
+                // [FromSingleEntity] attribute dropped on the floor. Forbidden classifications
                 // (WorldAccessor, SetAccessor) still error out as before.
-                bool paramHasSingleEntity = PerformanceCache.HasAttributeByName(
-                    param,
-                    TrecsAttributeNames.SingleEntity,
-                    TrecsNamespaces.Trecs
-                );
+                bool paramHasFromSingleEntity = IterationAttributeRouting.HasFromSingleEntityAttribute(param);
 
                 // Check for WorldAccessor (forbidden on [WrapAsJob]).
                 if (SymbolAnalyzer.IsExactType(paramType, "WorldAccessor", TrecsNamespaces.Trecs))
@@ -415,7 +411,7 @@ namespace Trecs.SourceGen
 
                 // Check for NativeWorldAccessor.
                 if (
-                    !paramHasSingleEntity
+                    !paramHasFromSingleEntity
                     && SymbolAnalyzer.IsExactType(
                         paramType,
                         "NativeWorldAccessor",
@@ -453,7 +449,7 @@ namespace Trecs.SourceGen
 
                 // Check for NativeSetRead<T>.
                 if (
-                    !paramHasSingleEntity
+                    !paramHasFromSingleEntity
                     && paramType is INamedTypeSymbol namedNsr
                     && namedNsr.Name == "NativeSetRead"
                     && namedNsr.TypeArguments.Length == 1
@@ -481,7 +477,7 @@ namespace Trecs.SourceGen
 
                 // Check for NativeSetCommandBuffer<T>.
                 if (
-                    !paramHasSingleEntity
+                    !paramHasFromSingleEntity
                     && paramType is INamedTypeSymbol namedNsw
                     && namedNsw.Name == "NativeSetCommandBuffer"
                     && namedNsw.TypeArguments.Length == 1
@@ -533,7 +529,7 @@ namespace Trecs.SourceGen
 
                 // Check for EntityIndex.
                 if (
-                    !paramHasSingleEntity
+                    !paramHasFromSingleEntity
                     && SymbolAnalyzer.IsExactType(paramType, "EntityIndex", TrecsNamespaces.Trecs)
                 )
                 {
@@ -569,7 +565,7 @@ namespace Trecs.SourceGen
                 // NativeEntityHandleBuffer field at no extra cost (single buffered read,
                 // no dictionary lookup).
                 if (
-                    !paramHasSingleEntity
+                    !paramHasFromSingleEntity
                     && SymbolAnalyzer.IsExactType(paramType, "EntityHandle", TrecsNamespaces.Trecs)
                 )
                 {
@@ -601,12 +597,12 @@ namespace Trecs.SourceGen
                     continue;
                 }
 
-                // Check for IAspect. [SingleEntity]-marked aspect params skip the
+                // Check for IAspect. [FromSingleEntity]-marked aspect params skip the
                 // iteration-target classifier — they're hoisted out of the loop.
-                // (paramHasSingleEntity is hoisted further up the method, before the
+                // (paramHasFromSingleEntity is hoisted further up the method, before the
                 // accepting-classifications, so all of them honor it uniformly.)
                 if (
-                    !paramHasSingleEntity
+                    !paramHasFromSingleEntity
                     && SymbolAnalyzer.ImplementsInterface(
                         paramType,
                         "IAspect",
@@ -692,11 +688,11 @@ namespace Trecs.SourceGen
                     continue;
                 }
 
-                // Check for IEntityComponent. [SingleEntity] params with component types
-                // are hoisted out of the loop and handled at the [SingleEntity] block —
+                // Check for IEntityComponent. [FromSingleEntity] params with component types
+                // are hoisted out of the loop and handled at the [FromSingleEntity] block —
                 // skip them here.
                 if (
-                    !paramHasSingleEntity
+                    !paramHasFromSingleEntity
                     && SymbolAnalyzer.ImplementsInterface(
                         paramType,
                         "IEntityComponent",
@@ -746,10 +742,10 @@ namespace Trecs.SourceGen
                     continue;
                 }
 
-                // [SingleEntity] parameter — hoists a singleton out of the iteration.
+                // [FromSingleEntity] parameter — hoists a singleton out of the iteration.
                 // The accepting classifications above all skip this kind of param so we're
                 // the only place that consumes it.
-                if (paramHasSingleEntity)
+                if (paramHasFromSingleEntity)
                 {
                     bool hasFromWorldOnSE = PerformanceCache.HasAttributeByName(
                         param,
@@ -760,7 +756,7 @@ namespace Trecs.SourceGen
                     {
                         diagnostics(
                             DiagnosticInfo.Create(
-                                DiagnosticDescriptors.SingleEntityConflictingAttributes,
+                                DiagnosticDescriptors.FromSingleEntityConflictingAttributes,
                                 param.Locations.FirstOrDefault() ?? methodDecl.GetLocation(),
                                 paramName,
                                 "FromWorld"
@@ -770,9 +766,8 @@ namespace Trecs.SourceGen
                     }
 
                     var seParamLoc = param.Locations.FirstOrDefault() ?? methodDecl.GetLocation();
-                    var seTagTypes = InlineTagsParser.ParseFromSymbol(
+                    var seTagTypes = InlineTagsParser.ParseFromSingleEntitySymbol(
                         param,
-                        "SingleEntity",
                         seParamLoc,
                         paramName,
                         ToBridge(diagnostics)
@@ -783,7 +778,7 @@ namespace Trecs.SourceGen
                     {
                         diagnostics(
                             DiagnosticInfo.Create(
-                                DiagnosticDescriptors.SingleEntityRequiresInlineTags,
+                                DiagnosticDescriptors.FromSingleEntityRequiresInlineTags,
                                 seParamLoc,
                                 paramName
                             )
@@ -804,7 +799,7 @@ namespace Trecs.SourceGen
                     {
                         diagnostics(
                             DiagnosticInfo.Create(
-                                DiagnosticDescriptors.SingleEntityWrongType,
+                                DiagnosticDescriptors.FromSingleEntityWrongType,
                                 param.Locations.FirstOrDefault() ?? methodDecl.GetLocation(),
                                 paramName,
                                 PerformanceCache.GetDisplayString(paramType)
@@ -819,7 +814,7 @@ namespace Trecs.SourceGen
                         {
                             diagnostics(
                                 DiagnosticInfo.Create(
-                                    DiagnosticDescriptors.SingleEntityWrongModifier,
+                                    DiagnosticDescriptors.FromSingleEntityWrongModifier,
                                     param.Locations.FirstOrDefault() ?? methodDecl.GetLocation(),
                                     paramName
                                 )
@@ -839,7 +834,7 @@ namespace Trecs.SourceGen
                         }
                         var seAspectData = AspectAttributeParser.ParseAspectData(seAspectType);
                         paramSlots.Add(
-                            AutoJobParam.SingleEntityAspect(
+                            AutoJobParam.FromSingleEntityAspect(
                                 paramType,
                                 paramName,
                                 PerformanceCache.GetDisplayString(paramType),
@@ -857,7 +852,7 @@ namespace Trecs.SourceGen
                     {
                         diagnostics(
                             DiagnosticInfo.Create(
-                                DiagnosticDescriptors.SingleEntityWrongModifier,
+                                DiagnosticDescriptors.FromSingleEntityWrongModifier,
                                 param.Locations.FirstOrDefault() ?? methodDecl.GetLocation(),
                                 paramName
                             )
@@ -865,7 +860,7 @@ namespace Trecs.SourceGen
                         return null;
                     }
                     paramSlots.Add(
-                        AutoJobParam.SingleEntityComponent(
+                        AutoJobParam.FromSingleEntityComponent(
                             paramType,
                             paramName,
                             PerformanceCache.GetDisplayString(paramType),
@@ -1173,18 +1168,18 @@ namespace Trecs.SourceGen
                     ),
                     AttributeCriteriaChain: string.Empty,
                     FromWorldFields: EquatableArray<FromWorldFieldEmitModel>.Empty,
-                    SingleEntityFields: EquatableArray<SingleEntityEmitTargetModel>.Empty,
+                    FromSingleEntityFields: EquatableArray<FromSingleEntityEmitTargetModel>.Empty,
                     AdditionalUsings: EquatableArray<string>.Empty,
                     IsValid: false,
                     Diagnostics: diagnostics.ToEquatableArray()
                 );
             }
 
-            // Build the FromWorld emits and SingleEntity targets as flat arrays in
+            // Build the FromWorld emits and FromSingleEntity targets as flat arrays in
             // param-declaration order, then point each param model at its slot via
-            // FromWorldIndex / SingleEntityIndex.
+            // FromWorldIndex / FromSingleEntityIndex.
             var fromWorldEmits = new List<FromWorldFieldEmitModel>();
-            var singleEntityTargets = new List<SingleEntityEmitTargetModel>();
+            var fromEntityTargets = new List<FromSingleEntityEmitTargetModel>();
             var paramModels = new AutoJobParamModel[info.Params.Count];
             var additionalUsings = new HashSet<string>();
 
@@ -1236,18 +1231,18 @@ namespace Trecs.SourceGen
                         );
                         break;
 
-                    case AutoJobParamRole.SingleEntityAspect:
-                        seIdx = singleEntityTargets.Count;
+                    case AutoJobParamRole.FromSingleEntityAspect:
+                        seIdx = fromEntityTargets.Count;
                         seAspectHasWrites =
-                            p.SingleEntityAspectData != null
-                            && p.SingleEntityAspectData.WriteTypes.Length > 0;
-                        singleEntityTargets.Add(ProjectSingleEntityParam(p, globalNamespaceName));
+                            p.FromSingleEntityAspectData != null
+                            && p.FromSingleEntityAspectData.WriteTypes.Length > 0;
+                        fromEntityTargets.Add(ProjectFromSingleEntityParam(p, globalNamespaceName));
                         break;
 
-                    case AutoJobParamRole.SingleEntityComponentRead:
-                    case AutoJobParamRole.SingleEntityComponentWrite:
-                        seIdx = singleEntityTargets.Count;
-                        singleEntityTargets.Add(ProjectSingleEntityParam(p, globalNamespaceName));
+                    case AutoJobParamRole.FromSingleEntityComponentRead:
+                    case AutoJobParamRole.FromSingleEntityComponentWrite:
+                        seIdx = fromEntityTargets.Count;
+                        fromEntityTargets.Add(ProjectFromSingleEntityParam(p, globalNamespaceName));
                         break;
                 }
 
@@ -1259,8 +1254,8 @@ namespace Trecs.SourceGen
                     BufferIndex: p.BufferIndex,
                     SetTypeArg: p.SetTypeArg ?? string.Empty,
                     FromWorldIndex: fwIdx,
-                    SingleEntityIndex: seIdx,
-                    SingleEntityAspectHasWrites: seAspectHasWrites
+                    FromSingleEntityIndex: seIdx,
+                    FromSingleEntityAspectHasWrites: seAspectHasWrites
                 );
             }
 
@@ -1319,7 +1314,7 @@ namespace Trecs.SourceGen
                 Criteria: JobModelBuilders.BuildCriteria(info.Criteria),
                 AttributeCriteriaChain: attributeChain,
                 FromWorldFields: fromWorldEmits.ToEquatableArray(),
-                SingleEntityFields: singleEntityTargets.ToEquatableArray(),
+                FromSingleEntityFields: fromEntityTargets.ToEquatableArray(),
                 AdditionalUsings: additionalUsings.OrderBy(u => u).ToEquatableArray(),
                 IsValid: true,
                 Diagnostics: diagnostics.ToEquatableArray()
@@ -1349,51 +1344,51 @@ namespace Trecs.SourceGen
                 AutoJobParamRole.NativeSetCommandBuffer =>
                     AutoJobParamRoleKind.NativeSetCommandBuffer,
                 AutoJobParamRole.FromWorld => AutoJobParamRoleKind.FromWorld,
-                AutoJobParamRole.SingleEntityAspect => AutoJobParamRoleKind.SingleEntityAspect,
-                AutoJobParamRole.SingleEntityComponentRead =>
-                    AutoJobParamRoleKind.SingleEntityComponentRead,
-                AutoJobParamRole.SingleEntityComponentWrite =>
-                    AutoJobParamRoleKind.SingleEntityComponentWrite,
+                AutoJobParamRole.FromSingleEntityAspect => AutoJobParamRoleKind.FromSingleEntityAspect,
+                AutoJobParamRole.FromSingleEntityComponentRead =>
+                    AutoJobParamRoleKind.FromSingleEntityComponentRead,
+                AutoJobParamRole.FromSingleEntityComponentWrite =>
+                    AutoJobParamRoleKind.FromSingleEntityComponentWrite,
                 _ => AutoJobParamRoleKind.Component,
             };
 
-        static SingleEntityEmitTargetModel ProjectSingleEntityParam(
+        static FromSingleEntityEmitTargetModel ProjectFromSingleEntityParam(
             AutoJobParam p,
             string globalNamespaceName
         )
         {
             string aspectTypeDisplay =
-                p.Role == AutoJobParamRole.SingleEntityAspect ? p.TypeDisplay : string.Empty;
+                p.Role == AutoJobParamRole.FromSingleEntityAspect ? p.TypeDisplay : string.Empty;
             string componentTypeDisplay = p.Role
-                is AutoJobParamRole.SingleEntityComponentRead
-                    or AutoJobParamRole.SingleEntityComponentWrite
+                is AutoJobParamRole.FromSingleEntityComponentRead
+                    or AutoJobParamRole.FromSingleEntityComponentWrite
                 ? p.TypeDisplay
                 : string.Empty;
             string lhs = p.Role switch
             {
-                AutoJobParamRole.SingleEntityAspect =>
+                AutoJobParamRole.FromSingleEntityAspect =>
                     $"{FromWorldEmitter.JobFieldPrefix}se_{p.Name}",
-                AutoJobParamRole.SingleEntityComponentRead =>
+                AutoJobParamRole.FromSingleEntityComponentRead =>
                     $"{FromWorldEmitter.JobFieldPrefix}se_{p.Name}_read",
-                AutoJobParamRole.SingleEntityComponentWrite =>
+                AutoJobParamRole.FromSingleEntityComponentWrite =>
                     $"{FromWorldEmitter.JobFieldPrefix}se_{p.Name}_write",
                 _ => p.Name,
             };
             var aspectData =
-                p.SingleEntityAspectData != null
+                p.FromSingleEntityAspectData != null
                     ? AspectAttributeDataModelBuilder.FromData(
-                        p.SingleEntityAspectData,
+                        p.FromSingleEntityAspectData,
                         globalNamespaceName
                     )
                     : AspectAttributeDataModel.Empty;
-            var tags = (p.SingleEntityTags ?? new List<ITypeSymbol>())
+            var tags = (p.FromSingleEntityTags ?? new List<ITypeSymbol>())
                 .Select(PerformanceCache.GetDisplayString)
                 .ToEquatableArray();
-            return new SingleEntityEmitTargetModel(
+            return new FromSingleEntityEmitTargetModel(
                 LocalNameRoot: p.Name,
                 JobFieldAssignmentLhs: lhs,
-                IsAspect: p.Role == AutoJobParamRole.SingleEntityAspect,
-                IsComponentWrite: p.Role == AutoJobParamRole.SingleEntityComponentWrite,
+                IsAspect: p.Role == AutoJobParamRole.FromSingleEntityAspect,
+                IsComponentWrite: p.Role == AutoJobParamRole.FromSingleEntityComponentWrite,
                 TagTypeDisplays: tags,
                 AspectData: aspectData,
                 AspectTypeDisplay: aspectTypeDisplay,
@@ -1548,13 +1543,13 @@ namespace Trecs.SourceGen
                 );
             }
 
-            // [SingleEntity] fields.
+            // [FromSingleEntity] fields.
             foreach (var p in model.Params)
             {
                 switch (p.Role)
                 {
-                    case AutoJobParamRoleKind.SingleEntityAspect:
-                        if (p.SingleEntityAspectHasWrites)
+                    case AutoJobParamRoleKind.FromSingleEntityAspect:
+                        if (p.FromSingleEntityAspectHasWrites)
                             sb.AppendLine(
                                 $"{fieldInd}[Unity.Collections.NativeDisableParallelForRestriction]"
                             );
@@ -1562,12 +1557,12 @@ namespace Trecs.SourceGen
                             $"{fieldInd}public {p.TypeDisplay} {FromWorldEmitter.JobFieldPrefix}se_{p.Name};"
                         );
                         break;
-                    case AutoJobParamRoleKind.SingleEntityComponentRead:
+                    case AutoJobParamRoleKind.FromSingleEntityComponentRead:
                         sb.AppendLine(
                             $"{fieldInd}public NativeComponentRead<{p.TypeDisplay}> {FromWorldEmitter.JobFieldPrefix}se_{p.Name}_read;"
                         );
                         break;
-                    case AutoJobParamRoleKind.SingleEntityComponentWrite:
+                    case AutoJobParamRoleKind.FromSingleEntityComponentWrite:
                         sb.AppendLine(
                             $"{fieldInd}[Unity.Collections.NativeDisableParallelForRestriction]"
                         );
@@ -1654,19 +1649,19 @@ namespace Trecs.SourceGen
                 }
             }
 
-            // [SingleEntity] preamble. Component-typed singletons get a ref/ref-readonly
+            // [FromSingleEntity] preamble. Component-typed singletons get a ref/ref-readonly
             // alias into the wrapper's .Value so the user method's parameter binds to
             // the buffer slot rather than a copy.
             foreach (var p in model.Params)
             {
                 switch (p.Role)
                 {
-                    case AutoJobParamRoleKind.SingleEntityComponentRead:
+                    case AutoJobParamRoleKind.FromSingleEntityComponentRead:
                         sb.AppendLine(
                             $"{body}ref readonly var {GenPrefix}se_{p.Name} = ref {FromWorldEmitter.JobFieldPrefix}se_{p.Name}_read.Value;"
                         );
                         break;
-                    case AutoJobParamRoleKind.SingleEntityComponentWrite:
+                    case AutoJobParamRoleKind.FromSingleEntityComponentWrite:
                         sb.AppendLine(
                             $"{body}ref var {GenPrefix}se_{p.Name} = ref {FromWorldEmitter.JobFieldPrefix}se_{p.Name}_write.Value;"
                         );
@@ -1714,13 +1709,13 @@ namespace Trecs.SourceGen
                     case AutoJobParamRoleKind.FromWorld:
                         callArgs.Add($"in {FromWorldEmitter.JobFieldPrefix}fw_{p.Name}");
                         break;
-                    case AutoJobParamRoleKind.SingleEntityAspect:
+                    case AutoJobParamRoleKind.FromSingleEntityAspect:
                         callArgs.Add($"in {FromWorldEmitter.JobFieldPrefix}se_{p.Name}");
                         break;
-                    case AutoJobParamRoleKind.SingleEntityComponentRead:
+                    case AutoJobParamRoleKind.FromSingleEntityComponentRead:
                         callArgs.Add($"in {GenPrefix}se_{p.Name}");
                         break;
-                    case AutoJobParamRoleKind.SingleEntityComponentWrite:
+                    case AutoJobParamRoleKind.FromSingleEntityComponentWrite:
                         callArgs.Add($"ref {GenPrefix}se_{p.Name}");
                         break;
                 }
@@ -1882,10 +1877,10 @@ namespace Trecs.SourceGen
                 sb.AppendLine($"{body}var {GenPrefix}queryIndexOffset = 0;");
 
             var fwEmits = model.FromWorldFields.ToList();
-            var seTargets = model.SingleEntityFields.ToList();
+            var seTargets = model.FromSingleEntityFields.ToList();
             if (fwEmits.Count > 0)
                 FromWorldEmitter.EmitFromWorldHoistedSetup(sb, body, fwEmits);
-            SingleEntityEmitter.EmitHoistedSetup(sb, body, seTargets);
+            FromSingleEntityEmitter.EmitHoistedSetup(sb, body, seTargets);
 
             sb.AppendLine(
                 $"{body}foreach (var {GenPrefix}slice in {GenPrefix}builder.GroupSlices())"
@@ -1917,7 +1912,7 @@ namespace Trecs.SourceGen
 
             if (fwEmits.Count > 0)
                 FromWorldEmitter.EmitFromWorldDepRegistration(sb, innerBody, fwEmits);
-            SingleEntityEmitter.EmitDepRegistration(sb, innerBody, seTargets);
+            FromSingleEntityEmitter.EmitDepRegistration(sb, innerBody, seTargets);
 
             IterationBufferEmitter.EmitMaterialization(sb, innerBody, buffers);
 
@@ -1957,7 +1952,7 @@ namespace Trecs.SourceGen
 
             if (fwEmits.Count > 0)
                 FromWorldEmitter.EmitFromWorldFieldAssignments(sb, innerBody, fwEmits);
-            SingleEntityEmitter.EmitFieldAssignment(sb, innerBody, seTargets);
+            FromSingleEntityEmitter.EmitFieldAssignment(sb, innerBody, seTargets);
 
             // Rent and attach the per-worker timing buffer just before scheduling.
             // Decoded + returned to the pool by RuntimeJobScheduler.CompleteAllOutstanding.
@@ -1990,7 +1985,7 @@ namespace Trecs.SourceGen
 
             if (fwEmits.Count > 0)
                 FromWorldEmitter.EmitFromWorldTracking(sb, innerBody, fwEmits);
-            SingleEntityEmitter.EmitTracking(sb, innerBody, seTargets);
+            FromSingleEntityEmitter.EmitTracking(sb, innerBody, seTargets);
 
             if (model.HasNativeWorldAccessor)
                 sb.AppendLine(
@@ -2050,10 +2045,10 @@ namespace Trecs.SourceGen
                 sb.AppendLine($"{body}var {GenPrefix}queryIndexOffset = 0;");
 
             var fwEmits = model.FromWorldFields.ToList();
-            var seTargets = model.SingleEntityFields.ToList();
+            var seTargets = model.FromSingleEntityFields.ToList();
             if (fwEmits.Count > 0)
                 FromWorldEmitter.EmitFromWorldHoistedSetup(sb, body, fwEmits);
-            SingleEntityEmitter.EmitHoistedSetup(sb, body, seTargets);
+            FromSingleEntityEmitter.EmitHoistedSetup(sb, body, seTargets);
 
             sb.AppendLine(
                 $"{body}foreach (var {GenPrefix}slice in {GenPrefix}builder.GroupSlices())"
@@ -2093,7 +2088,7 @@ namespace Trecs.SourceGen
 
             if (fwEmits.Count > 0)
                 FromWorldEmitter.EmitFromWorldDepRegistration(sb, innerBody, fwEmits);
-            SingleEntityEmitter.EmitDepRegistration(sb, innerBody, seTargets);
+            FromSingleEntityEmitter.EmitDepRegistration(sb, innerBody, seTargets);
 
             IterationBufferEmitter.EmitMaterialization(sb, innerBody, buffers);
 
@@ -2133,7 +2128,7 @@ namespace Trecs.SourceGen
 
             if (fwEmits.Count > 0)
                 FromWorldEmitter.EmitFromWorldFieldAssignments(sb, innerBody, fwEmits);
-            SingleEntityEmitter.EmitFieldAssignment(sb, innerBody, seTargets);
+            FromSingleEntityEmitter.EmitFieldAssignment(sb, innerBody, seTargets);
 
             // Rent the timing buffer and attach to the Inner job BEFORE wrapping in
             // the Shim (Shim copies Inner by value). Decoded + returned to the pool
@@ -2171,7 +2166,7 @@ namespace Trecs.SourceGen
 
             if (fwEmits.Count > 0)
                 FromWorldEmitter.EmitFromWorldTracking(sb, innerBody, fwEmits);
-            SingleEntityEmitter.EmitTracking(sb, innerBody, seTargets);
+            FromSingleEntityEmitter.EmitTracking(sb, innerBody, seTargets);
 
             if (model.HasNativeWorldAccessor)
                 sb.AppendLine(
@@ -2317,27 +2312,27 @@ namespace Trecs.SourceGen
             FromWorld,
 
             /// <summary>
-            /// Aspect-typed parameter marked <c>[SingleEntity(Tag/Tags)]</c>. Becomes a
+            /// Aspect-typed parameter marked <c>[FromSingleEntity(Tag/Tags)]</c>. Becomes a
             /// hidden <c>NativeFactory</c> + <c>EntityIndex</c> field pair on the generated
             /// job. The scheduler resolves the singleton via
             /// <c>Query().WithTags&lt;...&gt;().SingleIndex()</c> once per call;
             /// <c>Execute(int)</c> materializes the aspect via <c>factory.Create(index)</c>.
             /// </summary>
-            SingleEntityAspect,
+            FromSingleEntityAspect,
 
             /// <summary>
-            /// <c>in</c>-typed component parameter marked <c>[SingleEntity(Tag/Tags)]</c>.
+            /// <c>in</c>-typed component parameter marked <c>[FromSingleEntity(Tag/Tags)]</c>.
             /// Becomes <c>NativeComponentRead&lt;T&gt;</c> + <c>EntityIndex</c> fields;
             /// <c>Execute(int)</c> takes a <c>ref readonly</c> alias.
             /// </summary>
-            SingleEntityComponentRead,
+            FromSingleEntityComponentRead,
 
             /// <summary>
-            /// <c>ref</c>-typed component parameter marked <c>[SingleEntity(Tag/Tags)]</c>.
+            /// <c>ref</c>-typed component parameter marked <c>[FromSingleEntity(Tag/Tags)]</c>.
             /// Becomes <c>NativeComponentWrite&lt;T&gt;</c> + <c>EntityIndex</c> fields;
             /// <c>Execute(int)</c> takes a <c>ref</c> alias.
             /// </summary>
-            SingleEntityComponentWrite,
+            FromSingleEntityComponentWrite,
         }
 
         sealed class AutoJobParam
@@ -2368,18 +2363,18 @@ namespace Trecs.SourceGen
             public FromWorldFieldInfo? FromWorldInfo { get; }
 
             /// <summary>
-            /// For <c>SingleEntity*</c> roles, the inline <c>Tag</c> / <c>Tags</c> from
-            /// <c>[SingleEntity(...)]</c>. Null for other roles. Always non-empty when
+            /// For <c>FromSingleEntity*</c> roles, the inline <c>Tag</c> / <c>Tags</c> from
+            /// <c>[FromSingleEntity(...)]</c>. Null for other roles. Always non-empty when
             /// non-null (TRECS114 enforces inline tags are required).
             /// </summary>
-            public List<ITypeSymbol>? SingleEntityTags { get; }
+            public List<ITypeSymbol>? FromSingleEntityTags { get; }
 
             /// <summary>
-            /// For <c>SingleEntityAspect</c> role, the parsed aspect's read/write component
+            /// For <c>FromSingleEntityAspect</c> role, the parsed aspect's read/write component
             /// types (used to emit per-(component, group) lookups, dep tracking and the
             /// <c>NativeFactory</c> ctor). Null for other roles.
             /// </summary>
-            public AspectAttributeData? SingleEntityAspectData { get; }
+            public AspectAttributeData? FromSingleEntityAspectData { get; }
 
             AutoJobParam(
                 AutoJobParamRole role,
@@ -2391,8 +2386,8 @@ namespace Trecs.SourceGen
                 string? setTypeArg = null,
                 ITypeSymbol? setTypeArgSymbol = null,
                 FromWorldFieldInfo? fromWorldInfo = null,
-                List<ITypeSymbol>? singleEntityTags = null,
-                AspectAttributeData? singleEntityAspectData = null
+                List<ITypeSymbol>? fromEntityTags = null,
+                AspectAttributeData? fromEntityAspectData = null
             )
             {
                 Role = role;
@@ -2404,8 +2399,8 @@ namespace Trecs.SourceGen
                 SetTypeArg = setTypeArg;
                 SetTypeArgSymbol = setTypeArgSymbol;
                 FromWorldInfo = fromWorldInfo;
-                SingleEntityTags = singleEntityTags;
-                SingleEntityAspectData = singleEntityAspectData;
+                FromSingleEntityTags = fromEntityTags;
+                FromSingleEntityAspectData = fromEntityAspectData;
             }
 
             public static AutoJobParam Aspect(ITypeSymbol type, string name, string typeDisplay) =>
@@ -2479,7 +2474,7 @@ namespace Trecs.SourceGen
                     fromWorldInfo: fromWorldInfo
                 );
 
-            public static AutoJobParam SingleEntityAspect(
+            public static AutoJobParam FromSingleEntityAspect(
                 ITypeSymbol type,
                 string name,
                 string typeDisplay,
@@ -2487,15 +2482,15 @@ namespace Trecs.SourceGen
                 AspectAttributeData aspectData
             ) =>
                 new(
-                    AutoJobParamRole.SingleEntityAspect,
+                    AutoJobParamRole.FromSingleEntityAspect,
                     type,
                     name,
                     typeDisplay,
-                    singleEntityTags: tagTypes,
-                    singleEntityAspectData: aspectData
+                    fromEntityTags: tagTypes,
+                    fromEntityAspectData: aspectData
                 );
 
-            public static AutoJobParam SingleEntityComponent(
+            public static AutoJobParam FromSingleEntityComponent(
                 ITypeSymbol type,
                 string name,
                 string typeDisplay,
@@ -2504,13 +2499,13 @@ namespace Trecs.SourceGen
             ) =>
                 new(
                     isRef
-                        ? AutoJobParamRole.SingleEntityComponentWrite
-                        : AutoJobParamRole.SingleEntityComponentRead,
+                        ? AutoJobParamRole.FromSingleEntityComponentWrite
+                        : AutoJobParamRole.FromSingleEntityComponentRead,
                     type,
                     name,
                     typeDisplay,
                     isRef: isRef,
-                    singleEntityTags: tagTypes
+                    fromEntityTags: tagTypes
                 );
         }
 

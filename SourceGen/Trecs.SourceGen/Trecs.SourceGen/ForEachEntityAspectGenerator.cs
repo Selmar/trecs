@@ -755,7 +755,7 @@ namespace Trecs.SourceGen
             }
 
             // Locate the (single) aspect parameter — anywhere in the list, marked 'in',
-            // implementing IAspect, no [PassThroughArgument] / [SingleEntity].
+            // implementing IAspect, no [PassThroughArgument] / [FromSingleEntity].
             ParameterSyntax? aspectParam = null;
             ITypeSymbol? aspectParamType = null;
             for (int pi = 0; pi < parameters.Count; pi++)
@@ -776,14 +776,10 @@ namespace Trecs.SourceGen
                 if (pIsPassThrough)
                     continue;
 
-                bool pHasSingleEntity =
+                bool pHasFromSingleEntity =
                     pSymbol != null
-                    && PerformanceCache.HasAttributeByName(
-                        pSymbol,
-                        TrecsAttributeNames.SingleEntity,
-                        TrecsNamespaces.Trecs
-                    );
-                if (pHasSingleEntity)
+                    && IterationAttributeRouting.HasFromSingleEntityAttribute(pSymbol);
+                if (pHasFromSingleEntity)
                     continue;
 
                 if (!SymbolAnalyzer.ImplementsInterface(pType, "IAspect", TrecsNamespaces.Trecs))
