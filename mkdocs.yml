@@ -82,6 +82,7 @@ nav:
       - Serialization: experimental/serialization.md
       - BlobBuilder: experimental/blob-builder.md
       - Dynamic Collections: experimental/dynamic-collections.md
+      - TrecsDictionary: experimental/trecs-dictionary.md
   - Samples:
       - Overview: samples/index.md
       - 01 - Hello Entity: samples/01-hello-entity.md
