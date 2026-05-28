@@ -91,12 +91,17 @@ When you specifically need a Unity `NativeList<T>` (e.g. to share with non-Trecs
 
 ### Shared pointers and reference counting
 
-`SharedPtr<T>` and `NativeSharedPtr<T>` use reference counting. `Clone` returns a new handle to the same blob and bumps the refcount:
+`SharedPtr<T>` and `NativeSharedPtr<T>` use reference counting. `Clone` bumps the refcount and returns a handle to the same blob:
 
 ```csharp
 SharedPtr<MyData> first  = SharedPtr.Alloc(World, MyBlobs.Foo, new MyData());
 SharedPtr<MyData> second = first.Clone(World);  // same blob; refcount = 2
 ```
+
+The two pointer families differ in what `Clone` returns:
+
+- **`SharedPtr<T>`**: Clone mints a **new handle** — `first == second` is false even though they reference the same blob. Each handle is independently disposable.
+- **`NativeSharedPtr<T>`**: Clone returns the **same handle value** — `first == second` is true. The underlying refcount is bumped, so each clone still needs its own `Dispose`.
 
 Calling `SharedPtr.Acquire(World, sameId)` is equivalent to `Clone` addressed by ID instead of by reference: it finds the existing blob, bumps the refcount, and returns a fresh handle. See [Shared Heap Data — Pattern B](shared-heap-data.md#pattern-b-look-up-by-stable-blobid).
 

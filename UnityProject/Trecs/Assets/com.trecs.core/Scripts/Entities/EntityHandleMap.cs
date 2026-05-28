@@ -428,56 +428,6 @@ namespace Trecs
 #endif
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal void RemoveAllGroupReferenceLocators(GroupIndex groupId)
-        {
-            ref var groupList = ref _entityIndexToReferenceMap.ElementAt(groupId.Index);
-
-            for (int i = 0; i < groupList.Length; i++)
-            {
-                var id = groupList[i];
-                if (id == 0)
-                {
-                    continue;
-                }
-
-                ref var entityHandleMapElement = ref _entityHandleMap.ElementAt(id - 1);
-                entityHandleMapElement.Index = _nextFreeIndex;
-                entityHandleMapElement.GroupIndex = default;
-                entityHandleMapElement.BumpVersion();
-
-                _nextFreeIndex = id - 1;
-            }
-
-            groupList.Clear();
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal void UpdateAllGroupReferenceLocators(GroupIndex fromGroupId, GroupIndex toGroupId)
-        {
-            ref var fromGroupList = ref _entityIndexToReferenceMap.ElementAt(fromGroupId.Index);
-
-            ref var toGroupList = ref GetGroupList(toGroupId);
-            EnsureGroupListSize(ref toGroupList, fromGroupList.Length);
-
-            for (int i = 0; i < fromGroupList.Length; i++)
-            {
-                var id = fromGroupList[i];
-                if (id == 0)
-                {
-                    continue;
-                }
-
-                ref var element = ref _entityHandleMap.ElementAt(id - 1);
-                element.Index = i;
-                element.GroupIndex = toGroupId;
-
-                toGroupList[i] = id;
-            }
-
-            fromGroupList.Clear();
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly EntityHandle GetEntityHandle(EntityIndex entityIndex)
         {
             TrecsDebugAssert.That(!entityIndex.IsNull);

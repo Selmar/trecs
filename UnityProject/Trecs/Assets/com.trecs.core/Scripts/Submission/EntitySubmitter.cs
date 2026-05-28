@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using System.Runtime.ExceptionServices;
 using Trecs.Collections;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
@@ -72,9 +71,6 @@ namespace Trecs.Internal
         > _moveEntities;
 
         static readonly Action<List<int>[], EntitySubmitter> _removeEntities;
-
-        static readonly Action<GroupIndex, EntitySubmitter> _removeGroup;
-        static readonly Action<GroupIndex, GroupIndex, EntitySubmitter> _swapGroup;
 
         internal readonly ComponentStore _componentStore;
         readonly EntityQuerier _entitiesQuerier;
@@ -148,8 +144,6 @@ namespace Trecs.Internal
         {
             _moveEntities = MoveEntities;
             _removeEntities = RemoveEntities;
-            _removeGroup = RemoveGroup;
-            _swapGroup = SwapGroup;
         }
 
         static unsafe PerGroupAddBags CreatePerGroupAddBags(WorldInfo worldInfo)
@@ -181,7 +175,7 @@ namespace Trecs.Internal
         )
         {
             _log = log;
-            _entitiesOperations = new EntitiesOperations(log, worldInfo.AllGroups.Count);
+            _entitiesOperations = new EntitiesOperations(worldInfo.AllGroups.Count);
 
             _jobScheduler = jobScheduler;
             _nativeSharedHeap = nativeSharedHeap;
@@ -497,18 +491,6 @@ namespace Trecs.Internal
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        void QueueRemoveGroupOperation(GroupIndex groupId, string caller)
-        {
-            _entitiesOperations.QueueRemoveGroupOperation(groupId, caller);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        void QueueMoveGroupOperation(GroupIndex fromGroupId, GroupIndex toGroupId, string caller)
-        {
-            _entitiesOperations.QueueMoveGroupOperation(fromGroupId, toGroupId, caller);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void QueueMoveEntityOperation(
             EntityIndex fromId,
             GroupIndex toGroup,
@@ -577,8 +559,6 @@ namespace Trecs.Internal
             _entitiesOperations.ExecuteRemoveAndSwappingOperations(
                 _moveEntities,
                 _removeEntities,
-                _removeGroup,
-                _swapGroup,
                 this
             );
 
@@ -587,24 +567,6 @@ namespace Trecs.Internal
             using (TrecsProfiling.Start("ClearMultiOpCheck Post"))
             {
                 ClearChecksForMultipleOperationsOnTheSameEntity();
-            }
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        static void RemoveGroup(GroupIndex groupId, EntitySubmitter ecsRoot)
-        {
-            using (TrecsProfiling.Start("remove whole group"))
-            {
-                ecsRoot.RemoveEntitiesFromGroup(groupId);
-            }
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        static void SwapGroup(GroupIndex fromGroupId, GroupIndex toGroupId, EntitySubmitter ecsRoot)
-        {
-            using (TrecsProfiling.Start("swap whole group"))
-            {
-                ecsRoot.SwapEntitiesBetweenGroups(fromGroupId, toGroupId);
             }
         }
 
@@ -1552,91 +1514,6 @@ namespace Trecs.Internal
         {
             return _groupedEntityToAdd.AnyEntityCreated()
                 || _entitiesOperations.AnyOperationQueued();
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        void RemoveEntitiesFromGroup(GroupIndex groupId)
-        {
-            _entitiesQuerier._entityLocator.RemoveAllGroupReferenceLocators(groupId);
-
-            ExceptionDispatchInfo callbackException = null;
-
-            if (
-                _eventsManager.ReactiveOnRemovedObservers.TryGetValue(
-                    groupId,
-                    out var groupRemovedSubject
-                )
-            )
-            {
-                var count = _entitiesQuerier.CountEntitiesInGroup(groupId);
-                try
-                {
-                    groupRemovedSubject.Invoke(new EntityRange(0, count));
-                }
-                catch (Exception ex)
-                {
-                    callbackException = ExceptionDispatchInfo.Capture(ex);
-                }
-            }
-
-            var dictionariesOfEntities = _componentStore.GroupEntityComponentsDB[groupId.Index];
-            foreach (var dictionaryOfEntities in dictionariesOfEntities)
-            {
-                dictionaryOfEntities.Value.Clear();
-            }
-
-            callbackException?.Throw();
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        void SwapEntitiesBetweenGroups(GroupIndex fromGroupId, GroupIndex toGroupId)
-        {
-            IterableDictionary<TypeId, IComponentArray> fromGroup = GetDBGroup(fromGroupId);
-            IterableDictionary<TypeId, IComponentArray> toGroup = GetDBGroup(toGroupId);
-
-            _entitiesQuerier._entityLocator.UpdateAllGroupReferenceLocators(fromGroupId, toGroupId);
-
-            foreach (var dictionaryOfEntities in fromGroup)
-            {
-                var refWrapperType = dictionaryOfEntities.Key;
-
-                IComponentArray fromDictionary = dictionaryOfEntities.Value;
-                IComponentArray toDictionary = GetOrAddTypeSafeDictionary(
-                    toGroupId,
-                    toGroup,
-                    refWrapperType,
-                    fromDictionary
-                );
-
-                fromDictionary.AddEntitiesToDictionary(toDictionary, toGroupId);
-            }
-
-            ExceptionDispatchInfo callbackException = null;
-
-            if (
-                _eventsManager.ReactiveOnMovedObservers.TryGetValue(
-                    toGroupId,
-                    out var groupSwappedSubject
-                )
-            )
-            {
-                var count = _entitiesQuerier.CountEntitiesInGroup(fromGroupId);
-                try
-                {
-                    groupSwappedSubject.Invoke(fromGroupId, new EntityRange(0, count));
-                }
-                catch (Exception ex)
-                {
-                    callbackException = ExceptionDispatchInfo.Capture(ex);
-                }
-            }
-
-            foreach (var dictionaryOfEntities in fromGroup)
-            {
-                dictionaryOfEntities.Value.Clear();
-            }
-
-            callbackException?.Throw();
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -9,6 +9,8 @@ Components must be unmanaged structs, so a component field can't hold a `List<T>
 
 Both require `T : unmanaged`. Available sizes: `2`, `4`, `8`, `16`, `32`, `64`, `128`, `256`.
 
+All fixed collections are marked `[NonCopyable]` because their data is stored inline — copying the struct duplicates the internal storage, and mutations on the copy silently leave the original unchanged. Pass them by `ref` or `in`, not by value. Any struct that contains a fixed-collection field is itself non-copyable (the rule propagates transitively). See [Copy semantics](../core/components.md#copy-semantics) for details.
+
 ## Read / write split
 
 The indexer returns `ref readonly T` — read with `arr[i]`, but you can't write through it. Writes go through `.Mut(i)`, which returns `ref T`:

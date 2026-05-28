@@ -10,14 +10,11 @@ namespace Trecs.Internal
 {
     class EntitiesOperations : IDisposable
     {
-        readonly TrecsLog _log;
-
         Info _lastSubmittedInfo;
         Info _thisSubmissionInfo;
 
-        public EntitiesOperations(TrecsLog log, int groupCount)
+        public EntitiesOperations(int groupCount)
         {
-            _log = log;
             _thisSubmissionInfo.Init(groupCount);
             _lastSubmittedInfo.Init(groupCount);
         }
@@ -48,11 +45,6 @@ namespace Trecs.Internal
                 if (info._moveListPool[i].IsCreated)
                     info._moveListPool[i].Dispose();
             }
-        }
-
-        public void QueueRemoveGroupOperation(GroupIndex groupId, string caller)
-        {
-            _thisSubmissionInfo._groupsToRemove.Add((groupId, caller));
         }
 
         public bool IsScheduledForRemove(EntityIndex entityIndex)
@@ -147,15 +139,6 @@ namespace Trecs.Internal
                 false,
                 "RemoveEntryByEntityIndex: entity not found in inner move list"
             );
-        }
-
-        public void QueueMoveGroupOperation(
-            GroupIndex fromGroupId,
-            GroupIndex toGroupId,
-            string caller
-        )
-        {
-            _thisSubmissionInfo._groupsToMove.Add((fromGroupId, toGroupId, caller));
         }
 
         public void QueueMoveOperation(
@@ -388,8 +371,6 @@ namespace Trecs.Internal
                 EntitySubmitter
             > moveEntities,
             Action<List<int>[], EntitySubmitter> removeEntities,
-            Action<GroupIndex, EntitySubmitter> removeGroup,
-            Action<GroupIndex, GroupIndex, EntitySubmitter> swapGroup,
             EntitySubmitter ecsRoot
         )
         {
@@ -397,35 +378,6 @@ namespace Trecs.Internal
 
             try
             {
-                foreach (var (group, caller) in _lastSubmittedInfo._groupsToRemove)
-                    try
-                    {
-                        removeGroup(group, ecsRoot);
-                    }
-                    catch
-                    {
-                        var str = $"Crash while removing a whole group on {group} from : {caller}";
-
-                        _log.Error(str);
-
-                        throw;
-                    }
-
-                foreach (var (fromGroup, toGroup, caller) in _lastSubmittedInfo._groupsToMove)
-                    try
-                    {
-                        swapGroup(fromGroup, toGroup, ecsRoot);
-                    }
-                    catch
-                    {
-                        var str =
-                            $"Crash while swapping a whole group on {fromGroup} {toGroup} from : {caller}";
-
-                        _log.Error(str);
-
-                        throw;
-                    }
-
                 if (_lastSubmittedInfo._entitiesMoved.Count > 0)
                 {
                     moveEntities(
@@ -502,16 +454,11 @@ namespace Trecs.Internal
             internal IterableHashSet<EntityIndex> _entitiesRemoved;
 
             internal int _removeCount;
-            public List<(GroupIndex, GroupIndex, string)> _groupsToMove;
-            public List<(GroupIndex, string)> _groupsToRemove;
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             internal bool AnyOperationQueued()
             {
-                return _entitiesMoved.Count > 0
-                    || _removeCount > 0
-                    || _groupsToMove.Count > 0
-                    || _groupsToRemove.Count > 0;
+                return _entitiesMoved.Count > 0 || _removeCount > 0;
             }
 
             internal void Clear()
@@ -537,8 +484,6 @@ namespace Trecs.Internal
                 _entitiesMoved.Recycle();
                 _entitiesRemoved.Recycle();
                 _removeCount = 0;
-                _groupsToRemove.Clear();
-                _groupsToMove.Clear();
             }
 
             internal void Init(int groupCount)
@@ -549,8 +494,6 @@ namespace Trecs.Internal
                         (EntityIndex fromEntityIndex, GroupIndex toGroup)
                     >();
                 _entitiesRemoved = new IterableHashSet<EntityIndex>();
-                _groupsToRemove = new List<(GroupIndex, string)>();
-                _groupsToMove = new List<(GroupIndex, GroupIndex, string)>();
 
                 _currentSwapEntitiesOperations = new IterableDictionary<
                     GroupIndex,

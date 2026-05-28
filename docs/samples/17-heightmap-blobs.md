@@ -22,7 +22,7 @@ The `Flavor` field on `SampleSettings` (or `FlavorOverride` from tests) selects 
 
 - **`ManagedSharedPtrInterface`** — `MutableHeightmapData` is a mutable managed class (public fields, populated via an object initializer rather than a constructor), exposed to entity-side callers through the `[Immutable]` `IReadOnlyHeightmapData` interface. The `SharedPtr<IReadOnlyHeightmapData>` handle is the same 12-byte shape as `ManagedSharedPtr`; only the type parameter differs. `InterfaceHeightmapFollower` reads through the interface on the main thread — the underlying concrete's mutable surface is unreachable from there without an explicit downcast. See [Shared Heap Data](../experimental/shared-heap-data.md) for when to pick the class route vs the interface route.
 
-In all four flavors, every character entity holds its own 12-byte handle but all handles point at the same underlying blob — the heightmap data lives once on the heap regardless of character count.
+In all four flavors, every character entity holds its own small handle (12 bytes for the managed `SharedPtr` flavors, 4 bytes for the native `NativeSharedPtr` flavors) but all handles point at the same underlying blob — the heightmap data lives once on the heap regardless of character count.
 
 ### Which native flavor to reach for?
 
@@ -39,8 +39,8 @@ Pick `Inline` when the blob comfortably fits in `FixedArray256<T>` and the simpl
 
 `NativeHeightmapData` is fully self-contained — descriptor plus `FixedArray256<float>` — and only about 1 KB. You could put it directly on each character's component and skip the pointer entirely. So why the indirection?
 
-1. **Deduplication.** Each character holds a 12-byte handle, not its own copy of the heightmap. Inline would mean *N* characters × 1 KB of duplicated bytes that the chunk iterator strides over on every frame, even though every copy is identical.
-2. **Chunk-row size.** ECS iteration cost scales with the row size of each archetype. A 12-byte handle keeps the character archetype lean; a 1 KB inline blob would make every system iterating these characters touch 1 KB per entity, even systems that never read the heightmap.
+1. **Deduplication.** Each character holds a small handle (4–12 bytes depending on pointer type), not its own copy of the heightmap. Inline would mean *N* characters × 1 KB of duplicated bytes that the chunk iterator strides over on every frame, even though every copy is identical.
+2. **Chunk-row size.** ECS iteration cost scales with the row size of each archetype. A small handle keeps the character archetype lean; a 1 KB inline blob would make every system iterating these characters touch 1 KB per entity, even systems that never read the heightmap.
 3. **Snapshot cost** — the next section.
 
 If the blob were per-entity rather than shared (a different heightmap per character), reasons (1) and (3) would still favour `NativeSharedPtr` with a content-derived `BlobId`; reason (2) less so.

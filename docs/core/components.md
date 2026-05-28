@@ -106,3 +106,70 @@ scoreW.Value += 10;
 ```
 
 To declare which components the global entity has, see [Global Entity Template](templates.md#global-entity-template).
+
+## Copy semantics
+
+Components live in contiguous component buffers and are accessed by reference — through aspect properties, `NativeComponentLookup` indexers, and the `.Read` / `.Write` accessors shown below. Copying a component to a by-value local is usually a bug: mutations land on the copy and the original stays unchanged.
+
+To catch this at compile time, Trecs makes **all `IEntityComponent` structs non-copyable by default**. The companion `NonCopyableAnalyzer` flags two patterns as errors:
+
+| Diagnostic | What it catches |
+|---|---|
+| **TRECS118** | Copying to a by-value local from an existing variable (field, local, parameter, property). Initializing from `new`, `default`, or a method return is allowed. |
+| **TRECS119** | Passing as a by-value method parameter. Must use `ref`, `in`, or `out`. |
+
+```csharp
+public partial struct Health : IEntityComponent
+{
+    public float Current;
+    public float Max;
+}
+
+// These trigger TRECS118 / TRECS119:
+var copy = someEntity.Health;          // TRECS118 — by-value local from field
+void TakeDamage(Health hp) { ... }     // TRECS119 — by-value parameter
+
+// These are fine:
+ref readonly var hp = ref aspect.Health;  // ref alias — no copy
+void TakeDamage(in Health hp) { ... }     // in parameter — no copy
+var fresh = new Health();                 // new instance — allowed
+```
+
+### `[Copyable]` — opting back in
+
+Small flat components where copying is cheap and semantically meaningful — typed handles, configs, primitive wrappers — can opt back into normal value-copy semantics with `[Copyable]`:
+
+```csharp
+[Copyable]
+public partial struct PlayerId : IEntityComponent
+{
+    public int Value;
+}
+
+// Both are now allowed:
+var id = aspect.PlayerId;                  // OK — [Copyable]
+void Process(PlayerId id) { ... }          // OK
+```
+
+### `[NonCopyable]` — marking non-component structs
+
+`IEntityComponent` structs are non-copyable by default without needing any attribute. `[NonCopyable]` exists for **non-component structs** that have the same problem — inline-storage types where copying duplicates internal data. The [fixed collections](../advanced/fixed-collections.md) (`FixedList<N>`, `FixedArray<N>`) ship pre-decorated with `[NonCopyable]`.
+
+```csharp
+[NonCopyable]
+public struct InlineBuffer
+{
+    public FixedList64<int> Data;
+}
+```
+
+Non-copyability propagates through fields: a struct that contains a non-static instance field whose type is non-copyable is itself non-copyable. This is true even if the outer struct carries `[Copyable]` — `[Copyable]` does not override the transitive rule, because copying the wrapper would still duplicate the inner storage.
+
+```csharp
+[NonCopyable]
+public struct Inner { public int X; }
+
+// Wrapper is non-copyable too — copying it copies Inner.
+public struct Wrapper { public Inner Value; }
+```
+
