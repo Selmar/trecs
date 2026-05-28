@@ -59,25 +59,30 @@ nav:
       - Gotchas: guides/gotchas.md
       - OOP Integration: guides/oop-integration.md
       - Entity Subset Patterns: guides/entity-subset-patterns.md
+      - Determinism: guides/determinism.md
       - Trecs vs Unity ECS: guides/trecs-vs-unity-ecs.md
   - Advanced:
       - Accessor Roles: advanced/accessor-roles.md
       - Time & RNG: advanced/time-and-rng.md
       - Interpolation: advanced/interpolation.md
-      - Heap: advanced/heap.md
-      - Shared Heap Data: advanced/shared-heap-data.md
       - Fixed Collections: advanced/fixed-collections.md
-      - Trecs Collections: advanced/trecs-collections.md
       - Aspect Interfaces: advanced/aspect-interfaces.md
       - Pausing & Disabling Systems: advanced/pausing-and-disabling-systems.md
       - Groups, GroupIndex & TagSets: advanced/groups-and-tagsets.md
       - Advanced Job Features: advanced/advanced-jobs.md
-      - Serialization: advanced/serialization.md
+      - EntityIndex: advanced/entity-index.md
   - Editor Windows:
       - Overview: editor-windows/index.md
       - Hierarchy: editor-windows/hierarchy.md
       - Player: editor-windows/player.md
       - Saves: editor-windows/saves.md
+  - Experimental:
+      - Overview: experimental/index.md
+      - Pointers: experimental/pointers.md
+      - Shared Heap Data: experimental/shared-heap-data.md
+      - Serialization: experimental/serialization.md
+      - BlobBuilder: experimental/blob-builder.md
+      - Dynamic Collections: experimental/dynamic-collections.md
   - Samples:
       - Overview: samples/index.md
       - 01 - Hello Entity: samples/01-hello-entity.md
@@ -92,11 +97,11 @@ nav:
       - 10 - Pointers: samples/10-pointers.md
       - 11 - Snake: samples/11-snake.md
       - 12 - Feeding Frenzy Benchmark: samples/12-feeding-frenzy-benchmark.md
-      - 13 - Native Pointers: samples/13-native-pointers.md
-      - 14 - Aspect Interfaces: samples/14-aspect-interfaces.md
-      - 15 - Blob Storage: samples/15-blob-storage.md
-      - 16 - Reactive Events: samples/16-reactive-events.md
-      - 17 - Multiple Worlds: samples/17-multiple-worlds.md
+      - 13 - Aspect Interfaces: samples/13-aspect-interfaces.md
+      - 14 - Blob Seed Pattern: samples/14-blob-seed-pattern.md
+      - 15 - Reactive Events: samples/15-reactive-events.md
+      - 16 - Multiple Worlds: samples/16-multiple-worlds.md
+      - 17 - Heightmap Blobs: samples/17-heightmap-blobs.md
   - FAQ: faq.md
   - Changelog: changelog.md
 

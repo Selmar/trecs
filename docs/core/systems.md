@@ -68,7 +68,7 @@ Beyond component refs or an aspect, a method can also receive any of these:
 - **`EntityHandle`** — the stable handle for the iterated entity. Carries the entity-targeted ops (`Component<T>(world)`, `Remove(world)`, `SetTag<T>(world)`, `AddInput<T>(world, v)`, …); store it on another component when you need a long-lived reference.
 - **`WorldAccessor`** — the system's accessor (main-thread only).
 - **`NativeWorldAccessor`** — job-safe world access (`[WrapAsJob]` only).
-- **`[GlobalIndex] int`** — see [Cross-partition index](#cross-group-index).
+- **`[GlobalIndex] int`** — see [Cross-partition index](#cross-partition-index).
 - **`[PassThroughArgument]`** — a value the caller forwards in. See [PassThroughArgument](#passthroughargument).
 - **`[SingleEntity]`** — a singleton entity hoisted out of the loop. See [SingleEntity](#singleentity).
 

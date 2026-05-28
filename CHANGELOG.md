@@ -15,8 +15,6 @@ Large redesign pass covering package consolidation, accessor permissions, heap-b
 - **Accessor roles.** New `AccessorRole` enum (`Fixed`, `Variable`, `Unrestricted`) replaces the previous `SystemPhase` / `IsEditor` parameters. The role drives component read/write rules, structural-change rules, and heap-allocation rules in one place.
 - **Heap-backed collection types.** `TrecsList<T>`, `TrecsDictionary<TKey, TValue>`, and `TrecsArray<T>` — deterministic, serializable, heap-allocated collections that can live inside ECS components. Each has separate `Read`/`Write` wrappers with version-checked safety guards that hold in shipping builds.
 - **`BlobBuilder` / `BlobArray<T>` / `BlobRef<T>`.** Build relocatable blob allocations (root struct + trailing arrays) that can be handed to `NativeSharedPtr.AllocTakingOwnership`.
-- **`IterableDictionary<TKey, TValue>` / `IterableHashSet<T>`.** Managed deterministic-iteration collections replacing `DenseDictionary` / `DenseHashSet`. `NativeIterableDictionary<TKey, TValue>` replaces `NativeDenseDictionary` for Burst/jobs.
-- **`ReadOnlyList<T>`.** Zero-alloc readonly struct wrapper over `List<T>`.
 - **Input pointer types.** `InputSharedPtr<T>`, `InputUniquePtr<T>`, `InputNativeSharedPtr<T>`, `InputNativeUniquePtr<T>` for frame-scoped input data that participates in the input recording pipeline.
 - **`[NonCopyable]` / `[Copyable]` attributes.** Prevent accidental by-value copies of structs (including `IEntityComponent` by default). Source-gen diagnostics TRECS118–120.
 - **`[Immutable]` attribute.** Enforces that types stored via `SharedPtr<T>` are immutable (readonly fields, no public setters). Source-gen diagnostics TRECS125–127.
@@ -30,9 +28,8 @@ Large redesign pass covering package consolidation, accessor permissions, heap-b
 - **Constructor-positional shorthand on tag attributes.** `[ForEachEntity]`, `[SingleEntity]`, and `[FromWorld]` accept tags as `params Type[]` — e.g. `[ForEachEntity(typeof(EcsTags.Enemy))]`.
 - **`[SingleEntity]` is now per-parameter / per-field** and works in plain `Execute`, mixed with `[ForEachEntity]`, `[WrapAsJob]` auto-generated jobs, and hand-written job-struct fields.
 - **`[GlobalIndex]` parameter attribute** on iteration `Execute` methods — receives the packed 0..N-1 index across all groups. Job-side only.
-- **`[Serializable]` auto-emitted on `IEntityComponent` partials.**
+- **`[Serializable]` auto-emitted on `IEntityComponent` partials.**, for use with Hierarchy editor window to allow changing entities dynamically at runtime via unity inspector
 - **Recording system rewritten as `RecordingBundle`.** New surface: `BundleRecorder`, `BundlePlayer`, `RecordingBundle`, `RecordingBundleSerializer`. A bundle is a single self-contained replayable session: initial snapshot + input queue + sparse desync checksums + auto-anchor snapshots + user snapshots.
-- **`TrecsPaths`** — centralizes on-disk locations Trecs uses.
 - **`EntityHandle.TryToEntity(WorldAccessor)`** overload.
 - **Source-gen diagnostics.** ~80 structured diagnostics (TRECS001–TRECS130) with dedicated tests.
 - **New samples.** `10_DynamicCollections` (renamed from `10_Pointers`), `13_AspectInterfaces`, `14_BlobSeedPattern`, `15_ReactiveEvents`, `16_MultipleWorlds`, `17_HeightmapBlobs`. `11_Snake` moved from `com.trecs.serialization` into the core tutorials.
@@ -40,8 +37,6 @@ Large redesign pass covering package consolidation, accessor permissions, heap-b
 ### Changed (breaking)
 
 - **`com.trecs.serialization` merged into `com.trecs.core`.** The project is now a single package. Drop `com.trecs.serialization` from your `Packages/manifest.json`.
-- **`DenseDictionary` renamed to `IterableDictionary`**, `DenseHashSet` to `IterableHashSet`, `NativeDenseDictionary` to `NativeIterableDictionary`. Migration: project-wide text rename.
-- **`FastList<T>` / `ReadOnlyFastList<T>` / `LocalReadOnlyFastList<T>` removed.** Use `List<T>` / `ReadOnlyList<T>`.
 - **`HeapAccessor` removed as separate class**, folded into `WorldAccessor`. `world.Heap.AllocShared(...)` becomes `world.AllocShared(...)` directly.
 - **`EntityAccessor` ref struct removed.** Operations moved to extension methods on `EntityHandle`/`EntityIndex` — e.g. `entity.Component<T>(world)`, `entity.SetTag<T>(world)`.
 - **`NativeSharedPtr<T>` rearchitected.** Struct shrinks from 12B to 4B (chunked directory replaces hash-map resolver, enabling concurrent Burst-visible allocation). API: `DisposeHandle` → `DecrementRef`, `ptr.BlobId` → `ptr.GetBlobId(world)`.
@@ -66,8 +61,6 @@ Large redesign pass covering package consolidation, accessor permissions, heap-b
 - **`SystemRunner.StepFrame` renamed `StepFixedFrame`.**
 - **`ISystem.OnReady` runs in execute order** (Input → Fixed → EarlyPresentation → Presentation → LatePresentation), not registration order.
 - **`ISystem.OnReady` runs after the global entity is submitted.** `OnAdded` subscriptions from `OnReady` won't fire for global-entity creation.
-- **`SvProfiling` renamed to `TrecsProfiling`.**
-- **`WriteBinary` / `SerializableByteArray` replaced by `WriteBytes(byte[])` / `ReadBytes`.**
 - **`IComponentAccessRecorder` renamed to `IAccessRecorder`.**
 - **`EntityHandle.UniqueId` renamed to `Id`.**
 - **`MissingInputBehavior` values shortened:** `ResetToDefault` → `Reset`, `RetainCurrent` → `Retain`.
@@ -77,29 +70,18 @@ Large redesign pass covering package consolidation, accessor permissions, heap-b
 - **`RemoveAllEntitiesOnDispose` setting removed** — entities are always removed on dispose.
 - **`[SingleEntity]` is per-parameter / per-field.** The previous method-level form no longer compiles.
 - **`PtrHandle` is now a `readonly struct`.**
-- **`TrecsAutoRecorderSettings` reshaped** around the new bundle model. Previous "snapshot interval / overflow action" replaced with two-tier "persistent anchors + transient scrub cache".
-- **Public serializer types are now `sealed`.**
 - **`NativeArraySerializer<T>` / `NativeListSerializer<T>`** accept an `Allocator` constructor parameter (defaulting to `Persistent`).
 - **`IEnumerable` removed from Trecs collection types** to prevent accidental boxing allocations.
 - **`10_Pointers` sample renamed to `10_DynamicCollections`.**
 - **`13_SaveGame` sample removed.**
 
-### Deprecated
-
-- `SerializationBuffer.GetMemoryStreamHash()` — use `ComputeChecksum()`.
-
 ### Changed
 
-- **`TrecsProfiling` markers gated on `ENABLE_PROFILER`.** Compile out of release builds.
-- **`MaxCollectionLength` concept removed from serialization.** Framework relies on wire format for bounds.
 - **Source-gen polish.** Nested-class scope support, consolidated tag parsing, unified `[SingleEntity]` emit path, value-equatable pipeline models for effective incremental cache, `[GeneratedCode]` attribute stamped on all generated types.
-- **`TrecsSerialization{Reader,Writer}Adapter`** are now public.
-- **Schema cache** persists per-accessor access data and execution order across play sessions.
 - **System-effectively-enabled** display: hierarchy rows grayed when disabled.
 - **Submission pipeline** optimized with Burst-jobified parallel fill, per-group staging bags, native component layout metadata.
 - **NativeHeap serialization** optimized with struct blits and direct chunk walk.
 - **`BinarySerializationReader`** refactored to operate on `ReadOnlyMemory<byte>` instead of `MemoryStream`.
-- **`EnumSerializer<T>`** optimized: cached switch + `Unsafe.As` instead of `Convert.ToXxx` — no boxing on hot path.
 
 ### Removed
 
@@ -125,22 +107,6 @@ Large redesign pass covering package consolidation, accessor permissions, heap-b
 - `AccessorRole.Bypass` / `AccessorRole.Input` (use `Unrestricted`; input permissions auto-derived from `[ExecuteIn(Input)]`).
 - `World.CreateAccessor(string)` overload.
 - `RemoveAllEntitiesOnDispose` setting.
-
-### Fixed
-
-- `[SingleEntity]` correctness gaps (parameter-resolution ordering, `[WrapAsJob]` param wiring, job-struct field handling).
-- Hierarchy tree: template display name nicification, generic-struct component field rendering.
-- Trecs Player: refuse `Step` past recorded tail, clear pending step on unpause, fix Loop toggle.
-- Serialization: abstract `T` in `Read<T>` / `Write<T>` / `WriteDelta<T>` auto-diverts correctly.
-- Hierarchy window: persist selection and expand/collapse across world transitions and domain reloads, sort by execution order, disambiguate duplicate-name template rows.
-- `BinarySerializationReader` / `BinarySerializationWriter`: `ResetForErrorRecovery` clears version/typeChecks state.
-- `BinarySerializationWriter.NumBytesWritten` ceiling-divides bit count (was under-reporting by up to 7 bits).
-- `EnumSerializer<T>`: assert no aliased values and 256-value delta-encoding cap at static init.
-- `MemoryBlitter`: assert little-endian platform at static init.
-- Desync caused by stale `SideTableLength` after deserialize.
-- Chunk memory leak in `NativeSharedHeap` dispose path.
-- `NativeIterableDictionary` Set corrupting state via incorrect `AddValue` call.
-- Serialization checksum consistency (deleted `RecordingChecksumCalculator` which used different settings than production path).
 
 ## [0.1.0] - 2026-04-18
 

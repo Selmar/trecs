@@ -52,6 +52,7 @@ namespace Trecs.Samples.FeedingFrenzyBenchmark
                     new WorldSettings
                     {
                         RandomSeed = config.Deterministic ? 42 : (ulong)DateTime.Now.Ticks,
+                        WarnOnFixedUpdateFallingBehind = false,
                     }
                 )
                 .AddTemplates(GetTemplates(config));
