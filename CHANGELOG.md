@@ -7,115 +7,140 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [0.2.0] - 2026-05-07
 
-This release covers a large redesign pass on accessor permissions, source-gen attribute ergonomics, native collections, and the editor tooling. All breaking changes are mechanical text-level migrations unless otherwise noted.
+Large redesign pass covering package consolidation, accessor permissions, heap-backed collections, source-gen diagnostics, native pointer internals, and editor tooling. All breaking changes are mechanical text-level migrations unless otherwise noted.
 
 ### Added
 
-- **Accessor roles.** New `AccessorRole` enum (`Fixed`, `Variable`, `Unrestricted`) replaces the previous `SystemPhase` / `IsEditor` parameters on accessor APIs. The role drives component read/write rules, structural-change rules, and heap-allocation rules in one place. See the new [Accessor Roles](advanced/accessor-roles.md) doc for the full matrix.
-- **Trecs Player** editor window. Replaces the older time-travel shell with a unified record / playback / snapshot / scrub / fork / loop UI, plus a Saves library window for managing recordings and snapshots side by side. Player settings (auto-record, anchor / scrub-cache intervals, etc.) persist via `EditorPrefs` and are reachable outside play mode.
-- **Hierarchy window.** First-class hierarchy editor window with persisted expand/collapse state, search-scope predicates, identity-based selection that survives world transitions and domain reloads, and a per-entity component inspector with JSON edit. See [Hierarchy](editor-windows/hierarchy.md).
-- **`WorldRegistry`** — static registry of active `World` instances for editor tooling. Worlds register on `Initialize` and unregister on `Dispose`. `World.DebugName` / `WorldBuilder.SetDebugName(string)` let you give worlds human-readable names that surface in editor dropdowns.
-- **System-control APIs.** `WorldAccessor.SetSystemEnabled(int systemIndex, EnableChannel, bool)` toggles a non-deterministic disable channel (multi-channel, AND semantics — a system runs only when no channel disables it). For deterministic, replay-safe pauses, use the new `WorldAccessor.SetSystemPaused`. `IsSystemEffectivelyEnabled(int)` (on both `World` and `WorldAccessor`) is a single "would this system run on the next tick" query for debug UIs and tests.
-- **`WorldAccessor.StepFixedFrame`** exposes single-frame stepping outside the system runner.
-- **`EntityHandle.TryToEntity(WorldAccessor)`** overload alongside the existing `EntityQuerier`-based form.
-- **Constructor-positional shorthand on tag attributes.** `[ForEachEntity]`, `[SingleEntity]`, and `[FromWorld]` now accept tags as constructor-positional `params Type[]` arguments — e.g. `[ForEachEntity(typeof(EcsTags.Enemy))]` or `[FromWorld(typeof(A), typeof(B))]` — in addition to the existing `Tag = typeof(...)` / `Tags = new[] { typeof(...) }` named-property form. Samples and docs are migrated to the constructor-positional form.
-- **`[SingleEntity]` is now per-parameter / per-field** and works in four contexts: plain `Execute`, mixed with `[ForEachEntity]`, `[WrapAsJob]` auto-generated jobs, and hand-written job-struct fields. See [Systems — SingleEntity](core/systems.md#singleentity).
-- **`17_MultipleWorlds` sample** demonstrating multiple `World` instances in a single Unity scene.
-- **Source-gen diagnostics.** ~80 structured diagnostics across the source generators (codes in the TRECS001–TRECS117 range), each with a dedicated test, grouped by area: ForEach, Aspect, Component, Template, AutoSystem, Iteration, Hook migration, Job scheduling, FromWorld, WrapAsJob / AutoJob, SingleEntity, GlobalIndex. TRECS110 / TRECS111 (NativeUniquePtr copy prevention) are emitted by an analyzer rather than an incremental generator. A compile-cleanliness harness now keeps all generators warning-free under `treat-warnings-as-errors`.
-- **`[Serializable]` is auto-emitted on `IEntityComponent` partials**, so components round-trip through any reflection-based serializer without manual annotation.
-- **Recording system rewritten as `RecordingBundle`.** New public surface: `BundleRecorder`, `BundlePlayer`, `RecordingBundle`, `RecordingBundleSerializer`, `BundleRecorderSettings`, plus the data carriers `BundleHeader`, `BundleAnchor`, `BundleSnapshot`, and the `BundlePlaybackState` enum (`Idle` / `Playing` / `Desynced`). A bundle is a single self-contained replayable session: initial snapshot + input queue + sparse desync checksums + auto-anchor snapshots (for recovery / scrub-back) + user snapshots. `RecordingBundleSerializer.PeekHeader(Stream)` lets callers cheaply inspect frame range without loading payloads. Replaces the old `RecordingHandler` / `PlaybackHandler` / `AutoRecordingSnapshot` / `PlaybackStartParams` / `RecordingMetadata` types — see "Removed" for the migration.
-- **`TrecsPaths`** — new public static class centralizing the on-disk locations Trecs uses (`Library/com.trecs/inspector_schema`, `…/profiling/{fixed,variable}`, `…/recordings`, `…/snapshots`). Replaces the previous ad-hoc path strings scattered across editor tooling.
-- **`[GlobalIndex]`** parameter attribute on iteration `Execute` methods — receives the packed 0..N-1 index across all groups iterated by the call. Useful for writing into a single contiguous `NativeArray` shared across groups. Job-side only; works in both manual job structs and `[WrapAsJob]`-generated jobs. The parameter must be `int` — TRECS117 fires otherwise.
-- **`HeapAccessor.AllocShared<T>(BlobId, T blob)`** overload — completes the seed-with-stable-id pattern for managed shared data; the `Native` and `FrameScoped` siblings already had this shape.
+- **Single-package layout.** `com.trecs.serialization` merged into `com.trecs.core` — the project is now a single UPM package.
+- **Accessor roles.** New `AccessorRole` enum (`Fixed`, `Variable`, `Unrestricted`) replaces the previous `SystemPhase` / `IsEditor` parameters. The role drives component read/write rules, structural-change rules, and heap-allocation rules in one place.
+- **Heap-backed collection types.** `TrecsList<T>`, `TrecsDictionary<TKey, TValue>`, and `TrecsArray<T>` — deterministic, serializable, heap-allocated collections that can live inside ECS components. Each has separate `Read`/`Write` wrappers with version-checked safety guards that hold in shipping builds.
+- **`BlobBuilder` / `BlobArray<T>` / `BlobRef<T>`.** Build relocatable blob allocations (root struct + trailing arrays) that can be handed to `NativeSharedPtr.AllocTakingOwnership`.
+- **`IterableDictionary<TKey, TValue>` / `IterableHashSet<T>`.** Managed deterministic-iteration collections replacing `DenseDictionary` / `DenseHashSet`. `NativeIterableDictionary<TKey, TValue>` replaces `NativeDenseDictionary` for Burst/jobs.
+- **`ReadOnlyList<T>`.** Zero-alloc readonly struct wrapper over `List<T>`.
+- **Input pointer types.** `InputSharedPtr<T>`, `InputUniquePtr<T>`, `InputNativeSharedPtr<T>`, `InputNativeUniquePtr<T>` for frame-scoped input data that participates in the input recording pipeline.
+- **`[NonCopyable]` / `[Copyable]` attributes.** Prevent accidental by-value copies of structs (including `IEntityComponent` by default). Source-gen diagnostics TRECS118–120.
+- **`[Immutable]` attribute.** Enforces that types stored via `SharedPtr<T>` are immutable (readonly fields, no public setters). Source-gen diagnostics TRECS125–127.
+- **Determinism analyzers.** TRECS128/129 flag `Dictionary`/`HashSet` iteration in fixed-update systems; TRECS130 flags non-deterministic APIs (`DateTime.Now`, `System.Random`, `UnityEngine.Random`, etc.) in fixed-update systems.
+- **System-control APIs.** `WorldAccessor.SetSystemEnabled(int, EnableChannel, bool)` with multi-channel AND semantics, plus deterministic `WorldAccessor.SetSystemPaused` for replay-safe pauses. `IsSystemEffectivelyEnabled` query for debug UIs.
+- **`WorldAccessor.StepFixedFrame`** for single-frame stepping outside the system runner.
+- **Trecs Player editor window.** Record / playback / snapshot / scrub / fork / loop UI, with a Saves library for managing recordings and snapshots.
+- **Hierarchy editor window.** Persisted expand/collapse, search, identity-based selection, per-entity component inspector with JSON edit.
+- **`WorldRegistry`** — static registry of active `World` instances. `World.DebugName` / `WorldBuilder.SetDebugName(string)` for editor dropdowns.
+- **`World.Events.OnShutdown()`** — fires during `World.Dispose()` after `RemoveAllEntities` but before infrastructure teardown.
+- **Constructor-positional shorthand on tag attributes.** `[ForEachEntity]`, `[SingleEntity]`, and `[FromWorld]` accept tags as `params Type[]` — e.g. `[ForEachEntity(typeof(EcsTags.Enemy))]`.
+- **`[SingleEntity]` is now per-parameter / per-field** and works in plain `Execute`, mixed with `[ForEachEntity]`, `[WrapAsJob]` auto-generated jobs, and hand-written job-struct fields.
+- **`[GlobalIndex]` parameter attribute** on iteration `Execute` methods — receives the packed 0..N-1 index across all groups. Job-side only.
+- **`[Serializable]` auto-emitted on `IEntityComponent` partials.**
+- **Recording system rewritten as `RecordingBundle`.** New surface: `BundleRecorder`, `BundlePlayer`, `RecordingBundle`, `RecordingBundleSerializer`. A bundle is a single self-contained replayable session: initial snapshot + input queue + sparse desync checksums + auto-anchor snapshots + user snapshots.
+- **`TrecsPaths`** — centralizes on-disk locations Trecs uses.
+- **`EntityHandle.TryToEntity(WorldAccessor)`** overload.
+- **Source-gen diagnostics.** ~80 structured diagnostics (TRECS001–TRECS130) with dedicated tests.
+- **New samples.** `10_DynamicCollections` (renamed from `10_Pointers`), `13_AspectInterfaces`, `14_BlobSeedPattern`, `15_ReactiveEvents`, `16_MultipleWorlds`, `17_HeightmapBlobs`. `11_Snake` moved from `com.trecs.serialization` into the core tutorials.
 
 ### Changed (breaking)
 
-- **`[ExecutesAfter]` / `[ExecutesBefore]` renamed to `[ExecuteAfter]` / `[ExecuteBefore]`.** Properties `ExecutesAfterSystems` / `ExecutesBeforeSystems` likewise become `ExecuteAfterSystems` / `ExecuteBeforeSystems`. Migration: project-wide text rename.
-- **`[Phase(...)]` renamed to `[ExecuteIn(...)]`.** Matches the imperative-form convention of `[ExecuteAfter]` / `[ExecuteBefore]` / `[ExecutePriority]`. The underlying `SystemPhase` enum and `Phase` property name on the attribute are unchanged — only the attribute class is renamed. Migration: project-wide text rename `[Phase(` → `[ExecuteIn(` and `PhaseAttribute` → `ExecuteInAttribute`.
-- **`SetDef` renamed to `EntitySet`** (and the internal storage struct to `EntitySetStorage`). Set declarations on templates now use the new name. Migration: project-wide text rename.
-- **Accessor creation API.** `World.CreateAccessor(string)` is deprecated and `World.CreateAccessor<T>()` / `World.CreateAccessor(Type)` (the system-type-derived overloads) are now framework-internal — end-user code should always use `World.CreateAccessor(AccessorRole.Unrestricted, debugName)` for non-system code (lifecycle hooks, debug tooling, event callbacks, networking, scripting bridges). Systems get their accessor automatically from `Initialize`. Manually-created accessors never gain input-system permissions; only `[ExecuteIn(Input)]` system-owned accessors can call `AddInput<T>` and allocate from the frame-scoped heap.
-- **`[SingleEntity]` is per-parameter / per-field.** The previous method-level form (`[SingleEntity(typeof(Tag))] void Execute(...)` decorating an entire method) no longer compiles. Migration: move the attribute from the method onto the specific parameter (or field) that should be resolved as the singleton.
-- **`[VariableUpdateOnly]` is enforced symmetrically.** Writes are now blocked from non-`Fixed` phases just as reads were already restricted to certain phases, and `[Constant]` writes are blocked outside the fixed-update phase. Variable-phase systems can no longer perform structural mutations on entity Sets. `[VariableUpdateOnly]` is also recognized at the template scope; **support on entity sets has been removed** (templates are the right granularity). Fixed-role observer registration on `[VariableUpdateOnly]` template groups is rejected at registration time.
-- **`[FixedUpdateOnly]` attribute removed.** Fixed-update systems already have full write permission, so the explicit marker was redundant. Migration: drop the attribute; rules are unchanged.
-- **Phase-less accessor escape removed.** Accessors no longer have a "no role" mode that bypasses VUO/Constant/structural rules — every accessor has a role. Migration: pick `AccessorRole.Unrestricted` for accessors that genuinely need to operate outside system execution; otherwise pick `Fixed` or `Variable` and let rule violations surface.
-- **Single-accessor rule enforced during fixed-phase execute.** A fixed-phase system can hold only one live accessor at execute time. Tooling and lifecycle code that previously created throwaway accessors mid-tick should be reworked to use the system's own accessor.
-- **Aspect interfaces are detected via the `IAspect` marker** instead of an `[AspectInterface]` attribute. The attribute and the `AspectValidator.ValidateUsagePatterns` validator are deleted. Migration: change `[AspectInterface] interface IFooAspect { ... }` to `interface IFooAspect : IAspect { ... }`.
-- **`ITemplate` field declarations must omit an access modifier** (TRECS034 reworked). The generator now suppresses CS0169 / CS0414 / CS0649 / IDE0051 / IDE0052 on these fields, so the implicit-access form is the only correct way to declare template fields.
-- **Native collection cleanup.** Sequence-shape collections (dense buffers, deques) now standardize on a signed-`int` `Length` property — `Capacity` / `Count` / `uint Count` are unified. `IsEmpty()` is now a property across all Trecs collections. `NativeBuffer` collapses its read/write pointer accessors into a single typed `GetRawPointer`. `NativeDenseDictionary` gains modern native-container affordances. `SimpleResizableBuffer<T>` is inlined into `DenseDictionary` as plain `T[]` arrays. Migration: replace any `IsEmpty()` calls with the property.
-- **"Bookmark" terminology replaced with "Snapshot" everywhere.** The old `TrecsBookmarksWindow` is now `TrecsSavesWindow`. The runtime recording API renames likewise: `BundleBookmark` → `BundleSnapshot`, `RecordingBundle.Bookmarks` → `Snapshots`, `BundleRecorder.CaptureBookmarkAtCurrentFrame` → `CaptureSnapshotAtCurrentFrame`, `BundleRecorder.Bookmarks` → `Snapshots`, `TrecsAutoRecorder.RemoveBookmarkAtFrame` → `RemoveSnapshotAtFrame`. Wire-format keys (`bookmarkCount` / `bookmarkFrame` / `bookmarkChecksum` / `bookmarkLabel` / `bookmarkPayload`) and the editor's `EditorPrefs` key (`Trecs.Bookmarks.SuppressLoadConfirm`) are renamed to use `snapshot`. Migration: project-wide text rename `Bookmark` → `Snapshot`; existing `.trec` files saved by the old wire format need to be re-recorded; existing `EditorPrefs` "don't ask again" dismissal will reset on first 0.2.0 launch. (Anchors stay anchors — they're a distinct concept: auto-placed recovery points; user-placed labelled snapshots are now uniformly called snapshots.)
-- **`IComponentAccessRecorder` renamed to `IAccessRecorder`.** `World.SetAccessRecorder(IAccessRecorder)` likewise. Migration: project-wide text rename.
-- **`IHasTags<...>` renamed to `ITagged<...>`** on template declarations. Adjective form matches .NET convention (`IDisposable`, `IEquatable<T>`, `IComparable<T>`); the old `IHas*` form was a Trecs-specific imperative. Migration: project-wide text rename `IHasTags` → `ITagged`.
-- **`IHasPartition<...>` replaced by `IPartitionedBy<...>`** with new dimension-based semantics. Each `IPartitionedBy` declares one partition dimension whose type arguments are mutually exclusive variants — multiple declarations cross-product into concrete partitions automatically (writing **O(N·k)** declarations for **k^N** partitions instead of one per combination). New arity-1 form `IPartitionedBy<T>` declares a presence/absence dimension: the entity has the tag or doesn't, with no companion "negative" tag needed. Migration: rewrite each `IHasPartition<A>, IHasPartition<B>` pair as one `IPartitionedBy<A, B>`; for purely binary dims, drop the redundant negative tag and use `IPartitionedBy<TagA>`. Sample 06_Partitions illustrates the migration.
-- **`MoveTo` removed; `SetTag<T>` / `UnsetTag<T>` are the only structural tag-change verbs.** Every form of `MoveTo` is gone from `WorldAccessor`, `NativeWorldAccessor`, `EntityAccessor`, `AspectExtensions`, and the source-generated aspect surface. `SetTag<T>(idx)` makes T the active variant of T's dim — preserving every other dim — and works for both presence/absence and multi-variant dimensions. `UnsetTag<T>(idx)` clears T from a presence/absence dim (throws on multi-variant dims, since they have no defined absent state). Multiple `SetTag`/`UnsetTag` calls on the *same* entity in one submission now **coalesce** into a single move: independent-dim changes merge, same-dim conflicts throw (no more silent "first move wins" dedup). The submission queue protocol drops the old TagSet sentinel and the tag-count sentinels; only the SetTag (-2) and UnsetTag (-3) sentinels remain. Migration: replace `entity.MoveTo<Variant>(World)` with `entity.SetTag<Variant>(World)`; replace `entity.MoveTo(World, tagSet)` with one `SetTag` per partition variant in the TagSet (required ITagged tags are now implied, no need to specify them).
-- **`[ForEachEntity(..., Without = typeof(T))]`** queries the absent partition of a presence/absence dimension. Source-gen translates to `.WithoutTags<T>()` on the `QueryBuilder`. Use `Withouts = new[] { typeof(A), typeof(B) }` for multiple exclusions.
-- **`TrecsAutoRecorderSettings` reshaped around the new bundle model.** Removed: `SnapshotIntervalSeconds`, `MaxSnapshotCount`, `MaxSnapshotMemoryBytes`, `OverflowAction`, `CapacityOverflowAction` enum. Added: `AnchorIntervalSeconds` (persisted-anchor cadence — survives Save/Load), `ScrubCacheIntervalSeconds` (transient in-memory scrub-back captures), `ChecksumFrameInterval` (per-frame desync check rate), `MaxAnchorCount`, `MaxScrubCacheBytes` (default 64 MB). The previous "snapshot interval / overflow action" mental model is replaced with a two-tier "persistent anchors + transient scrub cache" model that surfaces on the recorder UI.
-- **`FixedArray2/16/128<T>` indexer is read-only.** `arr[i]` now returns `ref readonly T`; the setter is removed. Writes go through a new `arr.Mut(i) = value` extension. The `GetRef(in arr, i)` extension is renamed to `Mut`; `Get(in arr, i)` is removed (subsumed by the indexer). The `FixedTypedArray2Extensions` family is renamed to `FixedArray2Extensions`. The `in`-parameter ergonomics now skip the defensive copy and prevent silent mutation on read. `Equals` no longer logs a boxing warning; `GetHashCode` is implemented via `UnmanagedUtil.BlittableHashCode` instead of throwing. Migration: replace `arr[i] = v` with `arr.Mut(i) = v`; replace `arr.GetRef(i)` with `arr.Mut(i)`; replace `arr.Get(i)` with `arr[i]`.
-- **`BlobPtr<T>` / `NativeBlobPtr<T>` / `IBlobPtr` moved to `Trecs.Internal`** and marked `[EditorBrowsable(Never)]`. The supported public path for shared managed/native blob data is now `SharedPtr<T>` / `NativeSharedPtr<T>` allocated via `HeapAccessor`. The lower-level `BlobPtr<T>` is only relevant to callers implementing custom `IBlobStore` backends, which are framework-internal territory. Migration: switch user code to `SharedPtr<T>`; if you really were implementing a custom blob store, add `using Trecs.Internal;`.
-- **Heap auto-ID allocation removed.** `BlobCache._rng`, `CreateUniqueBlobId`, and the auto-ID overloads of `CreateBlobPtr` / `CreateNativeBlobPtr` / `CreateNativeBlobPtrTakingOwnership` are gone across `SharedHeap`, `NativeSharedHeap`, `FrameScopedSharedHeap`, `FrameScopedNativeSharedHeap`, and `EcsHeapAllocator`. Variable-update systems can no longer allocate persistent blobs at all (the previous fallthrough silently used a separate non-deterministic RNG; now `AssertCanAllocatePersistent` throws). Initialization shares the fixed-phase `_fixedRng`. Migration: pass an explicit `BlobId` when creating blob references; move variable-phase allocations to fixed-phase or init.
-- **`SerializationFlags` is now bit-flags, not a hash-set.** `ISerializationReader.Flags` / `ISerializationWriter.Flags` are `long` bitmasks; values on `SerializationFlags` are powers of two. Migration: code that constructed / passed a flag set should now `|` bit constants instead.
-- **Fast-forward API targets a frame, not a time.** `SystemRunner` fast-forward now takes a target frame number and runs catch-up frames until the simulation reaches it; the per-tick fixed-update cap is lifted during catch-up so the operation actually finishes promptly.
-- **`SystemRunner.StepFrame` renamed `StepFixedFrame`** and re-exposed on `WorldAccessor` for direct use from systems.
-- **`ISystem.OnReady` runs in execute order**, not registration order: Input → Fixed → EarlyPresentation → Presentation → LatePresentation, with `[ExecuteAfter]` / `[ExecuteBefore]` / `[ExecutePriority]` applied within each phase. Code that depended on registration-order timing for `OnReady` will need explicit `[ExecuteAfter]` constraints.
-- **`ISystem.OnReady` now runs after the global entity is submitted.** Systems can read and write global components directly from `OnReady` (e.g. `World.GlobalComponent<T>().Write = ...`). The trade-off: an `OnAdded` subscription registered in `OnReady` will no longer fire for the global entity's creation — access it via `World.GlobalComponent<T>()` / `World.GlobalEntityHandle` instead.
-- **`SvProfiling` renamed to `TrecsProfiling`.** Migration: text rename.
-- **Binary serialization API.** `WriteBinary` / `SerializableByteArray` are replaced by a simpler `WriteBytes(byte[])` / `ReadBytes` pair. Migration: rewrite call sites to the new method names; the wire format is unchanged for byte arrays.
-- **Aspect-interface generator** no longer emits the legacy `[AspectInterface]`-driven validator code path; aspects discovered via `IAspect` go through a single registration code path.
-- **Public serializer types are now `sealed`.** Every public `ISerializer<T>` implementation across `com.trecs.serialization` is sealed; `DictionarySerializer` / `HashSetSerializer` / `AssetReferenceSerializer`. Inheriting from these types was never a supported extension point.
-- **`PtrHandle` is now a `readonly struct`** with a `readonly uint Value` field. Previously it was a mutable struct with a public mutable `Value` field — a footgun on a value type used as a dictionary key. No callers were mutating `Value` directly. Migration: usually none; if any code assigned to `handle.Value`, construct a new `PtrHandle` instead.
-- **`BitWriter` moved from internal `Trecs.Serialization` to `Trecs.Internal` (public sealed, `[EditorBrowsable(Never)]`)** to mirror `BitReader`. Same hidden-public visibility model.
-- **Several serializers promoted from internal to public sealed** for uniformity with the rest of the family: `StringSerializer`, `TypeSerializer`, `RngSerializer`, `BlobMetadataSerializer`, `BlobManifestSerializer`.
-- **`SerializationBuffer` inner accessors made internal.** `.Reader` / `.Writer` / `.BinaryReader` / `.BinaryWriter` are no longer public — they all carried "you shouldn't need to use this directly" comments and had no external callers, so they're framework-internal.
-- **`NativeArraySerializer<T>` / `NativeListSerializer<T>`** accept an `Allocator` constructor parameter (defaulting to `Persistent`). Existing `RegisterSerializer<NativeArraySerializer<X>>()` registrations keep working; callers wanting a custom allocator can do `RegisterSerializer(new NativeArraySerializer<X>(Allocator.Temp))`.
-- **Frame-event names made symmetric.** `World.Events.OnSubmission` is renamed `OnSubmissionCompleted` to mirror `OnSubmissionStarted` / `OnFixedUpdateStarted` / `OnFixedUpdateCompleted` / `OnDeserializeStarted` / `OnDeserializeCompleted`. `OnPostApplyInputs` is renamed `OnInputsApplied` — the `Post` prefix had no `Pre` counterpart, and the past-participle form is the idiomatic .NET shape for "X just happened". A new `OnVariableUpdateCompleted` event fires at the end of `World.LateTick()`, after the final per-frame submission, completing the variable-update bracket. Migration: text rename `OnSubmission(` → `OnSubmissionCompleted(` and `OnPostApplyInputs(` → `OnInputsApplied(`.
-- **`EntityHandle.UniqueId` renamed to `Id`.** The field is a recyclable per-world slot identifier (paired with `Version` to form a stable handle), not a globally unique identifier — the old name was misleading. Migration: project-wide text rename `.UniqueId` → `.Id` on `EntityHandle` references.
-- **`MissingInputBehavior` enum values shortened.** `ResetToDefault` → `Reset`, `RetainCurrent` → `Retain`. The enum type already provides the "what" context, so the values read better at the call site (e.g. `[Input(MissingInputBehavior.Retain)]`). Migration: project-wide text rename of the two enum value names.
+- **`com.trecs.serialization` merged into `com.trecs.core`.** The project is now a single package. Drop `com.trecs.serialization` from your `Packages/manifest.json`.
+- **`DenseDictionary` renamed to `IterableDictionary`**, `DenseHashSet` to `IterableHashSet`, `NativeDenseDictionary` to `NativeIterableDictionary`. Migration: project-wide text rename.
+- **`FastList<T>` / `ReadOnlyFastList<T>` / `LocalReadOnlyFastList<T>` removed.** Use `List<T>` / `ReadOnlyList<T>`.
+- **`HeapAccessor` removed as separate class**, folded into `WorldAccessor`. `world.Heap.AllocShared(...)` becomes `world.AllocShared(...)` directly.
+- **`EntityAccessor` ref struct removed.** Operations moved to extension methods on `EntityHandle`/`EntityIndex` — e.g. `entity.Component<T>(world)`, `entity.SetTag<T>(world)`.
+- **`NativeSharedPtr<T>` rearchitected.** Struct shrinks from 12B to 4B (chunked directory replaces hash-map resolver, enabling concurrent Burst-visible allocation). API: `DisposeHandle` → `DecrementRef`, `ptr.BlobId` → `ptr.GetBlobId(world)`.
+- **`[ExecutesAfter]` / `[ExecutesBefore]` renamed to `[ExecuteAfter]` / `[ExecuteBefore]`.**
+- **`[Phase(...)]` renamed to `[ExecuteIn(...)]`.**
+- **`SetDef` renamed to `EntitySet`** (internal storage to `EntitySetStorage`).
+- **Accessor creation API.** `World.CreateAccessor(string)` removed. Use `World.CreateAccessor(AccessorRole, string)`.
+- **`[VariableUpdateOnly]` enforced symmetrically.** Writes blocked from non-`Fixed` phases; `[Constant]` writes blocked outside fixed-update. Support on entity sets removed (use templates).
+- **`[FixedUpdateOnly]` attribute removed.** Fixed-update systems already have full write permission.
+- **Aspect interfaces detected via `IAspect` marker** instead of `[AspectInterface]` attribute.
+- **`ITemplate` field declarations must omit access modifiers** (TRECS034 reworked). Generator suppresses CS0169/CS0414/CS0649/IDE0051/IDE0052.
+- **`IHasTags<...>` renamed to `ITagged<...>`.**
+- **`IHasPartition<...>` replaced by `IPartitionedBy<...>`** with dimension-based semantics. Each declaration is one dimension; multiple declarations cross-product automatically. New arity-1 form `IPartitionedBy<T>` for presence/absence.
+- **`MoveTo` removed; `SetTag<T>` / `UnsetTag<T>` are the only structural tag-change verbs.** Multiple calls on the same entity in one submission coalesce; same-dim conflicts throw.
+- **`[ForEachEntity(..., Without = typeof(T))]`** queries the absent partition of a presence/absence dimension.
+- **Native collection cleanup.** Sequence-shape collections standardize on signed-`int` `Length`. `IsEmpty()` → `IsEmpty` property. `NativeBuffer` collapses read/write pointer accessors into `GetRawPointer`.
+- **`FixedArray2/16/128<T>` indexer is read-only.** Writes go through `arr.Mut(i) = value`.
+- **`BlobPtr<T>` / `NativeBlobPtr<T>` moved to `Trecs.Internal`.** Use `SharedPtr<T>` / `NativeSharedPtr<T>` via `WorldAccessor`.
+- **Heap auto-ID allocation removed.** Variable-update systems can no longer allocate persistent blobs.
+- **`SerializationFlags` is now bit-flags** (`long` bitmask, values are powers of two).
+- **Fast-forward API targets a frame**, not a time.
+- **`SystemRunner.StepFrame` renamed `StepFixedFrame`.**
+- **`ISystem.OnReady` runs in execute order** (Input → Fixed → EarlyPresentation → Presentation → LatePresentation), not registration order.
+- **`ISystem.OnReady` runs after the global entity is submitted.** `OnAdded` subscriptions from `OnReady` won't fire for global-entity creation.
+- **`SvProfiling` renamed to `TrecsProfiling`.**
+- **`WriteBinary` / `SerializableByteArray` replaced by `WriteBytes(byte[])` / `ReadBytes`.**
+- **`IComponentAccessRecorder` renamed to `IAccessRecorder`.**
+- **`EntityHandle.UniqueId` renamed to `Id`.**
+- **`MissingInputBehavior` values shortened:** `ResetToDefault` → `Reset`, `RetainCurrent` → `Retain`.
+- **"Bookmark" terminology replaced with "Snapshot"** throughout recording system.
+- **Frame-event names made symmetric.** `OnSubmission` → `OnSubmissionCompleted`, `OnPostApplyInputs` → `OnInputsApplied`. New `OnVariableUpdateCompleted` event.
+- **`QueryBuilder` method renames:** `Single` → `SingleHandle`, `EntityHandles` → `Handles`, `EntityIndices` → `Indices`.
+- **`RemoveAllEntitiesOnDispose` setting removed** — entities are always removed on dispose.
+- **`[SingleEntity]` is per-parameter / per-field.** The previous method-level form no longer compiles.
+- **`PtrHandle` is now a `readonly struct`.**
+- **`TrecsAutoRecorderSettings` reshaped** around the new bundle model. Previous "snapshot interval / overflow action" replaced with two-tier "persistent anchors + transient scrub cache".
+- **Public serializer types are now `sealed`.**
+- **`NativeArraySerializer<T>` / `NativeListSerializer<T>`** accept an `Allocator` constructor parameter (defaulting to `Persistent`).
+- **`IEnumerable` removed from Trecs collection types** to prevent accidental boxing allocations.
+- **`10_Pointers` sample renamed to `10_DynamicCollections`.**
+- **`13_SaveGame` sample removed.**
 
 ### Deprecated
 
-- `SerializationBuffer.GetMemoryStreamHash()` — use `ComputeChecksum()` (same hash, returned as `uint` instead of sign-cast `int`).
+- `SerializationBuffer.GetMemoryStreamHash()` — use `ComputeChecksum()`.
 
 ### Changed
 
-- **Package layout.** `com.trecs.tools` is removed; its contents moved into `com.trecs.core/Editor` (hierarchy window, shared editor helpers) and `com.trecs.serialization` (record / playback editor windows, runtime recorders). Migration: drop the `com.trecs.tools` entry from your `Packages/manifest.json` — the same types are available through `com.trecs.core` and `com.trecs.serialization`.
-- **`com.trecs.serialization`** now owns runtime recorders, the snapshot serializer, and the player / saves editor windows alongside the existing serialization core.
-- **`TrecsProfiling` markers gated on `ENABLE_PROFILER`.** Profiler markers compile out of release builds (no `Profiler.BeginSample` overhead) but stay visible whenever Unity's Profiler module is active. Trecs systems show up in Unity Profiler in development builds with no further setup.
-- **`MaxCollectionLength` concept removed from serialization.** Collection serializers no longer carry per-collection length caps; the framework relies on the wire format for bounds. Migration: drop any `MaxCollectionLength`-related arguments from custom serializer registrations.
-- **Source-gen polish.** The `[ForEachEntity]` (component and aspect modes) and `[RunOnce]` source-gen pipelines correctly handle nested-class scope; `FromWorld` tag parsing is consolidated and dead code paths removed; the generator reads generic-attribute `TypeArguments` so the new positional-tag form works everywhere; the `[SingleEntity]` emit path for plain `Execute` and `[ForEachEntity]` is unified; aspect parallel-for restrictions warn rather than silently mis-emit.
-- **`TrecsSerialization{Reader,Writer}Adapter`** are now public, so external tooling can drive the queue serializer directly.
-- **Schema cache** (used by the hierarchy window) persists per-accessor access data, accessor execution order, and structural ops across play sessions; output is deterministic JSON and merges cleanly across runs.
-- **System-effectively-enabled** display: hierarchy rows are grayed when a system is effectively disabled by any channel or pause.
-- **Submission pipeline** flushes Set job writes via a new `EntitySubmitter.FlushAllSetJobWrites` passthrough; structural-change observers in cascades have pinned ordering invariants.
+- **`TrecsProfiling` markers gated on `ENABLE_PROFILER`.** Compile out of release builds.
+- **`MaxCollectionLength` concept removed from serialization.** Framework relies on wire format for bounds.
+- **Source-gen polish.** Nested-class scope support, consolidated tag parsing, unified `[SingleEntity]` emit path, value-equatable pipeline models for effective incremental cache, `[GeneratedCode]` attribute stamped on all generated types.
+- **`TrecsSerialization{Reader,Writer}Adapter`** are now public.
+- **Schema cache** persists per-accessor access data and execution order across play sessions.
+- **System-effectively-enabled** display: hierarchy rows grayed when disabled.
+- **Submission pipeline** optimized with Burst-jobified parallel fill, per-group staging bags, native component layout metadata.
+- **NativeHeap serialization** optimized with struct blits and direct chunk walk.
+- **`BinarySerializationReader`** refactored to operate on `ReadOnlyMemory<byte>` instead of `MemoryStream`.
+- **`EnumSerializer<T>`** optimized: cached switch + `Unsafe.As` instead of `Convert.ToXxx` — no boxing on hot path.
 
 ### Removed
 
-- `com.trecs.tools` package (see Changed for migration).
+- `com.trecs.serialization` package (merged into `com.trecs.core`).
+- `DenseDictionary<TKey,TValue>`, `DenseHashSet<T>`, `NativeDenseDictionary<TKey,TValue>` (replaced by `IterableDictionary` / `IterableHashSet` / `NativeIterableDictionary`).
+- `FastList<T>`, `ReadOnlyFastList<T>`, `LocalReadOnlyFastList<T>`.
+- `HeapAccessor` class (folded into `WorldAccessor`).
+- `EntityAccessor` ref struct.
+- `SimpleResizableBuffer<T>`.
 - `[FixedUpdateOnly]` attribute.
-- `warnOnMissing` parameter on `[Input(...)]` — the DEBUG-only warning misfired during playback (the recording's redundancy elimination prunes inputs whose value matches the mode's fallback, so every pruned frame logged a spurious "no frame data" warning during a Debug-build replay). Migration: drop the second argument from any `[Input(MissingInputBehavior.X, warnOnMissing: true)]` usage; if you want the signal back, an explicit `Assert.That(World.HasInput<T>(handle))` in your input or fixed-update system covers it without the playback false-positive.
 - `[AspectInterface]` attribute and `AspectValidator.ValidateUsagePatterns`.
-- `AccessorRole.Bypass` (renamed to `AccessorRole.Unrestricted` — was briefly named `None` mid-cycle) and `AccessorRole.Input` (input permissions are auto-derived from `[ExecuteIn(Input)]` and not separately selectable).
-- `World.CreateAccessor(string)` overload — use `World.CreateAccessor(AccessorRole, string)` instead. (Previously listed as deprecated; the obsolete shim was not actually retained.)
-- `RecordingHandler` / `PlaybackHandler` / `AutoRecordingSnapshot` / `PlaybackStartParams` / `RecordingMetadata` — replaced by `BundleRecorder` / `BundlePlayer` / `RecordingBundle` / `RecordingBundleSerializer` (see Added).
-- `World.AllocShared` / `World.AllocUnique` — were never wired up to user-facing call sites. Allocations should go through `HeapAccessor` from accessor-bound code.
-- `NativeAllocTracker` — Trecs now relies on Unity's built-in native-leak detection rather than maintaining a parallel tracker.
-- Legacy `Group.cs` runtime type — `GroupIndex` is the canonical handle.
-- `FixedTypeCommon.cs` (consolidated into the existing fixed-type helpers).
-- Per-component R/W access badges from the entity inspector (the data is still available in the access tracker; the badge was visually noisy).
-- Source-gen dead diagnostic descriptors. Retired (was emitted, now removed): `TRECS006`, `010`, `011`, `014`, `017`, `018`, `019`, `021`. Reserved-but-never-shipped gaps: `TRECS041`, `042`, `045`, `046`, `052`, `060`, `072`, `080`, `092`, `095`. Diagnostic IDs are intentionally non-contiguous.
-- `SerializableByteArraySerializer` (replaced by direct `WriteBytes` / `ReadBytes`).
-- Stale "JSON serialization" references throughout `ISerializationReader` / `ISerializationWriter` / `DenseDictionarySerializer` doc-comments. Only the binary path is supported.
+- `warnOnMissing` parameter on `[Input(...)]`.
+- `RecordingHandler` / `PlaybackHandler` / `AutoRecordingSnapshot` / `PlaybackStartParams` / `RecordingMetadata` (replaced by `BundleRecorder` / `BundlePlayer` / `RecordingBundle`).
+- `World.AllocShared` / `World.AllocUnique` (use `WorldAccessor` allocation methods).
+- `NativeAllocTracker` (relies on Unity's built-in native-leak detection).
+- Legacy `Group.cs` runtime type (`GroupIndex` is the canonical handle).
+- `FixedTypeCommon.cs`.
+- `SerializableByteArraySerializer` (replaced by `WriteBytes` / `ReadBytes`).
+- `IStableHashProvider` (collapsed into `GetHashCode`).
+- `SharedNativeInt`.
+- Per-component R/W access badges from the entity inspector.
+- Stale diagnostic descriptors: TRECS006, 010, 011, 014, 017, 018, 019, 021, plus reserved-but-never-shipped gaps.
+- `AccessorRole.Bypass` / `AccessorRole.Input` (use `Unrestricted`; input permissions auto-derived from `[ExecuteIn(Input)]`).
+- `World.CreateAccessor(string)` overload.
+- `RemoveAllEntitiesOnDispose` setting.
 
 ### Fixed
 
-- `[SingleEntity]` correctness gaps surfaced in review (parameter-resolution ordering, `[WrapAsJob]` static-method param wiring, and hand-written job-struct field handling).
-- Hierarchy tree: stop applying Unity's name-nicification to template display names; route generic-struct component fields through the read-only fallback so the inspector renders them.
-- Trecs Player: refuse `Step` past the recorded tail with status feedback; clear pending step on `FixedIsPaused` unpause; fix Loop toggle bug; demoted past-target fast-forward log to Trace. (These behaviors are preserved in the rewritten `TrecsAutoRecorder` / `TrecsPlayerWindow`.)
-- Serialization: auto-divert abstract `T` in `Read<T>` / `Write<T>` / `WriteDelta<T>` to the `WriteObject` / `ReadObject` path so writer and reader formats stay paired; tighten diagnostics around the abstract-T divert; drop the speculative `IEquatable<T>` assert in `WriteDelta<T>`.
-- Hierarchy window: persist tree-row selection across world transitions, persist expand/collapse state across play-mode entry and domain reloads, sort accessor rows by the runner's actual execution order, disambiguate duplicate-name template rows, clear `TreeView` selection on id-space resets, validate selection-proxy payload before short-circuiting Unity's stop-play restore.
-- `Trecs.Serialization.SourceGen`: ship `SRZ008` / `SRZ009` / `SRZ010` rules in `AnalyzerReleases.Shipped.md` (the rules existed in code but the release-tracker was stale, tripping `RS2008`). Drop trailing periods on three single-sentence diagnostic messages so the build is `RS1032`-warning-free.
-- `BinarySerializationReader` / `BinarySerializationWriter`: `ResetForErrorRecovery` now clears `_version` / `_includesTypeChecks` (reader) and `_version` / `_includeTypeChecks` (writer) — symmetric with `Start`.
-- `BinarySerializationWriter.NumBytesWritten` ceiling-divides the bit count (was integer-dividing, under-reporting by up to 7 bits).
-- `EnumSerializer<T>`: replace `Convert.ToXxx`-based dispatch with a cached `UnderlyingKind` switch + `Unsafe.As<T, primitive>` — no boxing on the hot path. Assert at static init that the enum has no aliased values (delta encoding silently mis-mapped them otherwise) and surface the 256-value delta-encoding cap up front via a `values.Length` check.
-- `MemoryBlitter`: assert little-endian platform at static init. Saved files are byte-identical via `Buffer.MemoryCopy`, so a BE platform would silently produce incompatible payloads.
+- `[SingleEntity]` correctness gaps (parameter-resolution ordering, `[WrapAsJob]` param wiring, job-struct field handling).
+- Hierarchy tree: template display name nicification, generic-struct component field rendering.
+- Trecs Player: refuse `Step` past recorded tail, clear pending step on unpause, fix Loop toggle.
+- Serialization: abstract `T` in `Read<T>` / `Write<T>` / `WriteDelta<T>` auto-diverts correctly.
+- Hierarchy window: persist selection and expand/collapse across world transitions and domain reloads, sort by execution order, disambiguate duplicate-name template rows.
+- `BinarySerializationReader` / `BinarySerializationWriter`: `ResetForErrorRecovery` clears version/typeChecks state.
+- `BinarySerializationWriter.NumBytesWritten` ceiling-divides bit count (was under-reporting by up to 7 bits).
+- `EnumSerializer<T>`: assert no aliased values and 256-value delta-encoding cap at static init.
+- `MemoryBlitter`: assert little-endian platform at static init.
+- Desync caused by stale `SideTableLength` after deserialize.
+- Chunk memory leak in `NativeSharedHeap` dispose path.
+- `NativeIterableDictionary` Set corrupting state via incorrect `AddValue` call.
+- Serialization checksum consistency (deleted `RecordingChecksumCalculator` which used different settings than production path).
 
 ## [0.1.0] - 2026-04-18
 
