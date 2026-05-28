@@ -19,8 +19,6 @@ For collections with known bounds, [`FixedList<N>`](../advanced/fixed-collection
 
 For dynamically-sized data, Trecs provides its own collection types: `TrecsList<T>`, `TrecsArray<T>`, and `TrecsDictionary<TKey, TValue>`. Their backing storage lives on a dedicated heap that Trecs walks during snapshot / record / playback, so the contents round-trip automatically alongside the component bytes — no `NativeUniquePtr` wrapper or custom serializer needed.
 
-If you specifically need a Unity `NativeList<T>` (e.g. to share with non-Trecs code), wrap it in a `NativeUniquePtr` — see [Storing native collections](pointers.md#storing-native-collections).
-
 ## Common patterns
 
 All three collection types share these traits:
@@ -150,6 +148,30 @@ Other write operations: `TryAdd`, `Set` (update existing, throws if missing), `G
 
 Inside a Burst job, `NativeTrecsDictionaryWrite` provides the same API but does **not** auto-grow — pre-size with `dict.EnsureCapacity(World, minCapacity)` before scheduling.
 
+### Add vs TryAdd vs Set vs indexer
+
+```csharp
+var write = dict.Write(World);
+
+write.Add(42, 100);                   // insert only; debug-assert on duplicate
+bool added = write.TryAdd(42, 200);   // insert only; silent no-op on duplicate
+write.Set(42, 300);                   // update only; throws if key missing
+write[99] = 500;                      // add-or-update (most permissive)
+```
+
+### Index-based access
+
+For advanced patterns — e.g., correlating a dictionary entry with data in a parallel array — use the dense-array index API:
+
+```csharp
+var write = dict.Write(World);
+if (write.TryGetIndex(key, out int idx))
+{
+    ref var val = ref write.GetValueAtIndex(idx);
+    val.Score += 10;
+}
+```
+
 ## Disposing
 
 All three types must be manually disposed. Dispose in an `OnRemoved` observer:
@@ -173,5 +195,4 @@ Forgetting to dispose leaks the backing storage; Trecs reports leaks at world sh
 | `TrecsArray<T>` | Fixed count known at allocation, too large to inline. |
 | `TrecsList<T>` | Variable per-entity count. |
 | `TrecsDictionary<TKey, TValue>` | Key-value lookups. |
-| `NativeUniquePtr<NativeList<T>>` | You need Unity's `NativeList<T>` API specifically, or want to share the allocation with non-Trecs code. Requires an explicit dispose for the inner collection — see [Storing native collections](pointers.md#storing-native-collections). |
 | `UniquePtr<List<T>>` | Managed element types (classes, strings). Main-thread only. Needs a registered `ISerializer<T>` — see [Serialization](serialization.md). |
