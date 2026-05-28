@@ -93,7 +93,7 @@ worldB.AddSystems(new ISystem[]
 
 Each world gets its own `SpawnSystem`/`LifetimeSystem`/`PrimitivePresenter` instance — system instances are not shared across worlds. `SetDebugName` labels each world for editor tooling (e.g. the World dropdown in `TrecsPlayerWindow`).
 
-Both worlds register the *same template type* (`CritterEntity`) — allowed and common. Templates describe a shape; each world independently allocates per-group component arrays for that shape. An entity created in World A is invisible to queries in World B.
+Both worlds register the *same template type* (`CritterEntity`) — allowed and common. Templates describe a shape; each world independently allocates its own component storage for that shape. An entity created in World A is invisible to queries in World B.
 
 ## Lifecycle wiring
 

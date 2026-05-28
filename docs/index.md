@@ -92,7 +92,7 @@ Inside a system, `World` is a source-generated property that gives access to the
 
     A progressive tutorial series plus full sample games.
 
--   :material-help-circle-outline:{ .lg .middle } **[FAQ](faq.md)**
+-   :material-help-circle-outline:{ .lg .middle } **[FAQ](guides/faq.md)**
 
     ---
 
