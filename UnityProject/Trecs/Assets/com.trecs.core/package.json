@@ -28,7 +28,7 @@
   "samples": [
     {
       "displayName": "Tutorials",
-      "description": "Numbered tutorials covering core ECS features (entities, components, jobs, partitions, sets, interpolation, pointers).",
+      "description": "Tutorials covering various ECS features (entities, components, jobs, partitions, sets, interpolation, pointers).",
       "path": "Samples~/Tutorials"
     }
   ]
