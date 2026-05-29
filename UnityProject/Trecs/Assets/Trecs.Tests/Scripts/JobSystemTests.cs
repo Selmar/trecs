@@ -131,6 +131,30 @@ namespace Trecs.Tests
     }
 
     /// <summary>
+    /// Regression guard for issue #10 (<c>Tag&lt;T&gt;.Value cannot be burst compiled</c>):
+    /// reads <see cref="Tag{T}.Value"/> from inside the Burst body and writes its
+    /// raw int into <see cref="TestInt"/>. When <c>Tag&lt;T&gt;</c> cached its value
+    /// in a mutable static field, Burst rejected the load with BC1040; routing
+    /// through <see cref="TypeId{T}.Value"/> (a readonly Burst-constant) makes the
+    /// load legal. Under AOT (standalone-osx) a regression here is a hard build
+    /// failure, not a managed fallback.
+    /// </summary>
+    partial class WrapAsJobReadsTagValueSystem : ISystem
+    {
+        [ForEachEntity(Tag = typeof(QId1))]
+        [WrapAsJob]
+        static void Move(ref TestInt value)
+        {
+            value.Value = Tag<QId1>.Value.Value;
+        }
+
+        public void Execute()
+        {
+            Move();
+        }
+    }
+
+    /// <summary>
     /// Covers the invariants that make the Trecs job scheduling layer safe to
     /// use: functional parity between main-thread and <c>[WrapAsJob]</c>
     /// variants, sequential write dependency tracking, and the read/read
@@ -276,6 +300,36 @@ namespace Trecs.Tests
                     $"Entity {i} (handle.Id={handles[i].Id}): job wrote {actual}. "
                         + "If actual is 0 the EntityHandles buffer wasn't populated; "
                         + "if it equals another entity's Id the per-iteration index is wrong."
+                );
+            }
+        }
+
+        [Test]
+        public void WrapAsJob_ReadingTagValue_BurstCompilesAndMatches()
+        {
+            using var env = EcsTestHelper.CreateEnvironment(
+                b => b.AddSystem(new WrapAsJobReadsTagValueSystem()),
+                QTestEntityA.Template
+            );
+
+            SpawnEntities(env);
+
+            // The Burst job loads Tag<QId1>.Value from inside the compiled body.
+            // Pre-fix this would fail Burst compilation (BC1040); the assertion
+            // below additionally proves the value the job read matches the
+            // managed-side Tag<QId1>.Value (i.e. the cross-domain value agrees).
+            env.StepFixedFrames(1);
+
+            int expected = Tag<QId1>.Value.Value;
+            var values = CollectTestIntValues(env);
+            NAssert.AreEqual(EntityCount, values.Length);
+            for (int i = 0; i < values.Length; i++)
+            {
+                NAssert.AreEqual(
+                    expected,
+                    values[i],
+                    $"Entity {i}: Burst job read Tag<QId1>.Value as {values[i]} "
+                        + $"but managed Tag<QId1>.Value is {expected}."
                 );
             }
         }

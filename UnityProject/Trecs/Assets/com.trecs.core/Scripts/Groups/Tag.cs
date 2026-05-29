@@ -1,7 +1,6 @@
 using System;
 using System.Runtime.CompilerServices;
 using Trecs.Internal;
-using Unity.Burst;
 
 namespace Trecs
 {
@@ -74,50 +73,26 @@ namespace Trecs
     }
 
     /// <summary>
-    /// Zero-allocation cache for the <see cref="Tag"/> instance corresponding to an
-    /// <see cref="ITag"/> struct type. Access the cached value via <c>Tag&lt;MyTag&gt;.Value</c>.
-    /// Routes through <see cref="TypeId{T}"/>, which carries the warmup contract and
-    /// also registers <c>typeof(T)</c> with <see cref="TypeIdReverseLookup"/> for
-    /// debug name recovery in <see cref="Tag.ToString"/>.
+    /// Zero-allocation accessor for the <see cref="Tag"/> corresponding to an
+    /// <see cref="ITag"/> struct type. Access the value via <c>Tag&lt;MyTag&gt;.Value</c>.
+    /// Equivalent to <c>new Tag(TypeId&lt;T&gt;.Value)</c> — a tag's underlying value IS the
+    /// <see cref="TypeId"/> of <typeparamref name="T"/>, so this is a thin wrapper that
+    /// defers Burst-safety and the warmup contract to <see cref="TypeId{T}"/> (which also
+    /// registers <c>typeof(T)</c> with <see cref="TypeIdReverseLookup"/> for debug name
+    /// recovery in <see cref="Tag.ToString"/>). Routing through <see cref="TypeId{T}.Value"/>
+    /// — a <c>readonly</c> Burst-constant in default mode, a <c>SharedStatic</c> in strict
+    /// mode — is what makes <see cref="Value"/> safe to read from Burst-compiled code; a
+    /// cached mutable static field here would trip Burst error BC1040.
     /// </summary>
     public static class Tag<T>
         where T : struct, ITag
     {
-        static Tag _value;
-
-        /// <summary>
-        /// The <see cref="Tag"/> for this <see cref="ITag"/> type. Asserts that the
-        /// managed-side static ctor has run — Burst code reading this field before any
-        /// managed warmup (via <see cref="Warmup"/> or any other access) sees the default
-        /// zero, which would silently corrupt tag-set membership. Force warmup at startup
-        /// by referencing <c>Tag&lt;T&gt;.Value</c>, <c>TagSet&lt;T...&gt;</c>, or
-        /// <c>IEntitySet&lt;T...&gt;</c> from managed code.
-        /// </summary>
         public static Tag Value
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get
-            {
-                var v = _value;
-                TrecsAssert.That(
-                    v.Value != 0,
-                    "Tag<T>.Value accessed from Burst before the managed-side static ctor ran. Force warmup by referencing Tag<T>.Value, TagSet<T...>, or IEntitySet<T...> from managed code at startup."
-                );
-                return v;
-            }
+            get => new(TypeId<T>.Value);
         }
 
-        static Tag()
-        {
-            Init();
-        }
-
-        public static void Warmup() { }
-
-        [BurstDiscard]
-        static void Init()
-        {
-            _value = new Tag(TypeId<T>.Value);
-        }
+        public static void Warmup() => _ = TypeId<T>.Value;
     }
 }
