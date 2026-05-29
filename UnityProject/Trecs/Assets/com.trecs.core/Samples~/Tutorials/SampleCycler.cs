@@ -1,6 +1,4 @@
-using System;
 using System.Linq;
-using UnityEditor;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -13,8 +11,10 @@ namespace Trecs.Samples
     /// scene loads via DontDestroyOnLoad with singleton protection.
     ///
     /// Setup: Assign the sample scenes to the SceneAssets list in the inspector.
-    /// The names are serialized for runtime use; the scenes must still be added
-    /// to Build Settings for the player to load them.
+    /// In the editor the scenes are loaded directly by asset path, so they do
+    /// NOT need to be added to Build Settings. (For a standalone player build the
+    /// scenes must still be added to Build Settings, since asset paths aren't
+    /// available there; the cycler falls back to loading by name.)
     ///
     /// Controls:
     ///   Right Arrow / N  — Next sample
@@ -26,11 +26,18 @@ namespace Trecs.Samples
     {
 #if UNITY_EDITOR
         [SerializeField]
-        SceneAsset[] _sceneAssets;
+        UnityEditor.SceneAsset[] _sceneAssets;
 #endif
 
         [SerializeField, HideInInspector]
         string[] _sceneNames;
+
+#if UNITY_EDITOR
+        // Asset paths captured alongside the names so the editor can load scenes
+        // directly, without requiring them to be registered in Build Settings.
+        [SerializeField, HideInInspector]
+        string[] _scenePaths;
+#endif
 
         static SampleCycler _instance;
 
@@ -56,9 +63,11 @@ namespace Trecs.Samples
 #if UNITY_EDITOR
         void OnValidate()
         {
-            _sceneNames =
-                _sceneAssets?.Where(s => s != null).Select(s => s.name).ToArray()
-                ?? Array.Empty<string>();
+            var assets =
+                _sceneAssets?.Where(s => s != null).ToArray()
+                ?? System.Array.Empty<UnityEditor.SceneAsset>();
+            _sceneNames = assets.Select(s => s.name).ToArray();
+            _scenePaths = assets.Select(UnityEditor.AssetDatabase.GetAssetPath).ToArray();
         }
 #endif
 
@@ -116,6 +125,23 @@ namespace Trecs.Samples
             }
 
             _currentIndex = index;
+
+#if UNITY_EDITOR
+            // Load by asset path so the scene need not be in Build Settings.
+            if (
+                _scenePaths != null
+                && index < _scenePaths.Length
+                && !string.IsNullOrEmpty(_scenePaths[index])
+            )
+            {
+                UnityEditor.SceneManagement.EditorSceneManager.LoadSceneInPlayMode(
+                    _scenePaths[index],
+                    new LoadSceneParameters(LoadSceneMode.Single)
+                );
+                return;
+            }
+#endif
+
             SceneManager.LoadScene(_sceneNames[index]);
         }
 
