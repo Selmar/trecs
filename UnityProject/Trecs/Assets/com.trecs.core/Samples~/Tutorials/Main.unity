@@ -164,6 +164,42 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f9e1eb770d67d4293950b57134055c83, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Samples::Trecs.Samples.SampleCycler
+  _sceneAssets:
+  - {fileID: 102900000, guid: 97e4cc1c0d80c4f92aad0f0ea2f49e0d, type: 3}
+  - {fileID: 102900000, guid: f4c1fa02136b9411a914835211d564e0, type: 3}
+  - {fileID: 102900000, guid: e18e8177978e14701b186ea0f1a903ba, type: 3}
+  - {fileID: 102900000, guid: 4b38ddb8e5e444a0d87ba9ff1ce76dc4, type: 3}
+  - {fileID: 102900000, guid: a7765ab31b05a421487f45b2aa3a382b, type: 3}
+  - {fileID: 102900000, guid: a584101a3b4eb46aaae34269c87fdfa2, type: 3}
+  - {fileID: 102900000, guid: aba3e00a7f5234fa6a8335ee4eb0408a, type: 3}
+  - {fileID: 102900000, guid: be1c0a33d6869403ea6eaa2b727ff219, type: 3}
+  - {fileID: 102900000, guid: d616b3352ebc045879133f1266f8d28d, type: 3}
+  - {fileID: 102900000, guid: a614f2e093d6747edb3e97ada24037aa, type: 3}
+  - {fileID: 102900000, guid: 325eb2f5c41c949db8ff03a4d6307174, type: 3}
+  - {fileID: 102900000, guid: 1f78097489b0d47a18e7110cf94c1e32, type: 3}
+  - {fileID: 102900000, guid: 357d8a818fc54fd785c1b21c1913b839, type: 3}
+  - {fileID: 102900000, guid: a64fac2817adb4eb088372efed7c3e4c, type: 3}
+  - {fileID: 102900000, guid: 41ca5e85fa5eb40978d96f529fa81986, type: 3}
+  - {fileID: 102900000, guid: 2dac7cdfb00842abb39db71fc493766a, type: 3}
+  - {fileID: 102900000, guid: a81e438d1a56f4308bf7f2e9f89f4160, type: 3}
+  _sceneNames:
+  - HelloEntity
+  - SpawnAndDestroy
+  - Aspects
+  - PredatorPrey
+  - JobSystem
+  - Partitions
+  - FeedingFrenzy
+  - Sets
+  - Interpolation
+  - DynamicCollections
+  - Snake
+  - FeedingFrenzyBenchmark
+  - AspectInterfaces
+  - BlobSeedPattern
+  - ReactiveEvents
+  - MultipleWorlds
+  - HeightmapBlobs
 --- !u!1 &1689639932
 GameObject:
   m_ObjectHideFlags: 0
