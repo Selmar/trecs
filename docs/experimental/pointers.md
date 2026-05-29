@@ -3,9 +3,7 @@
 !!! warning "Experimental"
     The pointer types on this page are experimental — including `SharedPtr`, `UniquePtr`, their `Native*` and `Input*` siblings, and the surrounding heap allocation API. Shapes and names may change in future 0.x releases.
 
-Components are unmanaged structs, so they can't hold classes, arrays, or other managed references directly. The **heap** is the storage Trecs provides for data that needs to outlive a single component value or be reached by reference — managed objects, growable native collections, large shared blobs. **Pointers** are the small handle structs you put on a component to refer to a heap allocation.
-
-This page covers the full pointer surface — both the persistent pointers (entity-owned, alive until you dispose them) and the input pointers (frame-scoped, used inside `[Input]` components). For sharing patterns and seeders, see [Shared Heap Data](shared-heap-data.md).
+Components are unmanaged structs, so they can't hold classes, arrays, or other managed references directly. The **heap** stores data that needs to be reached by reference — managed objects, native collections, shared blobs. **Pointers** are small handle structs you put on a component to refer to a heap allocation. For sharing patterns and seeders, see [Shared Heap Data](shared-heap-data.md).
 
 ## Persistent pointer types
 
@@ -24,17 +22,25 @@ UniquePtr<MyData> unique = UniquePtr.Alloc(World, new MyData());
 SharedPtr<MyData> shared = SharedPtr.Alloc(World, MyBlobs.Foo, new MyData());
 
 // Unmanaged payloads (Burst-safe)
-NativeUniquePtr<NativeData> nativeUnique = NativeUniquePtr.Alloc<NativeData>(World);
+NativeUniquePtr<NativeData> nativeUnique = NativeUniquePtr.Alloc(World, new NativeData());
+NativeUniquePtr<NativeData> nativeUnique2 = NativeUniquePtr.Alloc<NativeData>(World); // uninitialized
 NativeSharedPtr<NativeData> nativeShared = NativeSharedPtr.Alloc(World, MyBlobs.Bar, new NativeData());
 ```
 
-`SharedPtr` / `NativeSharedPtr` require a caller-supplied `BlobId` — shared blobs are addressed by stable ID so multiple call sites can resolve to the same allocation and so snapshots can round-trip the reference. See [Shared Heap Data](shared-heap-data.md) for the seeder / lookup patterns.
+`SharedPtr` / `NativeSharedPtr` require a caller-supplied `BlobId` so multiple call sites can resolve to the same allocation and snapshots can round-trip the reference. See [Shared Heap Data](shared-heap-data.md) for seeder and lookup patterns.
 
-`UniquePtr` / `NativeUniquePtr` are single-owner so no ID is needed — the handle itself is the only reference.
+`UniquePtr` / `NativeUniquePtr` are single-owner — no ID needed.
+
+For shared pointers, `GetOrAlloc` is a convenience that allocates on the first call and returns the existing blob on subsequent calls:
+
+```csharp
+SharedPtr<MyData> ptr = SharedPtr.GetOrAlloc(World, MyBlobs.Foo, () => new MyData());
+NativeSharedPtr<NativeData> nPtr = NativeSharedPtr.GetOrAlloc(World, MyBlobs.Bar, () => new NativeData());
+```
 
 ### Reading and writing
 
-Managed pointers expose `Get(...)` directly; native pointers go through typed `Read(...)` / `Write(...)` wrappers so Unity's job-safety system can track conflicts:
+Managed pointers use `Get`; native pointers use `Read` / `Write` wrappers that integrate with Unity's job-safety system:
 
 ```csharp
 // Managed — Get returns the object reference
@@ -42,6 +48,7 @@ MyData data = unique.Get(World);
 MyData shared_data = shared.Get(World);
 
 if (shared.TryGet(World, out MyData maybe)) { /* … */ }
+bool alive = shared.CanGet(World); // check without resolving
 
 // Native — Read / Write hand back a safety-checked wrapper exposing .Value
 ref readonly NativeData rd = ref nativeUnique.Read(World).Value;
@@ -52,17 +59,22 @@ wd.HitCount++;
 ref readonly NativeData sd = ref nativeShared.Read(World).Value;
 ```
 
-`NativeSharedRead<T>.Value` returns `ref readonly T`. The canonical local-read pattern is:
+`NativeSharedRead<T>.Value` returns `ref readonly T`:
 
 ```csharp
 ref readonly var collider = ref colliderPtr.Read(World).Value;
 DoSomething(collider.MassProperties);
 
-// Or, when the getter is used exactly once, fold it inline:
+// When used once, fold inline:
 DoSomething(colliderPtr.Read(World).Value.MassProperties);
 ```
 
-To swap out the payload of a managed `UniquePtr` wholesale (replace the referenced object), call `Set(World, newValue)`.
+To replace the referenced object of a managed `UniquePtr`, call `Set`. This is an extension method taking `this ref`, so the caller must have a writable reference to the pointer struct:
+
+```csharp
+ref var comp = ref entity.Component<CMyComp>(World).Write;
+comp.Ptr.Set(World, newValue);
+```
 
 ### Storing pointers in components
 
@@ -85,38 +97,33 @@ Mesh mesh = meshRef.Mesh.Get(World);
 
 ### Storing native collections
 
-Native collection types (`NativeList<T>`, `NativeHashMap<K,V>`, etc.) can't sit directly in a component — see [Dynamic Collections](dynamic-collections.md) for why, and for the preferred alternatives (`FixedList<N>`, `TrecsList<T>`).
+Native collection types (`NativeList<T>`, `NativeHashMap<K,V>`, etc.) can't sit directly in a component — see [Dynamic Collections](dynamic-collections.md) for the preferred alternatives (`FixedList<N>`, `TrecsList<T>`).
 
-When you specifically need a Unity `NativeList<T>` (e.g. to share with non-Trecs code), wrap it in a `NativeUniquePtr<NativeList<T>>`.
+When you specifically need a Unity `NativeList<T>`, wrap it in a `NativeUniquePtr<NativeList<T>>`.
 
 ### Shared pointers and reference counting
 
-`SharedPtr<T>` and `NativeSharedPtr<T>` use reference counting. `Clone` bumps the refcount and returns a handle to the same blob:
+`SharedPtr<T>` and `NativeSharedPtr<T>` use reference counting. `Clone` bumps the refcount and returns a handle to the same blob. Each clone must be independently disposed:
 
 ```csharp
 SharedPtr<MyData> first  = SharedPtr.Alloc(World, MyBlobs.Foo, new MyData());
 SharedPtr<MyData> second = first.Clone(World);  // same blob; refcount = 2
+second.Dispose(World); // refcount = 1
+first.Dispose(World);  // refcount = 0, blob freed
 ```
 
-The two pointer families differ in what `Clone` returns:
-
-- **`SharedPtr<T>`**: Clone mints a **new handle** — `first == second` is false even though they reference the same blob. Each handle is independently disposable.
-- **`NativeSharedPtr<T>`**: Clone returns the **same handle value** — `first == second` is true. The underlying refcount is bumped, so each clone still needs its own `Dispose`.
-
-Calling `SharedPtr.Acquire(World, sameId)` is equivalent to `Clone` addressed by ID instead of by reference: it finds the existing blob, bumps the refcount, and returns a fresh handle. See [Shared Heap Data — Pattern B](shared-heap-data.md#pattern-b-look-up-by-stable-blobid).
+`SharedPtr.Acquire(World, blobId)` is `Clone` addressed by ID instead of by reference — it finds the existing blob, bumps the refcount, and returns a handle. See [Shared Heap Data — Pattern B](shared-heap-data.md#pattern-b-look-up-by-stable-blobid).
 
 ### Disposing
 
-Pointers must be manually disposed when no longer needed:
+Pointers must be manually disposed — Trecs does **not** auto-dispose:
 
 ```csharp
 unique.Dispose(World);
 shared.Dispose(World);   // decrements ref count; frees when it hits zero
 ```
 
-#### Cleanup is manual for entity-owned pointers
-
-Pointers stored on components must be disposed when the entity is removed — Trecs does **not** auto-dispose. The standard pattern is an `OnRemoved` observer with a `[ForEachEntity]` handler that receives the component(s) to dispose:
+For pointers stored on components, use an `OnRemoved` observer to dispose when the entity is removed:
 
 ```csharp
 public partial class TrailCleanup : IDisposable
@@ -152,7 +159,7 @@ See [Sample 10 — Pointers](../samples/10-pointers.md) for a runnable example a
 
 ### Pointers in jobs
 
-Only the **native** variants (`NativeUniquePtr<T>` / `NativeSharedPtr<T>`) work inside Burst jobs. Inside a job, resolve through the matching resolver wired in via the `NativeWorldAccessor`:
+Only the **native** variants (`NativeUniquePtr<T>` / `NativeSharedPtr<T>`) work inside Burst jobs. Resolve through the `NativeWorldAccessor`:
 
 ```csharp
 [ForEachEntity(typeof(MyTag))]
@@ -168,7 +175,7 @@ static void Execute(ref Trail trail, in NativeWorldAccessor world)
 
 ## Input pointer types
 
-Plain `[Input]` components hold fixed-size data. When the value queued onto an `[Input]` field is variable-sized or large enough that copying it into a component is wasteful — a network packet, a serialized command list, a managed object reference — use one of the **input pointer** types instead of a persistent pointer. They share the same `Read` / `Write` shape as their persistent siblings but their backing storage is **bulk-released when the target input frame retires**, so they fit the per-frame nature of [`[Input]` fields](../core/input-system.md).
+When an `[Input]` component needs variable-sized or large data — a network packet, a serialized command list, a managed object — use an **input pointer** instead of a persistent pointer. Input pointers share the same `Read` / `Write` shape but their storage is **bulk-released when the input frame retires**, matching the per-frame nature of [`[Input]` fields](../core/input-system.md).
 
 | Type | Backing storage | When to use |
 |------|-----------------|-------------|
@@ -197,15 +204,15 @@ public partial class IngestPacketsSystem : ISystem
 }
 ```
 
-`Alloc` is the only factory — input-pointer types have **no `Dispose`** because the backing storage is bulk-released when the target input frame retires. Reading is the same shape as the persistent siblings (`ptr.Read(world)` or `ptr.Read(in resolver)` from a job).
+Input pointers have **no `Dispose`** — storage is bulk-released when the input frame retires. Reading works the same as persistent siblings (`ptr.Read(world)` or `ptr.Read(in resolver)` from a job).
 
 ### Source-generator rules
 
-A few rules the source generator enforces at compile time on `[Input]` template fields:
+The source generator enforces these rules at compile time on `[Input]` components:
 
-- **No persistent pointer types** (`NativeUniquePtr`, `NativeSharedPtr`, `SharedPtr`, `UniquePtr`) inside `[Input]` components — TRECS121. Use the `Input{Name}Ptr` variant instead, otherwise allocations from input systems leak when the frame is retired.
-- **No `TrecsList<T>`** inside `[Input]` components — TRECS122. `TrecsList` is backed by the persistent chunk store and has no input-side equivalent today; use a fixed-size buffer for small bounded lists.
-- **`MissingInputBehavior.Retain` is incompatible with any `InputXxxPtr` field** on the same component — TRECS123. Retain would keep the previous frame's handle, which now points at storage that was freed when the previous input frame retired. Use `MissingInputBehavior.Reset` (which zeros the handle each frame an input doesn't arrive) or move the pointed-to data out of the input component.
+- **No persistent pointer types** inside `[Input]` components — TRECS121. Use the `Input*Ptr` variant instead; persistent allocations leak when the frame retires.
+- **No `TrecsList<T>`** inside `[Input]` components — TRECS122. Use a fixed-size buffer instead.
+- **`MissingInputBehavior.Retain` is incompatible with `Input*Ptr` fields** — TRECS123. Retain keeps the previous frame's handle, which points at freed storage. Use `MissingInputBehavior.Reset` instead.
 
 ## See also
 
