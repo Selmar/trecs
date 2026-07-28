@@ -2084,7 +2084,7 @@ namespace Trecs.SourceGen
             {
                 sb.AppendLine($"{ind}{GeneratedCodeAttributes.Line}");
                 sb.AppendLine(
-                    $"{ind}public JobHandle ScheduleParallel(WorldAccessor world{fromWorldParamDecl}, JobHandle extraDeps = default)"
+                    $"{ind}public JobHandle ScheduleParallel(WorldAccessor world{fromWorldParamDecl}, JobHandle extraDeps = default, int innerloopBatchCount = 0)"
                 );
                 sb.AppendLine($"{ind}{{");
                 var builderExpr = new StringBuilder("world.Query()");
@@ -2096,6 +2096,7 @@ namespace Trecs.SourceGen
                 var args = new List<string> { builderExpr.ToString() };
                 args.AddRange(paramFields.Select(p => p.ScheduleParamName));
                 args.Add("extraDeps");
+                args.Add("innerloopBatchCount");
                 sb.AppendLine($"{ind}    return ScheduleParallel({string.Join(", ", args)});");
                 sb.AppendLine($"{ind}}}");
                 sb.AppendLine();
@@ -2123,7 +2124,7 @@ namespace Trecs.SourceGen
         {
             sb.AppendLine($"{ind}{GeneratedCodeAttributes.Line}");
             sb.AppendLine(
-                $"{ind}public JobHandle ScheduleParallel(QueryBuilder builder{fromWorldParamDecl}, JobHandle extraDeps = default)"
+                $"{ind}public JobHandle ScheduleParallel(QueryBuilder builder{fromWorldParamDecl}, JobHandle extraDeps = default, int innerloopBatchCount = 0)"
             );
             sb.AppendLine($"{ind}{{");
             string body = ind + "    ";
@@ -2256,7 +2257,7 @@ namespace Trecs.SourceGen
             sb.AppendLine($"{body}#endif");
 
             sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}job.ScheduleParallel({FromWorldEmitter.GenPrefix}count, JobsUtil.ChooseBatchSize({FromWorldEmitter.GenPrefix}count), {FromWorldEmitter.GenPrefix}deps);"
+                $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}job.ScheduleParallel({FromWorldEmitter.GenPrefix}count, innerloopBatchCount > 0 ? innerloopBatchCount : JobsUtil.ChooseBatchSize({FromWorldEmitter.GenPrefix}count), {FromWorldEmitter.GenPrefix}deps);"
             );
 
             sb.AppendLine($"{body}#if SVKJ_IS_PROFILING");
@@ -2286,7 +2287,7 @@ namespace Trecs.SourceGen
         {
             sb.AppendLine($"{ind}{GeneratedCodeAttributes.Line}");
             sb.AppendLine(
-                $"{ind}public JobHandle ScheduleParallel(SparseQueryBuilder builder{fromWorldParamDecl}, JobHandle extraDeps = default)"
+                $"{ind}public JobHandle ScheduleParallel(SparseQueryBuilder builder{fromWorldParamDecl}, JobHandle extraDeps = default, int innerloopBatchCount = 0)"
             );
             sb.AppendLine($"{ind}{{");
             string body = ind + "    ";
@@ -2406,7 +2407,7 @@ namespace Trecs.SourceGen
                 $"{body}var {FromWorldEmitter.GenPrefix}shim = new {FromWorldEmitter.JobFieldPrefix}SparseShim {{ Inner = {FromWorldEmitter.GenPrefix}job, Indices = {FromWorldEmitter.GenPrefix}indices }};"
             );
             sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}shim.ScheduleParallel({FromWorldEmitter.GenPrefix}count, JobsUtil.ChooseBatchSize({FromWorldEmitter.GenPrefix}count), {FromWorldEmitter.GenPrefix}deps);"
+                $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}shim.ScheduleParallel({FromWorldEmitter.GenPrefix}count, innerloopBatchCount > 0 ? innerloopBatchCount : JobsUtil.ChooseBatchSize({FromWorldEmitter.GenPrefix}count), {FromWorldEmitter.GenPrefix}deps);"
             );
 
             sb.AppendLine($"{body}#if SVKJ_IS_PROFILING");
@@ -2494,7 +2495,7 @@ namespace Trecs.SourceGen
 
             sb.AppendLine($"{ind}{GeneratedCodeAttributes.Line}");
             sb.AppendLine(
-                $"{ind}public JobHandle ScheduleParallel(WorldAccessor world, int count{fromWorldParamDecl}, JobHandle extraDeps = default)"
+                $"{ind}public JobHandle ScheduleParallel(WorldAccessor world, int count{fromWorldParamDecl}, JobHandle extraDeps = default, int innerloopBatchCount = 0)"
             );
             sb.AppendLine($"{ind}{{");
             string body = ind + "    ";
@@ -2527,7 +2528,7 @@ namespace Trecs.SourceGen
             FromSingleEntityEmitter.EmitFieldAssignment(sb, body, fromEntityTargets);
 
             sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}job.ScheduleParallel(count, JobsUtil.ChooseBatchSize(count), {FromWorldEmitter.GenPrefix}deps);"
+                $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}job.ScheduleParallel(count, innerloopBatchCount > 0 ? innerloopBatchCount : JobsUtil.ChooseBatchSize(count), {FromWorldEmitter.GenPrefix}deps);"
             );
 
             FromWorldEmitter.EmitFromWorldTracking(sb, body, orderedEmits);

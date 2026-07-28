@@ -406,6 +406,56 @@ public class JobGeneratorTests
     }
 
     [Test]
+    public void IterationJob_BatchSizeOverride_FallsBackToChooseBatchSize()
+    {
+        // innerloopBatchCount is opt-in and trails the existing optional parameters, so
+        // callers that never pass it keep JobsUtil.ChooseBatchSize. Both branches have to
+        // survive into the emitted schedule call.
+        const string source = """
+            namespace Sample
+            {
+                public partial struct CPos : Trecs.IEntityComponent { public float X; }
+                public struct MoverTag : Trecs.ITag { }
+
+                public partial struct MoveJob : Unity.Jobs.IJobFor
+                {
+                    [Trecs.ForEachEntity(Tag = typeof(MoverTag))]
+                    public void Execute(ref CPos pos) { }
+                }
+
+                public static class Caller
+                {
+                    public static void Go(Trecs.WorldAccessor world)
+                    {
+                        var job = new MoveJob();
+                        job.ScheduleParallel(world);
+                        job.ScheduleParallel(world, default, 64);
+                    }
+                }
+            }
+            """;
+
+        var run = GeneratorTestHarness.Run(
+            new Microsoft.CodeAnalysis.IIncrementalGenerator[]
+            {
+                new JobGenerator(),
+                new EntityComponentGenerator(),
+            },
+            source
+        );
+
+        Assert.That(run.CompileErrors, Is.Empty, run.Format());
+        Assert.That(run.GenErrors, Is.Empty, run.Format());
+
+        var emitted = string.Join("\n", run.GeneratedTrees.Select(t => t.ToString()));
+        Assert.That(
+            emitted,
+            Does.Contain("innerloopBatchCount > 0 ? innerloopBatchCount : JobsUtil.ChooseBatchSize"),
+            run.Format()
+        );
+    }
+
+    [Test]
     public void IterationJob_FromWorldGenericAttribute_CompilesCleanly()
     {
         // [FromWorld<Tag>] — C# 11 generic-attribute shorthand on the FromWorld field.

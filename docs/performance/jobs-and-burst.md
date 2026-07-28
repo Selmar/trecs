@@ -58,6 +58,16 @@ public partial class ParticleJobSystem : ISystem
 
 `[ForEachEntity]` is **not** required. You can write an entirely hand-rolled `IJobFor` / `IJobParallelFor` and still pass Trecs data into it. See [Advanced Job Features](../advanced/advanced-jobs.md).
 
+### Batch size
+
+By default every generated `ScheduleParallel` sizes its batches with `JobsUtil.ChooseBatchSize(count)` — roughly four batches per Unity job worker, floored at 32. That balances work-stealing headroom against per-batch dispatch overhead for a *typical* body, which is the one thing the generator cannot know about yours. A job whose per-entity work is heavy and uneven wants smaller batches; one that does almost nothing per entity wants larger. Override with the trailing `innerloopBatchCount` argument:
+
+```csharp
+new RaycastJob().ScheduleParallel(World, extraDeps: default, innerloopBatchCount: 4);
+```
+
+`0` (the default) means "choose for me". Deferred-count jobs have no default and take the batch size as a required argument — see [Advanced Job Features](../advanced/advanced-jobs.md).
+
 ## Per-iteration `EntityHandle`
 
 A `[ForEachEntity]` callback inside a job can take an `EntityHandle` parameter alongside its components — works in both `[WrapAsJob]` and manual job structs:
