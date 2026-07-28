@@ -434,6 +434,15 @@ namespace Trecs.SourceGen
             isEnabledByDefault: true
         );
 
+        public static readonly DiagnosticDescriptor DeferredCountOnIterationJob = new(
+            id: "TRECS072",
+            title: "IJobParallelForDefer is not supported on a [ForEachEntity] job",
+            messageFormat: "Job '{0}' implements IJobParallelForDefer but its Execute is decorated with [ForEachEntity]. An iteration job's count comes from the query the generator resolves at schedule time, so there is nothing to defer. Drop IJobParallelForDefer, or drop [ForEachEntity] and take the index yourself with 'public void Execute(int)'.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true
+        );
+
         public static readonly DiagnosticDescriptor MissingNativeDisableParallelForRestriction =
             new(
                 id: "TRECS079",

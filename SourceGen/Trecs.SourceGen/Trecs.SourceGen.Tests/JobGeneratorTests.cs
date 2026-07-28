@@ -1,3 +1,4 @@
+using System.Linq;
 using NUnit.Framework;
 using Trecs.SourceGen;
 
@@ -305,6 +306,103 @@ public class JobGeneratorTests
 
         Assert.That(run.CompileErrors, Is.Empty, run.Format());
         Assert.That(run.GenErrors, Is.Empty, run.Format());
+    }
+
+    [Test]
+    public void DeferredParallelJob_BothScheduleOverloadsCompileCleanly()
+    {
+        // A struct declaring IJobParallelForDefer opts into the deferred-count path: no
+        // IJobFor is added on top, and the count reaches Schedule as a NativeList length or
+        // an int* rather than an int. Both emitted overloads are exercised from a caller so
+        // the generated signatures have to actually bind.
+        const string source = """
+            namespace Sample
+            {
+                public partial struct CPos : Trecs.IEntityComponent { public float X; }
+                public struct MoverTag : Trecs.ITag { }
+
+                public partial struct DeferredJob : Unity.Jobs.IJobParallelForDefer
+                {
+                    [Unity.Collections.NativeDisableParallelForRestriction]
+                    [Trecs.FromWorld(Tag = typeof(MoverTag))]
+                    public Trecs.NativeComponentLookupWrite<CPos> Positions;
+
+                    [Trecs.FromWorld]
+                    public Trecs.NativeWorldAccessor World;
+
+                    public void Execute(int index) { }
+                }
+
+                public static class Caller
+                {
+                    public static unsafe void Go(
+                        Trecs.WorldAccessor world,
+                        Unity.Collections.NativeList<int> counts,
+                        int* countPtr)
+                    {
+                        var job = new DeferredJob();
+                        job.ScheduleParallel(world, counts, 32);
+                        job.ScheduleParallel(world, countPtr, 32);
+                    }
+                }
+            }
+            """;
+
+        var run = GeneratorTestHarness.Run(
+            new Microsoft.CodeAnalysis.IIncrementalGenerator[]
+            {
+                new JobGenerator(),
+                new AspectGenerator(),
+                new EntityComponentGenerator(),
+            },
+            source
+        );
+
+        Assert.That(run.CompileErrors, Is.Empty, run.Format());
+        Assert.That(run.GenErrors, Is.Empty, run.Format());
+    }
+
+    [Test]
+    public void DeferredParallelJob_DoesNotDeclareIJobFor()
+    {
+        // The whole point of the separate kind: the user's IJobParallelForDefer is the only
+        // job interface. Emitting IJobFor alongside it would hand one Execute to two job
+        // producers.
+        const string source = """
+            namespace Sample
+            {
+                public partial struct CPos : Trecs.IEntityComponent { public float X; }
+                public struct MoverTag : Trecs.ITag { }
+
+                public partial struct DeferredJob : Unity.Jobs.IJobParallelForDefer
+                {
+                    [Unity.Collections.NativeDisableParallelForRestriction]
+                    [Trecs.FromWorld(Tag = typeof(MoverTag))]
+                    public Trecs.NativeComponentLookupWrite<CPos> Positions;
+
+                    public void Execute(int index) { }
+                }
+            }
+            """;
+
+        var run = GeneratorTestHarness.Run(
+            new Microsoft.CodeAnalysis.IIncrementalGenerator[]
+            {
+                new JobGenerator(),
+                new AspectGenerator(),
+                new EntityComponentGenerator(),
+            },
+            source
+        );
+
+        Assert.That(run.CompileErrors, Is.Empty, run.Format());
+
+        var emitted = string.Join(
+            "\n",
+            run.GeneratedTrees.Select(t => t.ToString()).Where(s => s.Contains("DeferredJob"))
+        );
+        Assert.That(emitted, Does.Contain("partial struct DeferredJob"), run.Format());
+        Assert.That(emitted, Does.Not.Contain("IJobFor"), run.Format());
     }
 
     [Test]

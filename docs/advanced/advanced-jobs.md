@@ -124,6 +124,39 @@ highlightedWrite.Clear();   // Order-insensitive: wins over any Add/Remove in th
 // Read-side iteration is via TryGetGroupEntry on a per-group basis.
 ```
 
+## Deferred iteration counts
+
+When the number of iterations is only known to a job scheduled earlier in the same frame — a container sized from a count a preceding job produced — declare `Unity.Jobs.IJobParallelForDefer` on the job struct. The generator stops adding a job interface of its own (yours is the interface) and emits schedule overloads that take the count indirectly instead of as an `int`:
+
+```csharp
+[BurstCompile]
+partial struct BroadphaseJob : IJobParallelForDefer
+{
+    [NativeDisableParallelForRestriction]
+    [FromWorld(Tag = typeof(GameTags.Body))]
+    NativeComponentLookupWrite<CollisionState> _states;
+
+    [FromWorld] NativeWorldAccessor _world;
+
+    public void Execute(int index) { /* ... */ }
+}
+```
+
+```csharp
+// NativeList form — count is the list's length
+var handle = job.ScheduleParallel(world, bodies, batchSize, deps);
+
+// Raw pointer form — count is read when the job starts
+var handle = job.ScheduleParallel(world, map.GetElementCountPtr(), batchSize, deps);
+```
+
+`[FromWorld]` wiring and dependency tracking are identical to the non-deferred path. Two differences:
+
+- **You pick the batch size.** `JobsUtil.ChooseBatchSize` needs a count nobody has yet.
+- **The `int*` overload is only emitted when the consuming assembly allows unsafe code.** The `NativeList` overload is always emitted.
+
+`IJobParallelForDefer` is rejected on a `[ForEachEntity]` job (TRECS072) — an iteration job's count comes from the query the generator resolves at schedule time, so there is nothing to defer.
+
 ## External job tracking
 
 When a job is scheduled manually without the Trecs source generator (e.g., a third-party job or custom scheduling pattern), register it with the world so the [dependency tracker](../performance/dependency-tracking.md) knows about it, via `TrackExternalJob` on the system's `WorldAccessor`:
