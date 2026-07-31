@@ -12,7 +12,7 @@ namespace Trecs
     /// tag combination share a group and its contiguous component buffers.
     /// Use <see cref="Tag{T}"/> for zero-allocation access to a tag's runtime value.
     /// </summary>
-    public readonly struct Tag : IEquatable<Tag>
+    public readonly struct Tag : IEquatable<Tag>, IComparable<Tag>
     {
         readonly TypeId _inner;
 
@@ -43,6 +43,12 @@ namespace Trecs
         public override readonly int GetHashCode()
         {
             return _inner.GetHashCode();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public readonly int CompareTo(Tag other)
+        {
+            return _inner.CompareTo(other._inner);
         }
 
         // Debug-only path: the underlying TypeId is registered against typeof(T)

@@ -9,7 +9,9 @@ namespace Trecs
     /// component type's runtime id; layered onto the same intern table that backs
     /// <see cref="Tag"/> and <see cref="SetId"/>.
     /// </summary>
-    public readonly struct ComponentTypeId : IEquatable<ComponentTypeId>
+    public readonly struct ComponentTypeId
+        : IEquatable<ComponentTypeId>,
+            IComparable<ComponentTypeId>
     {
         readonly TypeId _inner;
 
@@ -32,6 +34,9 @@ namespace Trecs
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public override int GetHashCode() => _inner.GetHashCode();
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public int CompareTo(ComponentTypeId other) => _inner.CompareTo(other._inner);
 
         public static bool operator ==(ComponentTypeId a, ComponentTypeId b) =>
             a._inner == b._inner;
