@@ -11,7 +11,7 @@ namespace Trecs
     /// the semantics you want. A zero value represents a null (unallocated) blob.
     /// </summary>
     [TypeId(283746019)]
-    public readonly struct BlobId : IEquatable<BlobId>
+    public readonly struct BlobId : IEquatable<BlobId>, IComparable<BlobId>
     {
         public readonly long Value;
 
@@ -41,6 +41,12 @@ namespace Trecs
         public override int GetHashCode()
         {
             return Value.GetHashCode();
+        }
+
+        // Null (0) does not sort first: content-hash ids can be negative.
+        public int CompareTo(BlobId other)
+        {
+            return Value.CompareTo(other.Value);
         }
 
         public static bool operator ==(BlobId left, BlobId right)

@@ -10,7 +10,7 @@ namespace Trecs
     /// Convert to <see cref="EntityIndex"/> for direct component buffer access.
     /// </summary>
     [TypeId(847291053)]
-    public readonly struct EntityHandle : IEquatable<EntityHandle>
+    public readonly struct EntityHandle : IEquatable<EntityHandle>, IComparable<EntityHandle>
     {
         /// <summary>
         /// The slot identifier for this entity within the world. Combined with <see cref="Version"/>
@@ -62,6 +62,15 @@ namespace Trecs
         public bool Equals(EntityHandle other)
         {
             return other.Id == Id && other.Version == Version;
+        }
+
+        /// <inheritdoc/>
+        public int CompareTo(EntityHandle other)
+        {
+            // Id first, then Version, so reuses of one slot stay adjacent.
+            // Null (Id 0) sorts before all real handles.
+            var c = Id.CompareTo(other.Id);
+            return c != 0 ? c : Version.CompareTo(other.Version);
         }
 
         /// <inheritdoc/>
