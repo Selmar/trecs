@@ -7,9 +7,11 @@ namespace Trecs.Internal
     /// Tracks every <see cref="TrecsRecordingSession"/> currently alive (one
     /// per Trecs <see cref="World"/>). Mirrors <see cref="WorldRegistry"/> in
     /// shape — editor tooling subscribes to register/unregister events and
-    /// looks up the controller for a chosen World.
+    /// looks up the controller for a chosen World. One session per world:
+    /// game code and the editor look a world's session up here before
+    /// creating one, and only its creator disposes it.
     /// </summary>
-    internal static class TrecsRecordingSessionRegistry
+    public static class TrecsRecordingSessionRegistry
     {
         static readonly List<TrecsRecordingSession> _all = new();
 

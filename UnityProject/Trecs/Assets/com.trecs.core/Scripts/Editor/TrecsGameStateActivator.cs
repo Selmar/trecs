@@ -35,6 +35,10 @@ namespace Trecs.Internal
 
         static void OnControllerRegistered(TrecsRecordingSession controller)
         {
+            // Stop on the frame a replay diverges, so the state can be inspected
+            // there. Sessions game code creates included.
+            controller.AutoRecorder.Desynced += _ => EditorApplication.isPaused = true;
+
             if (HasOpenWindow() && AutoRecordEnabled)
             {
                 controller.StartAutoRecording();

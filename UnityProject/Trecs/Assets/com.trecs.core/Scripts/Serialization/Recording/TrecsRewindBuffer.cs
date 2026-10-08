@@ -3,17 +3,17 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Trecs.Collections;
-using UnityEditor;
 using UnityEngine;
 
 namespace Trecs.Internal
 {
     /// <summary>
     /// Periodically captures full-state snapshots of a Trecs <see cref="World"/>
-    /// while running. Snapshots are kept in memory only — no disk I/O. Designed
-    /// to be enabled on demand by editor tooling (see <c>TrecsPlayerWindow</c>).
+    /// while running. Snapshots are kept in memory only — no disk I/O. Driven
+    /// through a <see cref="TrecsRecordingSession"/>, by editor tooling (see
+    /// <c>TrecsPlayerWindow</c>) or by game code such as an in-game rewind.
     /// </summary>
-    internal class TrecsRewindBuffer : IDisposable, IInputHistoryLocker
+    public class TrecsRewindBuffer : IDisposable, IInputHistoryLocker
     {
         static readonly TrecsLog _log = TrecsLog.Default;
 
@@ -36,6 +36,11 @@ namespace Trecs.Internal
         readonly SnapshotPayloadPool _pool;
 
         IDisposable _frameSubscription;
+
+        // Applies _pendingLoopTarget at the head of the next variable update.
+        // Subscribed on the first loop, kept until Dispose.
+        IDisposable _loopRewindSubscription;
+        int? _pendingLoopTarget;
 
         // Authoritative state of the recorder's playhead + buffer kind.
         // Replaces what used to be an implicit machine across _isRecording
@@ -348,8 +353,17 @@ namespace Trecs.Internal
             }
         }
 
+        /// <summary>
+        /// Fires once per playback walk, at the first frame whose recomputed
+        /// checksum differs from the recorded one. The argument is that frame.
+        /// The editor pauses play mode on it.
+        /// </summary>
+        public event Action<int> Desynced;
+
         public void Dispose()
         {
+            _loopRewindSubscription?.Dispose();
+            _loopRewindSubscription = null;
             Stop();
             _store.Dispose();
             _core.Dispose();
@@ -1332,18 +1346,17 @@ namespace Trecs.Internal
             _core.Accessor.GetSystemRunner().FixedIsPaused = true;
         }
 
-        // Pause the runner now, then schedule a JumpToFrame(<start>) on
-        // the next editor tick. Two reasons to defer via
-        // EditorApplication.delayCall: (1) JumpToFrame disposes and
-        // re-creates _frameSubscription, which is the very subscription
-        // dispatching the OnFixedFrameChange call that triggered this; (2)
-        // the current tick needs to unwind cleanly. *Critical*: the pause
-        // must happen *before* scheduling — otherwise the next fixed
-        // update fires before delayCall lands, advancing frame past
+        // Pause the runner now, then JumpToFrame(<start>) at the head of the
+        // next variable update. Two reasons to defer: (1) JumpToFrame
+        // disposes and re-creates _frameSubscription, which is the very
+        // subscription dispatching the OnFixedFrameChange call that triggered
+        // this; (2) the current tick needs to unwind cleanly. *Critical*: the
+        // pause must happen *before* deferring — otherwise the next fixed
+        // update runs before the jump lands, advancing frame past
         // LatestCapturedFrame and hitting the "promote past tail" branch,
-        // which flips _state to LiveCapture. By the time delayCall runs
-        // the recorder is in live capture and the loop silently fails
-        // (the bug we shipped initially).
+        // which flips _state to LiveCapture, and the loop silently fails.
+        // Variable update starts before the fixed loop of its tick, so with
+        // the runner paused no fixed step runs in between.
         void BeginLoopRewind()
         {
             // Loop target is the earliest scrubbable frame across anchors,
@@ -1352,20 +1365,30 @@ namespace Trecs.Internal
             // only from tail branches, so at least one of the three lists
             // is non-empty.
             _core.Accessor.GetSystemRunner().FixedIsPaused = true;
-            var loopTarget = _store.FindEarliest().frame;
-            EditorApplication.delayCall += () =>
+            _pendingLoopTarget = _store.FindEarliest().frame;
+            _loopRewindSubscription ??= _core.Accessor.Events.OnVariableUpdateStarted(
+                ApplyPendingLoopRewind
+            );
+        }
+
+        void ApplyPendingLoopRewind()
+        {
+            if (!_pendingLoopTarget.HasValue)
             {
-                if (_state == BufferState.Idle || _core.World.IsDisposed)
-                {
-                    return;
-                }
-                if (JumpToFrame(loopTarget))
-                {
-                    // JumpToFrame pauses on a backward seek; un-pause so
-                    // the loop keeps playing.
-                    _core.Accessor.GetSystemRunner().FixedIsPaused = false;
-                }
-            };
+                return;
+            }
+            var loopTarget = _pendingLoopTarget.Value;
+            _pendingLoopTarget = null;
+            if (_state == BufferState.Idle || _core.World.IsDisposed)
+            {
+                return;
+            }
+            if (JumpToFrame(loopTarget))
+            {
+                // JumpToFrame pauses on a backward seek; un-pause so
+                // the loop keeps playing.
+                _core.Accessor.GetSystemRunner().FixedIsPaused = false;
+            }
         }
 
         // Called whenever the recorder commits to a new live edge — fork,
@@ -1514,7 +1537,7 @@ namespace Trecs.Internal
                     expected,
                     actual
                 );
-                EditorApplication.isPaused = true;
+                Desynced?.Invoke(frame);
             }
         }
 
@@ -1658,7 +1681,7 @@ namespace Trecs.Internal
     /// tooling can inspect frame span / tick rate without loading the full
     /// snapshot list. See <see cref="TrecsRewindBuffer.TryReadRecordingHeader"/>.
     /// </summary>
-    internal readonly struct RecordingHeader
+    public readonly struct RecordingHeader
     {
         public readonly int StartFrame;
         public readonly int EndFrame;
