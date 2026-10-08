@@ -405,6 +405,9 @@ namespace Trecs
             writer.PopScope();
             WriteSectionGuard(WorldStateSection.AfterSystemEnable, writer);
 
+            WriteStateSections(writer);
+            WriteSectionGuard(WorldStateSection.AfterStateSections, writer);
+
             writer.PopScope();
         }
 
@@ -649,13 +652,47 @@ namespace Trecs
                 _world.SystemEnableState.Deserialize(reader);
             }
             ReadSectionGuard(WorldStateSection.AfterSystemEnable, reader);
+
+            using (TrecsProfiling.Start("Reading state sections"))
+            {
+                ReadStateSections(reader);
+            }
+            ReadSectionGuard(WorldStateSection.AfterStateSections, reader);
+        }
+
+        void WriteStateSections(ISerializationWriter writer)
+        {
+            var sections = _world.StateSections;
+            writer.Write("NumStateSections", sections.Count);
+            for (int i = 0; i < sections.Count; i++)
+            {
+                writer.PushScope(sections[i].Name);
+                sections[i].Serialize(writer);
+                writer.PopScope();
+            }
+        }
+
+        void ReadStateSections(ISerializationReader reader)
+        {
+            var sections = _world.StateSections;
+            var count = reader.Read<int>("NumStateSections");
+            if (count != sections.Count)
+            {
+                throw new SerializationException(
+                    $"Snapshot holds {count} state sections but this world registers {sections.Count}."
+                );
+            }
+            for (int i = 0; i < sections.Count; i++)
+            {
+                sections[i].Deserialize(reader);
+            }
         }
 
         // Section markers written between major blocks of the world-state
         // stream. Drift between a Serialize* and its Deserialize* counterpart
         // is caught at the section boundary instead of cascading as garbage
         // into the next block, and the assert message pinpoints which section
-        // diverged. One byte each — total cost is six bytes per snapshot.
+        // diverged. One byte each — total cost is seven bytes per snapshot.
         // Values are chosen out of the natural range of small ints/lengths
         // that surround them, so they're obvious in a hex dump.
         enum WorldStateSection : byte
@@ -666,6 +703,7 @@ namespace Trecs
             AfterEntitySets = 0xA4,
             AfterHeaps = 0xA5,
             AfterSystemEnable = 0xA6,
+            AfterStateSections = 0xA7,
         }
 
         static void WriteSectionGuard(WorldStateSection section, ISerializationWriter writer)

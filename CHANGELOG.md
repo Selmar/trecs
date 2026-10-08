@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **World state sections.** `IWorldStateSection` and `World.AddStateSection` carry simulation state held outside components and heaps (a system's containers, a queue between systems) through snapshots, recordings, checksums and desync dumps.
+
 ## [0.2.0] - 2026-05-07
 
 Large redesign pass covering package consolidation, accessor permissions, heap-backed collections, source-gen diagnostics, native pointer internals, and editor tooling. All breaking changes are mechanical text-level migrations unless otherwise noted.

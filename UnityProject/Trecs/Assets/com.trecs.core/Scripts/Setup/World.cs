@@ -51,6 +51,7 @@ namespace Trecs
         readonly SystemLoader _systemLoader;
         readonly SystemEnableState _systemEnableState = new();
         readonly List<ISystem> _systems;
+        readonly List<IWorldStateSection> _stateSections = new();
 
         bool _hasRemovedAllEntities;
         bool _initializeCompleted;
@@ -739,6 +740,21 @@ namespace Trecs
         /// Registers a system after world construction but before <see cref="Initialize"/>.
         /// Throws if called after initialization.
         /// </summary>
+        /// <summary>
+        /// Adds simulation state held outside components to every snapshot,
+        /// recording and checksum of this world. Register after
+        /// <see cref="WorldBuilder.Build"/> and before <see cref="Initialize"/>,
+        /// in the same order on every world that loads the same snapshots.
+        /// </summary>
+        public void AddStateSection(IWorldStateSection section)
+        {
+            TrecsAssert.That(section != null, "AddStateSection: section is null");
+            TrecsAssert.That(!_hasInitialized, "AddStateSection: add sections before Initialize");
+            _stateSections.Add(section);
+        }
+
+        internal IReadOnlyList<IWorldStateSection> StateSections => _stateSections;
+
         public void AddSystem(ISystem system)
         {
             TrecsDebugAssert.That(!_systemAddLocked);

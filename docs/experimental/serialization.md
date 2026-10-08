@@ -275,6 +275,44 @@ public sealed class CollisionGroupSerializer : IComponentArraySerializer<CCollis
 
 The same versioning rules apply as for `ISerializer<T>`: read what you wrote in the same order, branch on `reader.Version` if the layout has changed.
 
+## State outside the world
+
+Some simulation state does not live in components or on the heap: a system's own containers, or a queue one system fills and another drains in a later step. A snapshot cannot see it, so a restore leaves it as it was. Register an `IWorldStateSection` for it, after `WorldBuilder.Build()` and before `world.Initialize()`:
+
+```csharp
+public sealed class PendingSpawnsSection : IWorldStateSection
+{
+    readonly SpawnQueue _queue;
+
+    public PendingSpawnsSection(SpawnQueue queue) => _queue = queue;
+
+    public string Name => "PendingSpawns";
+
+    public void Serialize(ISerializationWriter writer)
+    {
+        writer.Write("count", _queue.Count);
+        foreach (var spawn in _queue)
+            writer.Write("spawn", spawn);
+    }
+
+    public void Deserialize(ISerializationReader reader)
+    {
+        _queue.Clear();
+        var count = reader.Read<int>("count");
+        for (int i = 0; i < count; i++)
+            _queue.Add(reader.Read<SpawnRequest>("spawn"));
+    }
+}
+
+var world = builder.Build();
+world.AddStateSection(new PendingSpawnsSection(spawnQueue));
+world.Initialize();
+```
+
+Sections are written after the heaps, in registration order, and read back in that order before `OnDeserializeCompleted` fires. Every snapshot, recording, checksum and desync dump includes them, the same as component arrays — so state in a section also takes part in desync detection. `Name` labels the section in flat-path dumps.
+
+A snapshot must be loaded into a world that registers the same sections in the same order; a different count throws `SerializationException`. Prefer components or heap collections where they fit; a section is for state that deliberately stays outside them.
+
 ## Explicit type IDs
 
 By default, Trecs derives type identifiers from `BurstRuntime.GetHashCode32(type)` — a hash of the fully qualified type name. Renaming or moving a type to a different namespace changes the hash and silently corrupts saved files that reference the old ID.
