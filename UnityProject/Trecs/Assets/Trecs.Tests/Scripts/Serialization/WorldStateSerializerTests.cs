@@ -70,7 +70,10 @@ namespace Trecs.Tests
             DefaultTrecsSerializers.RegisterCommonTrecsSerializers(_serializerRegistry);
         }
 
-        World CreateWorld(Action<WorldBuilder> customize = null)
+        World CreateWorld(
+            Action<WorldBuilder> customize = null,
+            Action<World> beforeInitialize = null
+        )
         {
             var testGlobals = new Template(
                 debugName: "TestGlobals",
@@ -91,7 +94,23 @@ namespace Trecs.Tests
 
             customize?.Invoke(builder);
 
-            return builder.BuildAndInitialize();
+            if (beforeInitialize == null)
+            {
+                return builder.BuildAndInitialize();
+            }
+
+            var world = builder.Build();
+            try
+            {
+                beforeInitialize(world);
+                world.Initialize();
+            }
+            catch
+            {
+                world.Dispose();
+                throw;
+            }
+            return world;
         }
 
         static readonly TagSet NativeListPartition = TagSet.FromTags(Tag<SerNativeListTag>.Value);
@@ -115,6 +134,99 @@ namespace Trecs.Tests
             reader.Start(data);
             serializer.DeserializeState(reader);
         }
+
+        #region State Sections
+
+        class CounterSection : IWorldStateSection
+        {
+            public int Value;
+            public string SectionName = "Counter";
+
+            public string Name => SectionName;
+
+            public void Serialize(ISerializationWriter writer) => writer.Write("value", Value);
+
+            public void Deserialize(ISerializationReader reader) =>
+                Value = reader.Read<int>("value");
+        }
+
+        [Test]
+        public void StateSection_RoundTrip_RestoresItsState()
+        {
+            var section = new CounterSection { Value = 7 };
+            using var world = CreateWorld(beforeInitialize: w => w.AddStateSection(section));
+
+            var data = SerializeWorld(world);
+            section.Value = 9;
+            DeserializeWorld(world, data);
+
+            NAssert.AreEqual(7, section.Value);
+        }
+
+        [Test]
+        public void StateSection_IsPartOfTheSerializedState()
+        {
+            var section = new CounterSection { Value = 7 };
+            using var world = CreateWorld(beforeInitialize: w => w.AddStateSection(section));
+
+            var before = SerializeWorld(world);
+            section.Value = 9;
+
+            CollectionAssert.AreNotEqual(before, SerializeWorld(world));
+        }
+
+        [Test]
+        public void StateSection_CountMismatch_Throws()
+        {
+            using var saved = CreateWorld(beforeInitialize: w =>
+                w.AddStateSection(new CounterSection())
+            );
+            var data = SerializeWorld(saved);
+
+            using var other = CreateWorld(beforeInitialize: w =>
+            {
+                w.AddStateSection(new CounterSection());
+                w.AddStateSection(new CounterSection { SectionName = "Second" });
+            });
+            NAssert.Throws<SerializationException>(() => DeserializeWorld(other, data));
+        }
+
+        [Test]
+        public void StateSection_OtherSectionAtSamePosition_Throws()
+        {
+            using var saved = CreateWorld(beforeInitialize: w =>
+                w.AddStateSection(new CounterSection())
+            );
+            var data = SerializeWorld(saved);
+
+            using var other = CreateWorld(beforeInitialize: w =>
+                w.AddStateSection(new CounterSection { SectionName = "Other" })
+            );
+            NAssert.Throws<SerializationException>(() => DeserializeWorld(other, data));
+        }
+
+        [Test]
+        public void StateSection_DuplicateName_Asserts()
+        {
+            NAssert.That(
+                () =>
+                    CreateWorld(beforeInitialize: w =>
+                    {
+                        w.AddStateSection(new CounterSection());
+                        w.AddStateSection(new CounterSection());
+                    }),
+                Throws.Exception
+            );
+        }
+
+        [Test]
+        public void StateSection_AddAfterInitialize_Asserts()
+        {
+            using var world = CreateWorld();
+            NAssert.That(() => world.AddStateSection(new CounterSection()), Throws.Exception);
+        }
+
+        #endregion
 
         #region Basic Round-Trip
 
