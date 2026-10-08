@@ -19,7 +19,7 @@ namespace Trecs.Internal
     ///   * Run: <see cref="IsPaused"/> — straight pass-through of the
     ///     SystemRunner's FixedIsPaused flag.
     /// </summary>
-    internal class TrecsRecordingSession : IDisposable
+    public class TrecsRecordingSession : IDisposable
     {
         static readonly TrecsLog _log = TrecsLog.Default;
 

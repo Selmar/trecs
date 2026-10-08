@@ -28,6 +28,8 @@ namespace Trecs.Internal
 
         struct AttachedSet
         {
+            // Null when game code registered the world's session first: then
+            // the session is the game's to dispose, not ours.
             public TrecsRewindBuffer Recorder;
             public TrecsRecordingSession Session;
             public TrecsSnapshotLibrary SnapshotLibrary;
@@ -93,8 +95,11 @@ namespace Trecs.Internal
             WorldRegistry.WorldUnregistered -= DetachForWorld;
             foreach (var attached in _attached.Values)
             {
-                attached.Session.Dispose();
-                attached.Recorder.Dispose();
+                if (attached.Recorder != null)
+                {
+                    attached.Session.Dispose();
+                    attached.Recorder.Dispose();
+                }
                 attached.Snapshots.Dispose();
             }
             _attached.Clear();
@@ -112,10 +117,23 @@ namespace Trecs.Internal
             SnapshotSerializer snapshots = null;
             TrecsRewindBuffer recorder = null;
             TrecsRecordingSession session = null;
+            var gameSession = TrecsRecordingSessionRegistry.GetForWorld(world);
             try
             {
                 var pool = new SnapshotPayloadPool();
                 snapshots = new SnapshotSerializer(stateSerializer, registry, world, pool);
+                if (gameSession != null)
+                {
+                    // Game code built one; the window drives that.
+                    _attached[world] = new AttachedSet
+                    {
+                        Session = gameSession,
+                        SnapshotLibrary = new TrecsSnapshotLibrary(world, snapshots, gameSession),
+                        Snapshots = snapshots,
+                    };
+                    _log.Trace("Attached Trecs Player to the game's session for world {0}", world);
+                    return;
+                }
                 recorder = new TrecsRewindBuffer(
                     world,
                     stateSerializer,
@@ -173,8 +191,11 @@ namespace Trecs.Internal
                 return;
             }
             _attached.Remove(world);
-            attached.Session.Dispose();
-            attached.Recorder.Dispose();
+            if (attached.Recorder != null)
+            {
+                attached.Session.Dispose();
+                attached.Recorder.Dispose();
+            }
             attached.Snapshots.Dispose();
             _log.Trace("Auto-detached Trecs Player from world {0}", world);
         }

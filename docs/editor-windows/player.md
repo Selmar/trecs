@@ -118,6 +118,27 @@ When the window has focus:
 
 In a multi-world scene the dropdown selects which world the Player drives. Each world has its own recorder; the transport, timeline, and Actions ▾ menu operate on the selected world. The dropdown row is hidden when there's only one world.
 
+## From game code
+
+The recorder behind this window runs outside the editor too. `TrecsRewindBuffer` captures and jumps; `TrecsRecordingSession` wraps it with the mode logic (silencing input systems during playback) and is the object to drive. Both live in `Trecs.Internal`. A game-side rewind, an in-game replay viewer or a development-build bug recorder builds one the same way the window does:
+
+```csharp
+var session = TrecsRecordingSessionRegistry.GetForWorld(world);
+if (session == null)
+{
+    var pool = new SnapshotPayloadPool();
+    var snapshots = new SnapshotSerializer(new WorldStateSerializer(world), world.SerializerRegistry, world, pool);
+    var recorder = new TrecsRewindBuffer(world, new WorldStateSerializer(world), world.SerializerRegistry, new TrecsRewindBufferSettings(), snapshots, pool);
+    session = new TrecsRecordingSession(world, recorder); // registers itself
+}
+session.StartAutoRecording();
+session.JumpToFrame(target);
+```
+
+There is one session per world. Look it up in `TrecsRecordingSessionRegistry` before creating one: if this window was open when the world was built, it already made one; if game code made one first, the window drives that instead of its own. Only the creator disposes it.
+
+`TrecsRewindBuffer.Desynced` fires at the first frame a replay's checksum differs from the recorded one. In the editor, play mode pauses on it.
+
 ## See also
 
 - [Saves Window](saves.md) — library view of all on-disk recordings and snapshots, with rename, multi-select, and search.

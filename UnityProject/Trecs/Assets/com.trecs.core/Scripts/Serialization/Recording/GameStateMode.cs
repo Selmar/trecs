@@ -5,7 +5,7 @@ namespace Trecs.Internal
     /// world's frame data is coming from / going to. Orthogonal to the
     /// SystemRunner's pause/play state.
     /// </summary>
-    internal enum GameStateMode
+    public enum GameStateMode
     {
         /// <summary>No recording session active. Slider is inert.</summary>
         Idle,
