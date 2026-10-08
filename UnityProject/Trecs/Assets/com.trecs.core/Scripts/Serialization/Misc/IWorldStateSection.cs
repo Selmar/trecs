@@ -13,7 +13,12 @@ namespace Trecs
     /// </summary>
     public interface IWorldStateSection
     {
-        /// <summary>Scope name in flat-path dumps.</summary>
+        /// <summary>
+        /// Identifies the section: its hash is written ahead of its data and
+        /// checked on load, and it scopes the section in flat-path dumps.
+        /// Unique per world, and stable for as long as saved snapshots must
+        /// load.
+        /// </summary>
         string Name { get; }
 
         void Serialize(ISerializationWriter writer);

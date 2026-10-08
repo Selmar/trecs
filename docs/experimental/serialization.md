@@ -309,9 +309,13 @@ world.AddStateSection(new PendingSpawnsSection(spawnQueue));
 world.Initialize();
 ```
 
-Sections are written after the heaps, in registration order, and read back in that order before `OnDeserializeCompleted` fires. Every snapshot, recording, checksum and desync dump includes them, the same as component arrays — so state in a section also takes part in desync detection. `Name` labels the section in flat-path dumps.
+Sections are written after the heaps, in registration order, and read back in that order before `OnDeserializeCompleted` fires. Every snapshot, recording, checksum and desync dump includes them, the same as component arrays — so state in a section also takes part in desync detection.
 
-A snapshot must be loaded into a world that registers the same sections in the same order; a different count throws `SerializationException`. Prefer components or heap collections where they fit; a section is for state that deliberately stays outside them.
+`Name` identifies the section: a hash of it is written ahead of the section's data and checked on load, and it scopes the section in flat-path dumps. Names must be unique per world, and must not change while saved snapshots still need to load.
+
+A snapshot must be loaded into a world that registers the same sections in the same order; a different count, or a different name at the same position, fails the load with a `SerializationException`. A world with no sections writes nothing for them, so its snapshots keep the format they had before sections existed.
+
+Prefer components or heap collections where they fit; a section is for state that deliberately stays outside them. Wrapping `WorldStateSerializer` in your own `IWorldStateSerializer` also adds data, but only on the code paths that construct your wrapper — editor tooling such as the Player window builds its own and would miss it.
 
 ## Explicit type IDs
 

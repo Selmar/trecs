@@ -70,7 +70,10 @@ namespace Trecs.Tests
             DefaultTrecsSerializers.RegisterCommonTrecsSerializers(_serializerRegistry);
         }
 
-        World CreateWorld(Action<WorldBuilder> customize = null, Action<World> beforeInitialize = null)
+        World CreateWorld(
+            Action<WorldBuilder> customize = null,
+            Action<World> beforeInitialize = null
+        )
         {
             var testGlobals = new Template(
                 debugName: "TestGlobals",
@@ -91,9 +94,22 @@ namespace Trecs.Tests
 
             customize?.Invoke(builder);
 
+            if (beforeInitialize == null)
+            {
+                return builder.BuildAndInitialize();
+            }
+
             var world = builder.Build();
-            beforeInitialize?.Invoke(world);
-            world.Initialize();
+            try
+            {
+                beforeInitialize(world);
+                world.Initialize();
+            }
+            catch
+            {
+                world.Dispose();
+                throw;
+            }
             return world;
         }
 
@@ -124,12 +140,14 @@ namespace Trecs.Tests
         class CounterSection : IWorldStateSection
         {
             public int Value;
+            public string SectionName = "Counter";
 
-            public string Name => "Counter";
+            public string Name => SectionName;
 
             public void Serialize(ISerializationWriter writer) => writer.Write("value", Value);
 
-            public void Deserialize(ISerializationReader reader) => Value = reader.Read<int>("value");
+            public void Deserialize(ISerializationReader reader) =>
+                Value = reader.Read<int>("value");
         }
 
         [Test]
@@ -160,11 +178,45 @@ namespace Trecs.Tests
         [Test]
         public void StateSection_CountMismatch_Throws()
         {
-            using var saved = CreateWorld(beforeInitialize: w => w.AddStateSection(new CounterSection()));
+            using var saved = CreateWorld(beforeInitialize: w =>
+                w.AddStateSection(new CounterSection())
+            );
             var data = SerializeWorld(saved);
 
-            using var other = CreateWorld();
+            using var other = CreateWorld(beforeInitialize: w =>
+            {
+                w.AddStateSection(new CounterSection());
+                w.AddStateSection(new CounterSection { SectionName = "Second" });
+            });
             NAssert.Throws<SerializationException>(() => DeserializeWorld(other, data));
+        }
+
+        [Test]
+        public void StateSection_OtherSectionAtSamePosition_Throws()
+        {
+            using var saved = CreateWorld(beforeInitialize: w =>
+                w.AddStateSection(new CounterSection())
+            );
+            var data = SerializeWorld(saved);
+
+            using var other = CreateWorld(beforeInitialize: w =>
+                w.AddStateSection(new CounterSection { SectionName = "Other" })
+            );
+            NAssert.Throws<SerializationException>(() => DeserializeWorld(other, data));
+        }
+
+        [Test]
+        public void StateSection_DuplicateName_Asserts()
+        {
+            NAssert.That(
+                () =>
+                    CreateWorld(beforeInitialize: w =>
+                    {
+                        w.AddStateSection(new CounterSection());
+                        w.AddStateSection(new CounterSection());
+                    }),
+                Throws.Exception
+            );
         }
 
         [Test]

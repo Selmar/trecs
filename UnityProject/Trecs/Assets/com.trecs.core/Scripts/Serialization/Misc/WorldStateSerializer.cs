@@ -7,8 +7,11 @@ namespace Trecs
     /// <summary>
     /// Serializes or deserializes the full game state. Implemented by
     /// <see cref="WorldStateSerializer"/>; game code that needs to add its
-    /// own data (e.g. scripting VM state) can implement this interface via
-    /// composition around a <see cref="WorldStateSerializer"/>.
+    /// own data (e.g. scripting VM state) should register an
+    /// <see cref="IWorldStateSection"/> via <see cref="World.AddStateSection"/>:
+    /// every snapshot, recording and checksum includes it, while a wrapper
+    /// around <see cref="WorldStateSerializer"/> only reaches the code that
+    /// constructs that wrapper.
     /// </summary>
     public interface IWorldStateSerializer
     {
@@ -405,8 +408,13 @@ namespace Trecs
             writer.PopScope();
             WriteSectionGuard(WorldStateSection.AfterSystemEnable, writer);
 
-            WriteStateSections(writer);
-            WriteSectionGuard(WorldStateSection.AfterStateSections, writer);
+            // A world without sections writes nothing here, so its snapshots
+            // keep the format they had before sections existed.
+            if (_world.StateSections.Count > 0)
+            {
+                WriteStateSections(writer);
+                WriteSectionGuard(WorldStateSection.AfterStateSections, writer);
+            }
 
             writer.PopScope();
         }
@@ -653,11 +661,14 @@ namespace Trecs
             }
             ReadSectionGuard(WorldStateSection.AfterSystemEnable, reader);
 
-            using (TrecsProfiling.Start("Reading state sections"))
+            if (_world.StateSections.Count > 0)
             {
-                ReadStateSections(reader);
+                using (TrecsProfiling.Start("Reading state sections"))
+                {
+                    ReadStateSections(reader);
+                }
+                ReadSectionGuard(WorldStateSection.AfterStateSections, reader);
             }
-            ReadSectionGuard(WorldStateSection.AfterStateSections, reader);
         }
 
         void WriteStateSections(ISerializationWriter writer)
@@ -667,6 +678,7 @@ namespace Trecs
             for (int i = 0; i < sections.Count; i++)
             {
                 writer.PushScope(sections[i].Name);
+                writer.Write("SectionId", _world.StateSectionIds[i]);
                 sections[i].Serialize(writer);
                 writer.PopScope();
             }
@@ -684,6 +696,13 @@ namespace Trecs
             }
             for (int i = 0; i < sections.Count; i++)
             {
+                var id = reader.Read<ulong>("SectionId");
+                if (id != _world.StateSectionIds[i])
+                {
+                    throw new SerializationException(
+                        $"State section {i} in the snapshot is not '{sections[i].Name}', the section this world registers there."
+                    );
+                }
                 sections[i].Deserialize(reader);
             }
         }
@@ -692,7 +711,8 @@ namespace Trecs
         // stream. Drift between a Serialize* and its Deserialize* counterpart
         // is caught at the section boundary instead of cascading as garbage
         // into the next block, and the assert message pinpoints which section
-        // diverged. One byte each — total cost is seven bytes per snapshot.
+        // diverged. One byte each — six bytes per snapshot, seven with state
+        // sections.
         // Values are chosen out of the natural range of small ints/lengths
         // that surround them, so they're obvious in a hex dump.
         enum WorldStateSection : byte
