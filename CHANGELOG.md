@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Runtime rewind.** `TrecsRewindBuffer`, `TrecsRecordingSession`, `TrecsRecordingSessionRegistry` and `GameStateMode` moved from `Trecs.Editor` to the runtime assembly and are public (`Trecs.Internal`), so game code can record, scrub and replay a world outside the editor. The editor window reuses a session game code registered. A desync raises `TrecsRewindBuffer.Desynced`; the editor pauses play mode on it as before.
 
+### Fixed
+
+- A loaded recording played past its tail no longer turns into live capture when several fixed steps run in one frame. The tail pauses the runner, which takes effect only before the next frame's steps; the extra steps now stay in playback, as they do past the tail of a scrubbed auto-recording.
+
 ## [0.2.0] - 2026-05-07
 
 Large redesign pass covering package consolidation, accessor permissions, heap-backed collections, source-gen diagnostics, native pointer internals, and editor tooling. All breaking changes are mechanical text-level migrations unless otherwise noted.
