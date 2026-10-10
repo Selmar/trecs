@@ -1302,6 +1302,14 @@ namespace Trecs.Internal
                 _core.Accessor.GetSystemRunner().FixedIsPaused = true;
                 return;
             }
+            // frame > tail with the runner still paused by the tail branch:
+            // the runner honours a pause only before a frame's fixed loop, so
+            // this is the same frame's next step, not the user resuming.
+            // Stay loaded, as HandleScrubbedTick does past its tail.
+            if (_core.Accessor.GetSystemRunner().FixedIsPaused)
+            {
+                return;
+            }
             // frame > tail: user explicitly resumed past the recording's
             // tail. Promote to regular auto-recording from here so capture
             // continues live without a pause-loop.
