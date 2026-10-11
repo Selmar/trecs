@@ -24,10 +24,8 @@ namespace Trecs.Internal
         readonly RecorderEngine _core;
         readonly TrecsRewindBufferSettings _settings;
         readonly RecordingBundleSerializer _bundleSerializer;
-#if DEBUG
         readonly IWorldStateSerializer _stateSerializer;
         readonly SerializerRegistry _serializerRegistry;
-#endif
 
         // In-memory store for anchors / bookmarks / scrub cache / per-frame
         // checksums. Owns payload-pool return discipline and byte accounting
@@ -120,10 +118,8 @@ namespace Trecs.Internal
             );
             _store = new SnapshotStore(pool);
             _bundleSerializer = new RecordingBundleSerializer(serializerRegistry);
-#if DEBUG
             _stateSerializer = stateSerializer;
             _serializerRegistry = serializerRegistry;
-#endif
         }
 
         public World World => _core.World;
@@ -1549,7 +1545,6 @@ namespace Trecs.Internal
             }
         }
 
-#if DEBUG
         /// <summary>
         /// Dump both the recorded and live (diverged) world states at the
         /// desynced frame as flat-path text files and open them. Diff the two
@@ -1593,7 +1588,6 @@ namespace Trecs.Internal
             _stateSerializer.SerializeFullState(writer);
             writer.Complete();
         }
-#endif
 
         // Anchors are sparse so they're capped by count; scrub cache is
         // dense so it's capped by bytes. Bookmarks are user-controlled and

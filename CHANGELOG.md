@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Changed
 
 - **Runtime rewind.** `TrecsRewindBuffer`, `TrecsRecordingSession`, `TrecsRecordingSessionRegistry` and `GameStateMode` moved from `Trecs.Editor` to the runtime assembly and are public (`Trecs.Internal`), so game code can record, scrub and replay a world outside the editor. The editor window reuses a session game code registered. A desync raises `TrecsRewindBuffer.Desynced`; the editor pauses play mode on it as before.
+- **Desync dumps in every build.** `TrecsRewindBuffer.DumpDesyncDiff`, `FlatPathSerializationWriter` and the serialization scopes that name its paths are no longer `DEBUG`-only, so a release build can write the two states of a desync as flat-path text. Outside a dump, a scope costs one type check.
 
 ### Fixed
 
