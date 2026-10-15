@@ -363,6 +363,48 @@ public class JobGeneratorTests
     }
 
     [Test]
+    public void CustomJob_OnlyFromGlobalEntityField_GetsSchedule()
+    {
+        // A singleton field alone makes a custom job: its Schedule must exist, so the
+        // job picks up the dependency on the singleton's writers.
+        const string source = """
+            namespace Sample
+            {
+                public partial struct CScore : Trecs.IEntityComponent { public int Value; }
+
+                public partial struct ReadScoreJob
+                {
+                    [Trecs.FromGlobalEntity]
+                    Trecs.NativeComponentRead<CScore> _score;
+
+                    public int Read() => _score.Value.Value;
+
+                    public void Execute() { }
+                }
+
+                public static class Caller
+                {
+                    public static Unity.Jobs.JobHandle Go(Trecs.WorldAccessor world) =>
+                        new ReadScoreJob().Schedule(world);
+                }
+            }
+            """;
+
+        var run = GeneratorTestHarness.Run(
+            new Microsoft.CodeAnalysis.IIncrementalGenerator[]
+            {
+                new JobGenerator(),
+                new AspectGenerator(),
+                new EntityComponentGenerator(),
+            },
+            source
+        );
+
+        Assert.That(run.CompileErrors, Is.Empty, run.Format());
+        Assert.That(run.GenErrors, Is.Empty, run.Format());
+    }
+
+    [Test]
     public void DeferredParallelJob_DoesNotDeclareIJobFor()
     {
         // The whole point of the separate kind: the user's IJobParallelForDefer is the only
@@ -450,7 +492,9 @@ public class JobGeneratorTests
         var emitted = string.Join("\n", run.GeneratedTrees.Select(t => t.ToString()));
         Assert.That(
             emitted,
-            Does.Contain("innerloopBatchCount > 0 ? innerloopBatchCount : JobsUtil.ChooseBatchSize"),
+            Does.Contain(
+                "innerloopBatchCount > 0 ? innerloopBatchCount : JobsUtil.ChooseBatchSize"
+            ),
             run.Format()
         );
     }
