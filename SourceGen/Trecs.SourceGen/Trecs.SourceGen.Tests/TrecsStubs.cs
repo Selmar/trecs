@@ -620,6 +620,7 @@ internal static class TrecsStubs
             {
                 public ref readonly T this[EntityIndex entityIndex]
                     => ref Trecs.Internal.RefStash<T>.Slot;
+                public ref readonly T Value => ref Trecs.Internal.RefStash<T>.Slot;
             }
 
             public readonly struct NativeComponentWrite<T>
@@ -785,9 +786,9 @@ internal static class TrecsStubs
                     where T : unmanaged, IEntityComponent => default;
                 public (NativeComponentBufferWrite<T>, int) GetBufferWriteForJob<T>(GroupIndex group)
                     where T : unmanaged, IEntityComponent => default;
-                public NativeComponentLookupRead<T> GetNativeComponentReadForJob<T>()
+                public NativeComponentRead<T> GetNativeComponentReadForJob<T>(EntityIndex entityIndex)
                     where T : unmanaged, IEntityComponent => default;
-                public NativeComponentLookupWrite<T> GetNativeComponentWriteForJob<T>()
+                public NativeComponentWrite<T> GetNativeComponentWriteForJob<T>(EntityIndex entityIndex)
                     where T : unmanaged, IEntityComponent => default;
                 // Returns (indices, lifetime, count) — emitted code deconstructs the tuple.
                 public (Trecs.Internal.JobSparseIndices, Trecs.Internal.JobIndicesLifetime, int)

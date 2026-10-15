@@ -92,6 +92,24 @@ namespace Trecs.SourceGen
             "NativeSetRead",
         };
 
+        // A field the generator wires at schedule time: [FromWorld], or a singleton via
+        // [FromSingleEntity] / [FromGlobalEntity]. Either alone makes a custom job.
+        static bool HasWorldWiredField(StructDeclarationSyntax structDecl) =>
+            structDecl
+                .Members.OfType<FieldDeclarationSyntax>()
+                .Any(f =>
+                    f.AttributeLists.SelectMany(al => al.Attributes)
+                        .Any(attr =>
+                        {
+                            var name = IterationCriteriaParser.ExtractAttributeName(
+                                attr.Name.ToString()
+                            );
+                            return name == TrecsAttributeNames.FromWorld
+                                || name == TrecsAttributeNames.FromSingleEntity
+                                || name == TrecsAttributeNames.FromGlobalEntity;
+                        })
+                );
+
         static bool IsCandidateJobStruct(SyntaxNode node)
         {
             if (node is not StructDeclarationSyntax structDecl)
@@ -109,17 +127,8 @@ namespace Trecs.SourceGen
             if (hasIterationAttr)
                 return true;
 
-            // Has [FromWorld] on any field?
-            var hasFromWorldField = structDecl
-                .Members.OfType<FieldDeclarationSyntax>()
-                .Any(f =>
-                    f.AttributeLists.SelectMany(al => al.Attributes)
-                        .Any(attr =>
-                            IterationCriteriaParser.ExtractAttributeName(attr.Name.ToString())
-                            == TrecsAttributeNames.FromWorld
-                        )
-                );
-            if (hasFromWorldField)
+            // Has a world-wired field ([FromWorld], [FromSingleEntity], [FromGlobalEntity])?
+            if (HasWorldWiredField(structDecl))
                 return true;
 
             // Has an Execute method AND a field whose type name looks like a Trecs
@@ -316,7 +325,7 @@ namespace Trecs.SourceGen
                 iterationMethod = method;
             }
 
-            // Custom jobs: [FromWorld] fields with no [ForEachX] on any Execute method.
+            // Custom jobs: world-wired fields with no [ForEachX] on any Execute method.
             //
             // Two flavors based on the user's Execute signature:
             //   - 'public void Execute()'      → CustomNonIteration → IJob
@@ -326,16 +335,7 @@ namespace Trecs.SourceGen
             // IJob.Execute() / IJobFor.Execute(int) respectively.
             if (iterationMethod == null)
             {
-                bool hasFromWorld = structDecl
-                    .Members.OfType<FieldDeclarationSyntax>()
-                    .Any(f =>
-                        f.AttributeLists.SelectMany(al => al.Attributes)
-                            .Any(attr =>
-                                IterationCriteriaParser.ExtractAttributeName(attr.Name.ToString())
-                                == TrecsAttributeNames.FromWorld
-                            )
-                    );
-                if (!hasFromWorld)
+                if (!HasWorldWiredField(structDecl))
                     return null; // Defensive — predicate already filters this out.
 
                 // Discriminate by Execute parameter shape: parameterless → IJob,
