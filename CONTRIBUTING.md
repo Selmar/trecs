@@ -38,6 +38,26 @@ Use the [feature request template](https://github.com/svermeulen/trecs/issues/ne
 
 3. The core library is at `Assets/com.trecs.core/` and tests are at `Assets/Trecs.Tests/`.
 
+### Symlinks (Windows)
+
+The repository tracks git symlinks. Without symlink support they check out as text files holding their target path, and the samples fail to compile.
+
+Enable symlinks in your git client before cloning — this needs [Developer Mode](https://learn.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development) or an elevated shell:
+```bash
+git config --global core.symlinks true
+```
+
+Alternatively, enable symlinks after cloning, then re-checkout the links. Git considers the placeholders up to date, so each one has to be deleted before it is restored:
+```bash
+git config core.symlinks true
+
+rm -f UnityProject/Trecs/Assets/Samples/Core
+git checkout -- UnityProject/Trecs/Assets/Samples/Core
+
+rm -f docs/changelog.md
+git checkout -- docs/changelog.md
+```
+
 ### Building the Source Generator
 
 The Roslyn source generator is a separate .NET project:
