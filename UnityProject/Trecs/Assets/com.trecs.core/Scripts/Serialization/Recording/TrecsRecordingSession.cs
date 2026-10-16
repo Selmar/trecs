@@ -19,7 +19,7 @@ namespace Trecs.Internal
     ///   * Run: <see cref="IsPaused"/> — straight pass-through of the
     ///     SystemRunner's FixedIsPaused flag.
     /// </summary>
-    public class TrecsRecordingSession : IDisposable
+    public class TrecsRecordingSession
     {
         static readonly TrecsLog _log = TrecsLog.Default;
 
@@ -37,7 +37,9 @@ namespace Trecs.Internal
         GameStateMode _lastBroadcastMode = GameStateMode.Idle;
         string _lastBroadcastLoadedRecordingName;
 
-        public TrecsRecordingSession(World world, TrecsRewindBuffer autoRecorder)
+        // Built and torn down by TrecsRecordingSessionRegistry; holders take
+        // a lease through Acquire.
+        internal TrecsRecordingSession(World world, TrecsRewindBuffer autoRecorder)
         {
             _world = world;
             _autoRecorder = autoRecorder;
@@ -143,7 +145,7 @@ namespace Trecs.Internal
         /// </summary>
         public static void NotifySavesChanged() => SavesChanged?.Invoke();
 
-        public void Dispose()
+        internal void Dispose()
         {
             _frameSubscription.Dispose();
             if (_autoRecorder.IsRecording)
