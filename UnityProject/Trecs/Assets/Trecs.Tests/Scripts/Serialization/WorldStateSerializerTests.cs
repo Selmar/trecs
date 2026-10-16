@@ -1148,18 +1148,18 @@ namespace Trecs.Tests
 
         #endregion
 
-        #region Section guard drift
+        #region Block guard drift
 
         /// <summary>
-        /// Locks in the section-guard drift error path: corrupting the last
+        /// Locks in the block-guard drift error path: corrupting the last
         /// byte of the data buffer (which the wire format guarantees is the
         /// <c>AfterSystemEnable</c> guard byte, 0xA6) must trigger a
         /// <see cref="SerializationException"/> whose message names the
         /// section that drifted.
         ///
         /// <para>
-        /// The other five section guards are covered by
-        /// <see cref="Deserialize_ThrowsSerializationException_WhenEachSectionGuardCorrupted"/>
+        /// The other five block guards are covered by
+        /// <see cref="Deserialize_ThrowsSerializationException_WhenEachBlockGuardCorrupted"/>
         /// via a value-scan; the last guard's position is structurally fixed
         /// (last byte of the data buffer, written immediately before the
         /// trailing EndOfPayloadMarker), so it gets its own targeted test
@@ -1167,7 +1167,7 @@ namespace Trecs.Tests
         /// </para>
         /// </summary>
         [Test]
-        public void Deserialize_ThrowsSerializationException_WhenLastSectionGuardCorrupted()
+        public void Deserialize_ThrowsSerializationException_WhenLastBlockGuardCorrupted()
         {
             using var world = CreateWorld();
             var a = world.CreateAccessor(AccessorRole.Unrestricted);
@@ -1201,7 +1201,7 @@ namespace Trecs.Tests
         }
 
         /// <summary>
-        /// Drift-detection coverage for every section guard. For each guard
+        /// Drift-detection coverage for every block guard. For each guard
         /// value (0xA1..0xA6), tries corrupting each occurrence of that byte
         /// in the snapshot stream and asserts that at least one corruption
         /// produces a <see cref="SerializationException"/> whose message
@@ -1226,9 +1226,9 @@ namespace Trecs.Tests
         [TestCase(0xA4, "AfterEntitySets")]
         [TestCase(0xA5, "AfterHeaps")]
         [TestCase(0xA6, "AfterSystemEnable")]
-        public void Deserialize_ThrowsSerializationException_WhenEachSectionGuardCorrupted(
+        public void Deserialize_ThrowsSerializationException_WhenEachBlockGuardCorrupted(
             int guardValue,
-            string sectionName
+            string blockName
         )
         {
             using var world = CreateWorld();
@@ -1276,13 +1276,13 @@ namespace Trecs.Tests
                 }
                 catch (SerializationException ex)
                 {
-                    if (ex.Message.Contains(sectionName))
+                    if (ex.Message.Contains(blockName))
                     {
                         foundNamedException = true;
                         break;
                     }
                     diagnostics.Add(
-                        $"pos {pos}: SerializationException not naming '{sectionName}': {ex.Message}"
+                        $"pos {pos}: SerializationException not naming '{blockName}': {ex.Message}"
                     );
                 }
                 catch (Exception ex)
@@ -1294,7 +1294,7 @@ namespace Trecs.Tests
             NAssert.IsTrue(
                 foundNamedException,
                 $"Expected at least one corruption of byte 0x{guardValue:X2} to throw "
-                    + $"SerializationException naming '{sectionName}'. "
+                    + $"SerializationException naming '{blockName}'. "
                     + $"Candidates tried: {candidates.Count}. Diagnostics: "
                     + string.Join(" | ", diagnostics)
             );
@@ -1302,7 +1302,7 @@ namespace Trecs.Tests
 
         /// <summary>
         /// Inserts one byte into the snapshot stream just after the first
-        /// section guard's expected position, shifting all subsequent reads
+        /// block guard's expected position, shifting all subsequent reads
         /// by one byte. Verifies the resulting drift is caught at some
         /// section boundary (rather than cascading silently through to a
         /// late, vague failure) — the whole point of having multiple guards
@@ -1325,7 +1325,7 @@ namespace Trecs.Tests
             // Insert a junk byte somewhere in the middle of the payload
             // (past the header / bit fields, before the trailing sentinel).
             // The exact position doesn't matter — any 1-byte shift inside
-            // the data buffer will cause section-guard drift.
+            // the data buffer will cause block-guard drift.
             int insertAt = data.Length / 2;
             var shifted = new byte[data.Length + 1];
             Array.Copy(data, 0, shifted, 0, insertAt);

@@ -327,7 +327,7 @@ namespace Trecs
             writer.Write("RngSeed", _world.FixedRng);
             writer.Write("FixedFrameCount", _world.SystemRunner._currentFixedFrameCount);
             writer.Write("FixedElapsedTime", _world.SystemRunner._elapsedFixedTime);
-            WriteSectionGuard(WorldStateSection.AfterTimingFields, writer);
+            WriteBlockGuard(BlockGuard.AfterTimingFields, writer);
 
             var bytesBefore = writer.NumBytesWritten;
 
@@ -337,7 +337,7 @@ namespace Trecs
                 WriteGroupEntityComponentsDB(writer);
             }
             writer.PopScope();
-            WriteSectionGuard(WorldStateSection.AfterComponentArrays, writer);
+            WriteBlockGuard(BlockGuard.AfterComponentArrays, writer);
 
             _log.Trace(
                 "Component arrays serialized in {0} kb",
@@ -351,7 +351,7 @@ namespace Trecs
                 WriteEntityHandlesMap(writer);
             }
             writer.PopScope();
-            WriteSectionGuard(WorldStateSection.AfterEntityHandles, writer);
+            WriteBlockGuard(BlockGuard.AfterEntityHandles, writer);
 
             _log.Trace(
                 "Entity references map serialized in {0} kb",
@@ -368,7 +368,7 @@ namespace Trecs
                 WriteSetRoutingIndex(setStore.SetIdsByGroup, writer);
             }
             writer.PopScope();
-            WriteSectionGuard(WorldStateSection.AfterEntitySets, writer);
+            WriteBlockGuard(BlockGuard.AfterEntitySets, writer);
             _log.Trace(
                 "Entity sets serialized in {0} kb",
                 (writer.NumBytesWritten - bytesBefore) / 1024f
@@ -393,7 +393,7 @@ namespace Trecs
                 writer.PopScope();
             }
             writer.PopScope();
-            WriteSectionGuard(WorldStateSection.AfterHeaps, writer);
+            WriteBlockGuard(BlockGuard.AfterHeaps, writer);
 
             _log.Trace(
                 "Heap memory serialized in {0} kb",
@@ -406,14 +406,14 @@ namespace Trecs
                 _world.SystemEnableState.Serialize(writer);
             }
             writer.PopScope();
-            WriteSectionGuard(WorldStateSection.AfterSystemEnable, writer);
+            WriteBlockGuard(BlockGuard.AfterSystemEnable, writer);
 
             // A world without sections writes nothing here, so its snapshots
             // keep the format they had before sections existed.
             if (_world.StateSections.Count > 0)
             {
                 WriteStateSections(writer);
-                WriteSectionGuard(WorldStateSection.AfterStateSections, writer);
+                WriteBlockGuard(BlockGuard.AfterStateSections, writer);
             }
 
             writer.PopScope();
@@ -618,19 +618,19 @@ namespace Trecs
             reader.ReadInPlace("rngSeed", _world.FixedRng);
             _world.SystemRunner._currentFixedFrameCount = reader.Read<int>("FixedFrameCount");
             _world.SystemRunner._elapsedFixedTime = reader.Read<float>("FixedElapsedTime");
-            ReadSectionGuard(WorldStateSection.AfterTimingFields, reader);
+            ReadBlockGuard(BlockGuard.AfterTimingFields, reader);
 
             using (TrecsProfiling.Start("Reading component arrays"))
             {
                 ReadGroupEntityComponentsDB(reader);
             }
-            ReadSectionGuard(WorldStateSection.AfterComponentArrays, reader);
+            ReadBlockGuard(BlockGuard.AfterComponentArrays, reader);
 
             using (TrecsProfiling.Start("Reading entity references map"))
             {
                 ReadEntityHandlesMap(reader);
             }
-            ReadSectionGuard(WorldStateSection.AfterEntityHandles, reader);
+            ReadBlockGuard(BlockGuard.AfterEntityHandles, reader);
 
             using (TrecsProfiling.Start("Reading entity sets"))
             {
@@ -639,7 +639,7 @@ namespace Trecs
                 ReadSets(setStore, reader);
                 ReadSetRoutingIndex(setStore.SetIdsByGroup, reader);
             }
-            ReadSectionGuard(WorldStateSection.AfterEntitySets, reader);
+            ReadBlockGuard(BlockGuard.AfterEntitySets, reader);
 
             using (TrecsProfiling.Start("Reading heap memory"))
             {
@@ -653,13 +653,13 @@ namespace Trecs
                 // is not part of the snapshot payload.
                 _world.GetNativeUniqueChunkStore().Deserialize(reader);
             }
-            ReadSectionGuard(WorldStateSection.AfterHeaps, reader);
+            ReadBlockGuard(BlockGuard.AfterHeaps, reader);
 
             using (TrecsProfiling.Start("Reading system enable state"))
             {
                 _world.SystemEnableState.Deserialize(reader);
             }
-            ReadSectionGuard(WorldStateSection.AfterSystemEnable, reader);
+            ReadBlockGuard(BlockGuard.AfterSystemEnable, reader);
 
             if (_world.StateSections.Count > 0)
             {
@@ -667,7 +667,7 @@ namespace Trecs
                 {
                     ReadStateSections(reader);
                 }
-                ReadSectionGuard(WorldStateSection.AfterStateSections, reader);
+                ReadBlockGuard(BlockGuard.AfterStateSections, reader);
             }
         }
 
@@ -707,15 +707,14 @@ namespace Trecs
             }
         }
 
-        // Section markers written between major blocks of the world-state
-        // stream. Drift between a Serialize* and its Deserialize* counterpart
-        // is caught at the section boundary instead of cascading as garbage
-        // into the next block, and the assert message pinpoints which section
-        // diverged. One byte each — six bytes per snapshot, seven with state
-        // sections.
+        // Markers written between major blocks of the world-state stream.
+        // Drift between a Serialize* and its Deserialize* counterpart is
+        // caught at the block boundary instead of cascading as garbage into
+        // the next block, and the exception names the block that diverged.
+        // One byte each — six bytes per snapshot, seven with state sections.
         // Values are chosen out of the natural range of small ints/lengths
         // that surround them, so they're obvious in a hex dump.
-        enum WorldStateSection : byte
+        enum BlockGuard : byte
         {
             AfterTimingFields = 0xA1,
             AfterComponentArrays = 0xA2,
@@ -726,15 +725,15 @@ namespace Trecs
             AfterStateSections = 0xA7,
         }
 
-        static void WriteSectionGuard(WorldStateSection section, ISerializationWriter writer)
+        static void WriteBlockGuard(BlockGuard guard, ISerializationWriter writer)
         {
-            writer.BlitWrite("SectionGuard", (byte)section);
+            writer.BlitWrite("BlockGuard", (byte)guard);
         }
 
-        static void ReadSectionGuard(WorldStateSection expected, ISerializationReader reader)
+        static void ReadBlockGuard(BlockGuard expected, ISerializationReader reader)
         {
             byte actual = 0;
-            reader.BlitRead("SectionGuard", ref actual);
+            reader.BlitRead("BlockGuard", ref actual);
             if (actual != (byte)expected)
             {
                 // SerializationException (not TrecsDebugAssert) because drift
@@ -743,9 +742,9 @@ namespace Trecs
                 // would produce garbage entity-array reads, which is much
                 // worse than a clean fail-loud here.
                 throw new SerializationException(
-                    $"WorldStateSerializer stream drift: expected section guard "
+                    $"WorldStateSerializer stream drift: expected block guard "
                         + $"{expected} (0x{(byte)expected:X2}) but got 0x{actual:X2}. "
-                        + "A SerializeImpl section's wire format does not match its "
+                        + "A SerializeImpl block's wire format does not match its "
                         + "DeserializeImpl counterpart."
                 );
             }

@@ -101,7 +101,7 @@ namespace Trecs
         /// Verify the payload-level <see cref="SerializationConstants.EndOfPayloadMarker"/>
         /// that <see cref="BinarySerializationWriter"/> appends to every stream.
         /// Distinct from the ECS-state-level guard inside <c>WorldStateSerializer</c>
-        /// (<c>WorldStateStreamGuard</c>), which is checked during <c>DeserializeState</c>.
+        /// (<c>BlockGuard</c>), which is checked during <c>DeserializeState</c>.
         /// </summary>
         void VerifySentinel()
         {
