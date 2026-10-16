@@ -2443,44 +2443,14 @@ namespace Trecs.SourceGen
             sb.AppendLine(
                 $"{ind}public JobHandle Schedule(WorldAccessor world{fromWorldParamDecl}, JobHandle extraDeps = default)"
             );
-            sb.AppendLine($"{ind}{{");
-            string body = ind + "    ";
-
-            sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}world = world;");
-            sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}extraDeps = extraDeps;");
-
-            sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}scheduler = {FromWorldEmitter.GenPrefix}world.GetJobSchedulerForJob();"
+            EmitCustomScheduleBody(
+                sb,
+                model,
+                ind,
+                orderedEmits,
+                earlyOutCondition: null,
+                scheduleCall: $"{FromWorldEmitter.GenPrefix}job.Schedule({FromWorldEmitter.GenPrefix}deps)"
             );
-            sb.AppendLine(
-                $"{body}const string {FromWorldEmitter.GenPrefix}jobName = \"{model.StructName}\";"
-            );
-
-            FromWorldEmitter.EmitFromWorldHoistedSetup(sb, body, orderedEmits);
-            var fromEntityTargets = model
-                .FromSingleEntityFields.Select(f => f.ToEmitTarget())
-                .ToList();
-            FromSingleEntityEmitter.EmitHoistedSetup(sb, body, fromEntityTargets);
-
-            sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}deps = {FromWorldEmitter.GenPrefix}extraDeps;"
-            );
-            FromWorldEmitter.EmitFromWorldDepRegistration(sb, body, orderedEmits);
-            FromSingleEntityEmitter.EmitDepRegistration(sb, body, fromEntityTargets);
-
-            sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}job = this;");
-            FromWorldEmitter.EmitFromWorldFieldAssignments(sb, body, orderedEmits);
-            FromSingleEntityEmitter.EmitFieldAssignment(sb, body, fromEntityTargets);
-
-            sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}job.Schedule({FromWorldEmitter.GenPrefix}deps);"
-            );
-
-            FromWorldEmitter.EmitFromWorldTracking(sb, body, orderedEmits);
-            FromSingleEntityEmitter.EmitTracking(sb, body, fromEntityTargets);
-
-            sb.AppendLine($"{body}return {FromWorldEmitter.GenPrefix}handle;");
-            sb.AppendLine($"{ind}}}");
         }
 
         static void EmitCustomParallelScheduleOverload(
@@ -2497,55 +2467,22 @@ namespace Trecs.SourceGen
             sb.AppendLine(
                 $"{ind}public JobHandle ScheduleParallel(WorldAccessor world, int count{fromWorldParamDecl}, JobHandle extraDeps = default, int innerloopBatchCount = 0)"
             );
-            sb.AppendLine($"{ind}{{");
-            string body = ind + "    ";
-
-            sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}world = world;");
-            sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}extraDeps = extraDeps;");
-
-            sb.AppendLine($"{body}if (count <= 0) return {FromWorldEmitter.GenPrefix}extraDeps;");
-            sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}scheduler = {FromWorldEmitter.GenPrefix}world.GetJobSchedulerForJob();"
+            EmitCustomScheduleBody(
+                sb,
+                model,
+                ind,
+                orderedEmits,
+                earlyOutCondition: "count <= 0",
+                scheduleCall: $"{FromWorldEmitter.GenPrefix}job.ScheduleParallel(count, innerloopBatchCount > 0 ? innerloopBatchCount : JobsUtil.ChooseBatchSize(count), {FromWorldEmitter.GenPrefix}deps)"
             );
-            sb.AppendLine(
-                $"{body}const string {FromWorldEmitter.GenPrefix}jobName = \"{model.StructName}\";"
-            );
-
-            FromWorldEmitter.EmitFromWorldHoistedSetup(sb, body, orderedEmits);
-            var fromEntityTargets = model
-                .FromSingleEntityFields.Select(f => f.ToEmitTarget())
-                .ToList();
-            FromSingleEntityEmitter.EmitHoistedSetup(sb, body, fromEntityTargets);
-
-            sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}deps = {FromWorldEmitter.GenPrefix}extraDeps;"
-            );
-            FromWorldEmitter.EmitFromWorldDepRegistration(sb, body, orderedEmits);
-            FromSingleEntityEmitter.EmitDepRegistration(sb, body, fromEntityTargets);
-
-            sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}job = this;");
-            FromWorldEmitter.EmitFromWorldFieldAssignments(sb, body, orderedEmits);
-            FromSingleEntityEmitter.EmitFieldAssignment(sb, body, fromEntityTargets);
-
-            sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}job.ScheduleParallel(count, innerloopBatchCount > 0 ? innerloopBatchCount : JobsUtil.ChooseBatchSize(count), {FromWorldEmitter.GenPrefix}deps);"
-            );
-
-            FromWorldEmitter.EmitFromWorldTracking(sb, body, orderedEmits);
-            FromSingleEntityEmitter.EmitTracking(sb, body, fromEntityTargets);
-
-            sb.AppendLine($"{body}return {FromWorldEmitter.GenPrefix}handle;");
-            sb.AppendLine($"{ind}}}");
         }
 
         /// <summary>
         /// Deferred-count sibling of <see cref="EmitCustomParallelScheduleOverload"/>. Emits
         /// up to two overloads — a <c>NativeList</c> form and, where the consuming assembly
         /// permits unsafe code, a raw <c>int*</c> form — differing only in how the count
-        /// reaches <c>IJobParallelForDeferExtensions.Schedule</c>. The dependency wiring
-        /// around the schedule call is identical to the non-deferred path; only the batch
-        /// size becomes the caller's problem, since <c>JobsUtil.ChooseBatchSize</c> needs a
-        /// count nobody has yet.
+        /// reaches <c>IJobParallelForDeferExtensions.Schedule</c>. The batch size is the
+        /// caller's: <c>JobsUtil.ChooseBatchSize</c> needs a count nobody has yet.
         /// </summary>
         static void EmitCustomDeferredParallelScheduleOverloads(
             StringBuilder sb,
@@ -2558,12 +2495,19 @@ namespace Trecs.SourceGen
             var paramFields = orderedEmits.Where(e => e.HasScheduleParam).ToList();
             var fromWorldParamDecl = FormatFromWorldParamDecl(paramFields);
 
+            // No `count <= 0` early-out: not knowing the count on the main thread is the
+            // whole reason this path exists. A zero-length run costs one empty job.
+            // Called in static form: the extension would bind through the user's own struct,
+            // where a member named Schedule would silently win.
+            var scheduleCall =
+                $"Unity.Jobs.IJobParallelForDeferExtensions.Schedule({FromWorldEmitter.GenPrefix}job, forEachCount, innerloopBatchCount, {FromWorldEmitter.GenPrefix}deps)";
+
             sb.AppendLine($"{ind}{GeneratedCodeAttributes.Line}");
             sb.AppendLine(
                 $"{ind}public JobHandle ScheduleParallel<TCount>(WorldAccessor world, Unity.Collections.NativeList<TCount> forEachCount, int innerloopBatchCount{fromWorldParamDecl}, JobHandle extraDeps = default)"
             );
             sb.AppendLine($"{ind}    where TCount : unmanaged");
-            EmitDeferredScheduleBody(sb, model, ind, orderedEmits);
+            EmitCustomScheduleBody(sb, model, ind, orderedEmits, null, scheduleCall);
 
             if (!allowUnsafe)
                 return;
@@ -2573,14 +2517,20 @@ namespace Trecs.SourceGen
             sb.AppendLine(
                 $"{ind}public unsafe JobHandle ScheduleParallel(WorldAccessor world, int* forEachCount, int innerloopBatchCount{fromWorldParamDecl}, JobHandle extraDeps = default)"
             );
-            EmitDeferredScheduleBody(sb, model, ind, orderedEmits);
+            EmitCustomScheduleBody(sb, model, ind, orderedEmits, null, scheduleCall);
         }
 
-        static void EmitDeferredScheduleBody(
+        // Body of a custom job's schedule overload: wires world and singleton fields into a
+        // copy of the job, schedules it with scheduleCall (an expression over the job and
+        // deps locals), and tracks the handle. earlyOutCondition, when set, returns
+        // extraDeps before any setup.
+        static void EmitCustomScheduleBody(
             StringBuilder sb,
             in JobModel model,
             string ind,
-            List<FromWorldFieldEmitModel> orderedEmits
+            List<FromWorldFieldEmitModel> orderedEmits,
+            string? earlyOutCondition,
+            string scheduleCall
         )
         {
             sb.AppendLine($"{ind}{{");
@@ -2589,8 +2539,12 @@ namespace Trecs.SourceGen
             sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}world = world;");
             sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}extraDeps = extraDeps;");
 
-            // No `count <= 0` early-out here — not knowing the count on the main thread is
-            // the whole reason this path exists. A zero-length run costs one empty job.
+            if (earlyOutCondition != null)
+            {
+                sb.AppendLine(
+                    $"{body}if ({earlyOutCondition}) return {FromWorldEmitter.GenPrefix}extraDeps;"
+                );
+            }
             sb.AppendLine(
                 $"{body}var {FromWorldEmitter.GenPrefix}scheduler = {FromWorldEmitter.GenPrefix}world.GetJobSchedulerForJob();"
             );
@@ -2614,11 +2568,7 @@ namespace Trecs.SourceGen
             FromWorldEmitter.EmitFromWorldFieldAssignments(sb, body, orderedEmits);
             FromSingleEntityEmitter.EmitFieldAssignment(sb, body, fromEntityTargets);
 
-            // Called in static form: the extension would bind through the user's own struct,
-            // where a member named Schedule would silently win.
-            sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}handle = Unity.Jobs.IJobParallelForDeferExtensions.Schedule({FromWorldEmitter.GenPrefix}job, forEachCount, innerloopBatchCount, {FromWorldEmitter.GenPrefix}deps);"
-            );
+            sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}handle = {scheduleCall};");
 
             FromWorldEmitter.EmitFromWorldTracking(sb, body, orderedEmits);
             FromSingleEntityEmitter.EmitTracking(sb, body, fromEntityTargets);
