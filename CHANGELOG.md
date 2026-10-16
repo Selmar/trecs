@@ -10,13 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - **World state sections.** `IWorldStateSection` and `World.AddStateSection` carry simulation state held outside components and heaps (a system's containers, a queue between systems) through snapshots, recordings, checksums and desync dumps.
+- **Deferred iteration counts.** A custom job that declares `IJobParallelForDefer` gets `ScheduleParallel` overloads that take the count as a `NativeList` length or, in an assembly that allows unsafe code, an `int*`, with a required batch size. TRECS072 rejects `IJobParallelForDefer` on a `[ForEachEntity]` job.
+- **Batch size override.** Every generated `ScheduleParallel` takes a trailing optional `innerloopBatchCount`. `0`, the default, keeps `JobsUtil.ChooseBatchSize`.
+- **Ordering on identity types.** `EntityHandle`, `TypeId`, `ComponentTypeId`, `Tag` and `BlobId` implement `IComparable<T>`, so they sort and can key sorted containers.
 
 ### Changed
 
 - **Runtime rewind.** `TrecsRewindBuffer`, `TrecsRecordingSession`, `TrecsRecordingSessionRegistry` and `GameStateMode` moved from `Trecs.Editor` to the runtime assembly and are public (`Trecs.Internal`), so game code can record, scrub and replay a world outside the editor. The editor window reuses a session game code registered. A desync raises `TrecsRewindBuffer.Desynced`; the editor pauses play mode on it as before.
-- **Desync dumps in every build.** `TrecsRewindBuffer.DumpDesyncDiff`, `FlatPathSerializationWriter` and the serialization scopes that name its paths are no longer `DEBUG`-only, so a release build can write the two states of a desync as flat-path text. Outside a dump, a scope costs one type check.
+- **Desync dumps in every build.** `TrecsRewindBuffer.DumpDesyncDiff`, `FlatPathSerializationWriter` and the serialization scopes that name its paths are no longer `DEBUG`-only, so a release build can write the two states of a desync as flat-path text. Outside a dump, a scope costs one type check. The native heap is dumped per allocation only in `DEBUG` builds; a release dump holds its raw pages.
 
 - **A loaded recording never goes live on its own.** At its tail, and on any step past it, it pauses (or loops), as a scrubbed auto-recording does. `ForkAtCurrentFrame` (Record in the Player window) is the only way to live capture. Before, resuming past the tail promoted the recording to live capture.
+
+### Fixed
+
+- A custom job whose only world-wired fields are `[FromSingleEntity]` or `[FromGlobalEntity]` gets its `Schedule`. Before, the generator emitted nothing and gave no diagnostic, so the job could not pick up the dependency on the singleton's writers.
 
 ## [0.2.0] - 2026-05-07
 
