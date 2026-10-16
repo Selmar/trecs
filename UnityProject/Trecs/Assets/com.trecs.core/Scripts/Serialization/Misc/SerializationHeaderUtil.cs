@@ -21,7 +21,15 @@ namespace Trecs.Internal
         //   2: data section drops BinaryWriter/BinaryReader intermediary;
         //      strings use int32 byte-count prefix instead of 7-bit
         //      variable-length encoding.
-        public const byte FormatVersion = 2;
+        //   3: world state always carries its state-section block, even
+        //      with no sections. Format 2 world state has none.
+        public const byte FormatVersion = 3;
+
+        // Oldest format readers accept. Code reading a block that a later
+        // format added branches on ISerializationReader.FormatVersion.
+        public const byte MinReadableFormatVersion = 2;
+
+        public const byte StateSectionsFormatVersion = 3;
 
         // magic0 (1) + magic1 (1) + formatVersion (1) + version (4) + flags (8) + includeTypeChecks (1)
         const int HeaderSize = 16;
@@ -61,7 +69,12 @@ namespace Trecs.Internal
             header[15] = includeTypeChecks ? (byte)1 : (byte)0;
         }
 
-        public static (int version, long flags, bool includeTypeChecks) ReadHeader(Stream stream)
+        public static (
+            int version,
+            long flags,
+            bool includeTypeChecks,
+            byte formatVersion
+        ) ReadHeader(Stream stream)
         {
             Span<byte> header = stackalloc byte[HeaderSize];
             int bytesRead = stream.Read(header);
@@ -76,10 +89,12 @@ namespace Trecs.Internal
             return ParseHeader(header);
         }
 
-        public static (int version, long flags, bool includeTypeChecks) ReadHeader(
-            ReadOnlySpan<byte> data,
-            ref int offset
-        )
+        public static (
+            int version,
+            long flags,
+            bool includeTypeChecks,
+            byte formatVersion
+        ) ReadHeader(ReadOnlySpan<byte> data, ref int offset)
         {
             if (offset + HeaderSize > data.Length)
             {
@@ -93,7 +108,7 @@ namespace Trecs.Internal
             return result;
         }
 
-        static (int version, long flags, bool includeTypeChecks) ParseHeader(
+        static (int version, long flags, bool includeTypeChecks, byte formatVersion) ParseHeader(
             ReadOnlySpan<byte> header
         )
         {
@@ -111,19 +126,19 @@ namespace Trecs.Internal
             }
 
             var formatVersion = header[2];
-            if (formatVersion != FormatVersion)
+            if (formatVersion < MinReadableFormatVersion || formatVersion > FormatVersion)
             {
                 throw new SerializationException(
                     $"Unsupported Trecs serialization format version {formatVersion} "
-                        + $"(expected {FormatVersion}). Payload was written by a different "
-                        + "version of Trecs."
+                        + $"(expected {MinReadableFormatVersion} to {FormatVersion}). Payload "
+                        + "was written by a different version of Trecs."
                 );
             }
 
             var version = BinaryPrimitives.ReadInt32LittleEndian(header.Slice(3));
             var flags = BinaryPrimitives.ReadInt64LittleEndian(header.Slice(7));
             var includeTypeChecks = header[15] != 0;
-            return (version, flags, includeTypeChecks);
+            return (version, flags, includeTypeChecks, formatVersion);
         }
     }
 }
@@ -167,7 +182,7 @@ namespace Trecs.Internal
             var startPosition = stream.Position;
             try
             {
-                var (version, flags, includeTypeChecks) = SerializationHeaderUtil.ReadHeader(
+                var (version, flags, includeTypeChecks, _) = SerializationHeaderUtil.ReadHeader(
                     stream
                 );
                 return new PayloadHeader(version, flags, includeTypeChecks);

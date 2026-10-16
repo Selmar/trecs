@@ -408,13 +408,8 @@ namespace Trecs
             writer.PopScope();
             WriteBlockGuard(BlockGuard.AfterSystemEnable, writer);
 
-            // A world without sections writes nothing here, so its snapshots
-            // keep the format they had before sections existed.
-            if (_world.StateSections.Count > 0)
-            {
-                WriteStateSections(writer);
-                WriteBlockGuard(BlockGuard.AfterStateSections, writer);
-            }
+            WriteStateSections(writer);
+            WriteBlockGuard(BlockGuard.AfterStateSections, writer);
 
             writer.PopScope();
         }
@@ -661,14 +656,21 @@ namespace Trecs
             }
             ReadBlockGuard(BlockGuard.AfterSystemEnable, reader);
 
-            if (_world.StateSections.Count > 0)
+            if (reader.FormatVersion < SerializationHeaderUtil.StateSectionsFormatVersion)
             {
-                using (TrecsProfiling.Start("Reading state sections"))
+                if (_world.StateSections.Count > 0)
                 {
-                    ReadStateSections(reader);
+                    throw new SerializationException(
+                        $"Snapshot predates state sections (format {reader.FormatVersion}) but this world registers {_world.StateSections.Count}."
+                    );
                 }
-                ReadBlockGuard(BlockGuard.AfterStateSections, reader);
+                return;
             }
+            using (TrecsProfiling.Start("Reading state sections"))
+            {
+                ReadStateSections(reader);
+            }
+            ReadBlockGuard(BlockGuard.AfterStateSections, reader);
         }
 
         void WriteStateSections(ISerializationWriter writer)
@@ -711,7 +713,7 @@ namespace Trecs
         // Drift between a Serialize* and its Deserialize* counterpart is
         // caught at the block boundary instead of cascading as garbage into
         // the next block, and the exception names the block that diverged.
-        // One byte each — six bytes per snapshot, seven with state sections.
+        // One byte each, seven per snapshot.
         // Values are chosen out of the natural range of small ints/lengths
         // that surround them, so they're obvious in a hex dump.
         enum BlockGuard : byte

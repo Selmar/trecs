@@ -313,7 +313,9 @@ Sections are written after the heaps, in registration order, and read back in th
 
 `Name` identifies the section: a hash of it is written ahead of the section's data and checked on load, and it scopes the section in flat-path dumps. Names must be unique per world, and must not change while saved snapshots still need to load.
 
-A snapshot must be loaded into a world that registers the same sections in the same order; a different count, or a different name at the same position, fails the load with a `SerializationException`. A world with no sections writes nothing for them, so its snapshots keep the format they had before sections existed.
+A snapshot must be loaded into a world that registers the same sections in the same order; a different count, or a different name at the same position, fails the load with a `SerializationException`. A section's own layout versions like a serializer's: branch on `reader.Version`.
+
+Snapshots written before sections existed (serialization format 2) still load into a world without sections. A world with sections refuses them, since they hold no state for its sections.
 
 Prefer components or heap collections where they fit; a section is for state that deliberately stays outside them. Wrapping `WorldStateSerializer` in your own `IWorldStateSerializer` also adds data, but only on the code paths that construct your wrapper — editor tooling such as the Player window builds its own and would miss it.
 

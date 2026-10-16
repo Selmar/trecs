@@ -206,6 +206,87 @@ namespace Trecs.Tests
         }
 
         [Test]
+        public void StateSection_SnapshotWithoutSections_IntoWorldWithSections_Throws()
+        {
+            using var saved = CreateWorld();
+            var data = SerializeWorld(saved);
+
+            using var other = CreateWorld(beforeInitialize: w =>
+                w.AddStateSection(new CounterSection())
+            );
+            var ex = NAssert.Throws<SerializationException>(() => DeserializeWorld(other, data));
+            StringAssert.Contains("holds 0 state sections", ex.Message);
+        }
+
+        [Test]
+        public void StateSection_SnapshotWithSections_IntoWorldWithoutSections_Throws()
+        {
+            using var saved = CreateWorld(beforeInitialize: w =>
+                w.AddStateSection(new CounterSection())
+            );
+            var data = SerializeWorld(saved);
+
+            using var other = CreateWorld();
+            var ex = NAssert.Throws<SerializationException>(() => DeserializeWorld(other, data));
+            StringAssert.Contains("holds 1 state sections", ex.Message);
+        }
+
+        [Test]
+        public void StateSection_Format2Snapshot_LoadsIntoWorldWithoutSections()
+        {
+            using var world = CreateWorld();
+            var a = world.CreateAccessor(AccessorRole.Unrestricted);
+            a.AddEntity(PartitionA)
+                .Set(new SerTestInt { Value = 5 })
+                .Set(new SerTestFloat { Value = 0.5f })
+                .AssertComplete();
+            a.Submit();
+            var data = ToFormat2(SerializeWorld(world));
+            a.AddEntity(PartitionA)
+                .Set(new SerTestInt { Value = 6 })
+                .Set(new SerTestFloat { Value = 0.5f })
+                .AssertComplete();
+            a.Submit();
+
+            var reader = new BinarySerializationReader(_serializerRegistry);
+            reader.Start(data);
+            new WorldStateSerializer(world).DeserializeState(reader);
+            reader.Stop(verifySentinel: true);
+
+            NAssert.AreEqual(1, a.CountEntitiesWithTags(PartitionA));
+        }
+
+        [Test]
+        public void StateSection_Format2Snapshot_IntoWorldWithSections_Throws()
+        {
+            using var saved = CreateWorld();
+            var data = ToFormat2(SerializeWorld(saved));
+
+            using var other = CreateWorld(beforeInitialize: w =>
+                w.AddStateSection(new CounterSection())
+            );
+            var ex = NAssert.Throws<SerializationException>(() => DeserializeWorld(other, data));
+            StringAssert.Contains("predates state sections", ex.Message);
+        }
+
+        // Rewrites a sectionless format-3 payload as format 2 wrote it: header
+        // byte 2 is the format, and the data ends without the empty section
+        // block (int count 0, guard 0xA7) before the end-of-payload marker.
+        static byte[] ToFormat2(byte[] data)
+        {
+            const int blockSize = sizeof(int) + 1;
+            NAssert.AreEqual((byte)3, data[2], "Expected a format-3 payload");
+            NAssert.AreEqual((byte)0xA7, data[data.Length - 2]);
+            NAssert.AreEqual(0, BitConverter.ToInt32(data, data.Length - 2 - sizeof(int)));
+
+            var result = new byte[data.Length - blockSize];
+            Array.Copy(data, result, data.Length - 1 - blockSize);
+            result[result.Length - 1] = data[data.Length - 1];
+            result[2] = 2;
+            return result;
+        }
+
+        [Test]
         public void StateSection_DuplicateName_Asserts()
         {
             NAssert.That(
@@ -1153,12 +1234,12 @@ namespace Trecs.Tests
         /// <summary>
         /// Locks in the block-guard drift error path: corrupting the last
         /// byte of the data buffer (which the wire format guarantees is the
-        /// <c>AfterSystemEnable</c> guard byte, 0xA6) must trigger a
+        /// <c>AfterStateSections</c> guard byte, 0xA7) must trigger a
         /// <see cref="SerializationException"/> whose message names the
         /// section that drifted.
         ///
         /// <para>
-        /// The other five block guards are covered by
+        /// The other six block guards are covered by
         /// <see cref="Deserialize_ThrowsSerializationException_WhenEachBlockGuardCorrupted"/>
         /// via a value-scan; the last guard's position is structurally fixed
         /// (last byte of the data buffer, written immediately before the
@@ -1180,8 +1261,8 @@ namespace Trecs.Tests
 
             var data = SerializeWorld(world);
 
-            // Wire format: [...data buffer ending with AfterSystemEnable
-            // guard byte 0xA6][EndOfPayloadMarker 0x5E]. The last guard byte
+            // Wire format: [...data buffer ending with AfterStateSections
+            // guard byte 0xA7][EndOfPayloadMarker 0x5E]. The last guard byte
             // therefore lives at data.Length - 2.
             NAssert.AreEqual(
                 (byte)0x5E,
@@ -1189,20 +1270,20 @@ namespace Trecs.Tests
                 "Trailing byte should be EndOfPayloadMarker"
             );
             NAssert.AreEqual(
-                (byte)0xA6,
+                (byte)0xA7,
                 data[data.Length - 2],
-                "Byte before EndOfPayloadMarker should be the AfterSystemEnable guard"
+                "Byte before EndOfPayloadMarker should be the AfterStateSections guard"
             );
 
             data[data.Length - 2] ^= 0xFF;
 
             var ex = NAssert.Throws<SerializationException>(() => DeserializeWorld(world, data));
-            StringAssert.Contains("AfterSystemEnable", ex.Message);
+            StringAssert.Contains("AfterStateSections", ex.Message);
         }
 
         /// <summary>
         /// Drift-detection coverage for every block guard. For each guard
-        /// value (0xA1..0xA6), tries corrupting each occurrence of that byte
+        /// value (0xA1..0xA7), tries corrupting each occurrence of that byte
         /// in the snapshot stream and asserts that at least one corruption
         /// produces a <see cref="SerializationException"/> whose message
         /// names the section. The "at least one" framing is robust to
@@ -1226,6 +1307,7 @@ namespace Trecs.Tests
         [TestCase(0xA4, "AfterEntitySets")]
         [TestCase(0xA5, "AfterHeaps")]
         [TestCase(0xA6, "AfterSystemEnable")]
+        [TestCase(0xA7, "AfterStateSections")]
         public void Deserialize_ThrowsSerializationException_WhenEachBlockGuardCorrupted(
             int guardValue,
             string blockName
