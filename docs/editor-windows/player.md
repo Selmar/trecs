@@ -135,7 +135,7 @@ lease.Dispose();
 
 There is one session per world, shared between its holders. `Acquire` builds it on the first lease, and the last lease disposed tears it down. This window holds a lease while it is open, so game code and the window drive the same session, and closing the window never disposes one game code still holds. In the editor, the stored Player settings apply to a session as it is built, so set your own after `Acquire`.
 
-`TrecsRewindBuffer.Desynced` fires at the first frame a replay's checksum differs from the recorded one. In the editor, play mode pauses on it.
+`TrecsRewindBuffer.Desynced` fires at the first frame a replay's checksum differs from the recorded one. In the editor, play mode pauses on it. `TrecsRewindBuffer.DumpDesyncDiff` then writes the recorded and the diverged state at that frame as two flat-path text files to diff, in any build. Native-heap allocations appear one entry each; `DEBUG` builds name them by the file and line that allocated them.
 
 ## See also
 
