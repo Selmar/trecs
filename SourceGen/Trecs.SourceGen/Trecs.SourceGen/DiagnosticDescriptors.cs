@@ -360,7 +360,7 @@ namespace Trecs.SourceGen
             isEnabledByDefault: true
         );
 
-        // Job scheduling diagnostics (TRECS070, 071, 073-079; 072 unused)
+        // Job scheduling diagnostics (TRECS070-079)
 
         public static readonly DiagnosticDescriptor JobInsideGenericOuterTypeNotSupported = new(
             id: "TRECS073",

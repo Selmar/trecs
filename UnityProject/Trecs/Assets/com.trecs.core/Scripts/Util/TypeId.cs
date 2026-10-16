@@ -31,8 +31,8 @@ namespace Trecs
             return Value;
         }
 
-        // Ordering is by raw id: arbitrary but stable within a run, and stable
-        // across runs too (ids are content hashes of the type).
+        // Orders by raw id: the explicit [TypeId] value, else a hash of the
+        // type's full name. Arbitrary, but stable across runs until a rename.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly int CompareTo(TypeId other)
         {

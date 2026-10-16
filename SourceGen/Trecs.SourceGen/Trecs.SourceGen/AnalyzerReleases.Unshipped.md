@@ -6,8 +6,8 @@
 Rule ID | Category | Severity | Notes
 --------|----------|----------|-------
 TRECS038 | Trecs | Warning | Template generates many partitions
-TRECS072 | Trecs | Error | IJobParallelForDefer is not supported on a [ForEachEntity] job
 TRECS039 | Trecs | Error | Cannot register an abstract template
+TRECS072 | Trecs | Error | IJobParallelForDefer is not supported on a [ForEachEntity] job
 TRECS118 | Trecs | Error | [NonCopyable] struct must not be copied to a by-value local
 TRECS119 | Trecs | Error | [NonCopyable] struct must not be passed by value
 TRECS120 | Trecs | Error | [NonCopyable] and [Copyable] cannot both be applied to the same struct

@@ -104,8 +104,9 @@ internal static class TrecsStubs
             }
 
             // Mirrors Unity.Jobs.IJobParallelForDeferExtensions. The deferred-count job
-            // generation path emits `__trecs_job.Schedule(forEachCount, batch, deps)` against
-            // one of these two overloads: the NativeList form and the raw `int*` form.
+            // generation path emits `IJobParallelForDeferExtensions.Schedule(__trecs_job,
+            // forEachCount, innerloopBatchCount, deps)` in static form, against one of these
+            // two overloads: the NativeList form and the raw `int*` form.
             public static unsafe class IJobParallelForDeferExtensions
             {
                 public static JobHandle Schedule<T, U>(

@@ -157,11 +157,12 @@ Both `[FromWorld]` fields are populated by the generated overload, exactly as on
 ```csharp
 var job = new BroadphaseJob { Bodies = bodies };
 
-// NativeList form — count is the list's length
-var handle = job.ScheduleParallel(world, bodies, batchSize, deps);
+// NativeList form — count is the list's length when the job starts
+var listHandle = job.ScheduleParallel(world, bodies, batchSize, deps);
 
-// Raw pointer form — count is read when the job starts
-var handle = job.ScheduleParallel(world, map.GetElementCountPtr(), batchSize, deps);
+// Raw pointer form — count is read when the job starts. Here an earlier job writes it into a
+// NativeReference<int>; GetUnsafePtr is in Unity.Collections.LowLevel.Unsafe and needs an unsafe context.
+var pointerHandle = job.ScheduleParallel(world, (int*)bodyCount.GetUnsafePtr(), batchSize, deps);
 ```
 
 Two differences from the non-deferred path:
