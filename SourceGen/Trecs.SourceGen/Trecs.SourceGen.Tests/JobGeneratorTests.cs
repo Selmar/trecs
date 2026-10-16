@@ -363,6 +363,65 @@ public class JobGeneratorTests
     }
 
     [Test]
+    public void DeferredParallelJob_WithoutAllowUnsafe_EmitsOnlyNativeListOverload()
+    {
+        // The int* overload would be CS0227 in an assembly without AllowUnsafeBlocks. The
+        // stubs are unsafe themselves, so only the generated trees are checked.
+        const string source = """
+            namespace Sample
+            {
+                public partial struct CPos : Trecs.IEntityComponent { public float X; }
+                public struct MoverTag : Trecs.ITag { }
+
+                public partial struct DeferredJob : Unity.Jobs.IJobParallelForDefer
+                {
+                    [Unity.Collections.NativeDisableParallelForRestriction]
+                    [Trecs.FromWorld(Tag = typeof(MoverTag))]
+                    public Trecs.NativeComponentLookupWrite<CPos> Positions;
+
+                    public void Execute(int index) { }
+                }
+
+                public static class Caller
+                {
+                    public static void Go(
+                        Trecs.WorldAccessor world,
+                        Unity.Collections.NativeList<int> counts)
+                    {
+                        new DeferredJob().ScheduleParallel(world, counts, 32);
+                    }
+                }
+            }
+            """;
+
+        var run = GeneratorTestHarness.Run(
+            new Microsoft.CodeAnalysis.IIncrementalGenerator[]
+            {
+                new JobGenerator(),
+                new AspectGenerator(),
+                new EntityComponentGenerator(),
+            },
+            source,
+            allowUnsafe: false
+        );
+
+        var deferredTrees = run
+            .GeneratedTrees.Where(t => t.ToString().Contains("partial struct DeferredJob"))
+            .ToList();
+        Assert.That(deferredTrees, Has.Count.EqualTo(1), run.Format());
+        var emitted = deferredTrees[0].ToString();
+        Assert.That(emitted, Does.Contain("NativeList<TCount> forEachCount"), run.Format());
+        Assert.That(emitted, Does.Not.Contain("int* forEachCount"), run.Format());
+
+        var errorsInJobOrCaller = run.CompileErrors.Where(d =>
+            d.Location.SourceTree == deferredTrees[0]
+            || d.Location.SourceTree?.ToString().Contains("class Caller") == true
+        );
+        Assert.That(errorsInJobOrCaller, Is.Empty, run.Format());
+        Assert.That(run.GenErrors, Is.Empty, run.Format());
+    }
+
+    [Test]
     public void CustomJob_OnlyFromGlobalEntityField_GetsSchedule()
     {
         // A singleton field alone makes a custom job: its Schedule must exist, so the
