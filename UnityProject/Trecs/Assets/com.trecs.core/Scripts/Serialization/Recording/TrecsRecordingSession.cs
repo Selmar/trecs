@@ -43,10 +43,10 @@ namespace Trecs.Internal
             _autoRecorder = autoRecorder;
             _accessor = _world.CreateAccessor(AccessorRole.Unrestricted, "TrecsRecordingSession");
             _lastBroadcastMode = CurrentMode;
-            // Poll on every fixed frame so auto-promotions (Playback →
-            // Recording when the simulation walks past the buffer tail) flip
-            // the input-system enable state immediately, even if no UI is
-            // open to call PollModeChanged for us.
+            // Poll on every fixed frame so a mode change made straight on the
+            // recorder, not through this session, flips the input-system
+            // enable state before the next step, even if no UI is open to
+            // call PollModeChanged for us.
             _frameSubscription = _accessor
                 .GetSystemRunner()
                 .FixedFrameChangeEvent.Subscribe(_ => PollModeChanged());

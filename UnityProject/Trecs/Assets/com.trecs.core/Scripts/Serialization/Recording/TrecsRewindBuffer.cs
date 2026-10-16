@@ -1231,7 +1231,7 @@ namespace Trecs.Internal
                     HandleLoadedPlaybackTick(frame);
                     return;
                 case BufferState.Scrubbed:
-                    HandleScrubbedTick(frame);
+                    HandlePlaybackTick(frame);
                     return;
                 case BufferState.LiveCapture:
                     CaptureSnapshotIfDue();
@@ -1258,10 +1258,9 @@ namespace Trecs.Internal
             _state = _postFastForwardState;
         }
 
-        // Loaded buffer: trailing snapshots are content, not stale state.
-        // Walking through them just verifies; reaching the tail auto-pauses
-        // (or loops, if LoopPlayback is on); stepping past the tail promotes
-        // to LiveCapture so the user can continue recording from there.
+        // Loaded buffer: trailing snapshots are content, not stale state. The
+        // tail behaves as a scrubbed buffer's: loop or pause, never go live.
+        // Going live is explicit, through ForkAtCurrentFrame.
         void HandleLoadedPlaybackTick(int frame)
         {
             // Clear the scrub marker on the first forward step past it so
@@ -1271,74 +1270,22 @@ namespace Trecs.Internal
             {
                 _scrubbedFrame = null;
             }
-            if (frame < LatestCapturedFrame)
-            {
-                VerifyChecksumAtFrame(frame);
-                return;
-            }
-            if (frame == LatestCapturedFrame)
-            {
-                // First arrival at the loaded buffer's tail. Verify the
-                // tail snapshot first — if a desync occurred between the
-                // previous snapshot and here, this is the user's last
-                // chance to catch it within this buffer.
-                VerifyChecksumAtFrame(frame);
-                if (_core.World.IsDisposed)
-                {
-                    return;
-                }
-                if (_loopPlayback)
-                {
-                    BeginLoopRewind();
-                    return;
-                }
-                // Default: stop so the user notices we've reached the end.
-                // From here the user can scrub back, click Record (Fork) to
-                // commit + go live, or press Play to promote past the tail.
-                _core.Accessor.GetSystemRunner().FixedIsPaused = true;
-                return;
-            }
-            // frame > tail with the runner still paused by the tail branch:
-            // the runner honours a pause only before a frame's fixed loop, so
-            // this is the same frame's next step, not the user resuming.
-            // Stay loaded, as HandleScrubbedTick does past its tail.
-            if (_core.Accessor.GetSystemRunner().FixedIsPaused)
-            {
-                return;
-            }
-            // frame > tail: user explicitly resumed past the recording's
-            // tail. Promote to regular auto-recording from here so capture
-            // continues live without a pause-loop.
-            _state = BufferState.LiveCapture;
-            DropAbandonedTimelineInputs();
-            CaptureSnapshotIfDue();
+            HandlePlaybackTick(frame);
         }
 
-        // Auto-recording buffer the user scrubbed back into. Pressing Play
-        // walks forward through the existing snapshots rather than over-
-        // writing them. At the tail two actions:
+        // Playback through existing snapshots, from a scrub back into an
+        // auto-recording or from a loaded recording. Walks forward without
+        // capturing or trimming. At the tail, and on any step past it:
         //   * Loop on  → rewind to the start, keep playing.
-        //   * Loop off → pause. The user has to press Record (which Forks
-        //                during Playback) to commit and go live. Auto-
-        //                promoting at the tail used to be the default but
-        //                that's exactly what the explicit Record/Fork
-        //                action does, so making it implicit just confused
-        //                the interaction with the Loop toggle.
-        void HandleScrubbedTick(int frame)
+        //   * Loop off → pause. Record (Fork) commits and goes live.
+        // A step past the tail happens when several fixed steps run in one
+        // frame (the runner honours a pause only before a frame's fixed
+        // loop), or when a caller steps the paused runner.
+        void HandlePlaybackTick(int frame)
         {
-            if (frame < LatestCapturedFrame)
-            {
-                // Still inside the buffer — let it play through. Don't
-                // capture (we already have a snapshot for this region) and
-                // don't trim.
-                VerifyChecksumAtFrame(frame);
-                return;
-            }
-            // frame >= LatestCapturedFrame: caught up to the live edge.
-            // Verify the tail snapshot first (last chance to catch a desync
-            // inside the existing buffer).
+            // No-op on frames without a recorded checksum.
             VerifyChecksumAtFrame(frame);
-            if (_core.World.IsDisposed)
+            if (frame < LatestCapturedFrame || _core.World.IsDisposed)
             {
                 return;
             }
@@ -1355,12 +1302,10 @@ namespace Trecs.Internal
         // disposes and re-creates _frameSubscription, which is the very
         // subscription dispatching the OnFixedFrameChange call that triggered
         // this; (2) the current tick needs to unwind cleanly. *Critical*: the
-        // pause must happen *before* deferring — otherwise the next fixed
-        // update runs before the jump lands, advancing frame past
-        // LatestCapturedFrame and hitting the "promote past tail" branch,
-        // which flips _state to LiveCapture, and the loop silently fails.
-        // Variable update starts before the fixed loop of its tick, so with
-        // the runner paused no fixed step runs in between.
+        // pause must happen *before* deferring — otherwise fixed steps keep
+        // running past LatestCapturedFrame before the jump lands. Variable
+        // update starts before the fixed loop of its tick, so with the
+        // runner paused no fixed step runs in between.
         void BeginLoopRewind()
         {
             // Loop target is the earliest scrubbable frame across anchors,
@@ -1395,11 +1340,9 @@ namespace Trecs.Internal
             }
         }
 
-        // Called whenever the recorder commits to a new live edge — fork,
-        // reset, or auto-promotion (scrubbed-back auto-recording reaching
-        // its tail, loaded recording resumed past its tail). Drops queued
-        // inputs at the current frame and beyond so the resumed live
-        // recording starts with a clean queue.
+        // Called whenever the recorder commits to a new live edge — fork or
+        // reset. Drops queued inputs at the current frame and beyond so the
+        // resumed live recording starts with a clean queue.
         //
         // Including the current frame matters: callers reach this point
         // *before* the current frame's input phase has run in the new
@@ -1633,8 +1576,7 @@ namespace Trecs.Internal
     /// <c>_postFastForwardState</c>).</item>
     /// <item><c>Scrubbed → LiveCapture</c> on <c>ForkAtCurrentFrame</c>
     /// (commits scrub, truncates trailing buffer, resumes live capture).</item>
-    /// <item><c>LoadedPlayback → LiveCapture</c> on the first fixed tick
-    /// past the loaded buffer's tail (promote to auto-recording), or on
+    /// <item><c>LoadedPlayback → LiveCapture</c> on
     /// <c>ForkAtCurrentFrame</c>.</item>
     /// <item><c>Idle ← any</c> on <c>Stop / Dispose</c>; <c>LiveCapture</c>
     /// re-entry on <c>Reset</c>.</item>
@@ -1671,9 +1613,9 @@ namespace Trecs.Internal
 
         /// <summary>
         /// Playing through a buffer loaded from a saved <c>.trec</c> file.
-        /// Trailing buffer is never truncated; reaching the tail auto-pauses
-        /// (or loops, if <see cref="TrecsRewindBuffer.LoopPlayback"/> is on).
-        /// Stepping past the tail promotes to <c>LiveCapture</c>.
+        /// Trailing buffer is never truncated; reaching or stepping past the
+        /// tail pauses (or loops, if <see cref="TrecsRewindBuffer.LoopPlayback"/>
+        /// is on). Only <c>ForkAtCurrentFrame</c> goes live.
         /// </summary>
         LoadedPlayback,
     }
