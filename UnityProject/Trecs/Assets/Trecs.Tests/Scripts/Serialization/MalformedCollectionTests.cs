@@ -74,7 +74,7 @@ namespace Trecs.Tests
             {
                 int offset = 0;
                 ReadOnlySpan<byte> span = serializedData;
-                var (version, _, includesTypeChecks) = SerializationHeaderUtil.ReadHeader(
+                var (version, _, includesTypeChecks, _) = SerializationHeaderUtil.ReadHeader(
                     span,
                     ref offset
                 );
@@ -131,7 +131,7 @@ namespace Trecs.Tests
             {
                 int offset = 0;
                 ReadOnlySpan<byte> span = serializedData;
-                var (version, _, includesTypeChecks) = SerializationHeaderUtil.ReadHeader(
+                var (version, _, includesTypeChecks, _) = SerializationHeaderUtil.ReadHeader(
                     span,
                     ref offset
                 );

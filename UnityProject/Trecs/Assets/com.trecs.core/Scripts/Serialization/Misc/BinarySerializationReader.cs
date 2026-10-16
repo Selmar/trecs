@@ -13,6 +13,7 @@ namespace Trecs
 
         long _flags;
         int _version;
+        byte _formatVersion;
         bool _includesTypeChecks;
 
         ReadOnlyMemory<byte> _data;
@@ -30,6 +31,15 @@ namespace Trecs
             {
                 TrecsDebugAssert.That(_hasStarted);
                 return _flags;
+            }
+        }
+
+        public int FormatVersion
+        {
+            get
+            {
+                TrecsDebugAssert.That(_hasStarted);
+                return _formatVersion;
             }
         }
 
@@ -57,10 +67,8 @@ namespace Trecs
             _offset = 0;
 
             var span = _data.Span;
-            (_version, _flags, _includesTypeChecks) = SerializationHeaderUtil.ReadHeader(
-                span,
-                ref _offset
-            );
+            (_version, _flags, _includesTypeChecks, _formatVersion) =
+                SerializationHeaderUtil.ReadHeader(span, ref _offset);
 
             _log.Trace("Completed reading header at offset {0}", _offset);
 
@@ -93,6 +101,7 @@ namespace Trecs
             _offset = 0;
             _flags = 0;
             _version = 0;
+            _formatVersion = 0;
             _includesTypeChecks = false;
             _bitReader.ResetForErrorRecovery();
         }
@@ -101,7 +110,7 @@ namespace Trecs
         /// Verify the payload-level <see cref="SerializationConstants.EndOfPayloadMarker"/>
         /// that <see cref="BinarySerializationWriter"/> appends to every stream.
         /// Distinct from the ECS-state-level guard inside <c>WorldStateSerializer</c>
-        /// (<c>WorldStateStreamGuard</c>), which is checked during <c>DeserializeState</c>.
+        /// (<c>BlockGuard</c>), which is checked during <c>DeserializeState</c>.
         /// </summary>
         void VerifySentinel()
         {

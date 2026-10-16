@@ -53,16 +53,30 @@ namespace Trecs.SourceGen
                 .Where(static m => m is not null)
                 .Select(static (m, _) => m!.Value);
 
-            var globalNsProvider = context.CompilationProvider.Select(
+            // AllowUnsafe rides along because the deferred-count path's `int*` overload can
+            // only be emitted into an assembly that permits unsafe code — emitting it
+            // unconditionally would turn the generator into a build break (CS0227) for any
+            // consumer without the flag.
+            var compilationFactsProvider = context.CompilationProvider.Select(
                 static (c, _) =>
-                    PerformanceCache.GetDisplayString(c.GlobalNamespace) ?? string.Empty
+                    (
+                        GlobalNamespaceName: PerformanceCache.GetDisplayString(c.GlobalNamespace)
+                            ?? string.Empty,
+                        AllowUnsafe: c is CSharpCompilation cs && cs.Options.AllowUnsafe
+                    )
             );
 
-            var withGlobalNs = modelsRaw.Combine(globalNsProvider);
+            var withCompilationFacts = modelsRaw.Combine(compilationFactsProvider);
 
             context.RegisterSourceOutput(
-                withGlobalNs,
-                static (spc, source) => GenerateJobSource(spc, source.Left, source.Right)
+                withCompilationFacts,
+                static (spc, source) =>
+                    GenerateJobSource(
+                        spc,
+                        source.Left,
+                        source.Right.GlobalNamespaceName,
+                        source.Right.AllowUnsafe
+                    )
             );
         }
 
@@ -92,6 +106,24 @@ namespace Trecs.SourceGen
             "NativeSetRead",
         };
 
+        // A field the generator wires at schedule time: [FromWorld], or a singleton via
+        // [FromSingleEntity] / [FromGlobalEntity]. Either alone makes a custom job.
+        static bool HasWorldWiredField(StructDeclarationSyntax structDecl) =>
+            structDecl
+                .Members.OfType<FieldDeclarationSyntax>()
+                .Any(f =>
+                    f.AttributeLists.SelectMany(al => al.Attributes)
+                        .Any(attr =>
+                        {
+                            var name = IterationCriteriaParser.ExtractAttributeName(
+                                attr.Name.ToString()
+                            );
+                            return name == TrecsAttributeNames.FromWorld
+                                || name == TrecsAttributeNames.FromSingleEntity
+                                || name == TrecsAttributeNames.FromGlobalEntity;
+                        })
+                );
+
         static bool IsCandidateJobStruct(SyntaxNode node)
         {
             if (node is not StructDeclarationSyntax structDecl)
@@ -109,17 +141,8 @@ namespace Trecs.SourceGen
             if (hasIterationAttr)
                 return true;
 
-            // Has [FromWorld] on any field?
-            var hasFromWorldField = structDecl
-                .Members.OfType<FieldDeclarationSyntax>()
-                .Any(f =>
-                    f.AttributeLists.SelectMany(al => al.Attributes)
-                        .Any(attr =>
-                            IterationCriteriaParser.ExtractAttributeName(attr.Name.ToString())
-                            == TrecsAttributeNames.FromWorld
-                        )
-                );
-            if (hasFromWorldField)
+            // Has a world-wired field ([FromWorld], [FromSingleEntity], [FromGlobalEntity])?
+            if (HasWorldWiredField(structDecl))
                 return true;
 
             // Has an Execute method AND a field whose type name looks like a Trecs
@@ -213,7 +236,8 @@ namespace Trecs.SourceGen
         static void GenerateJobSource(
             SourceProductionContext context,
             JobModel model,
-            string globalNamespaceName
+            string globalNamespaceName,
+            bool allowUnsafe
         )
         {
             foreach (var d in model.Diagnostics)
@@ -226,7 +250,7 @@ namespace Trecs.SourceGen
             {
                 using var _t = SourceGenTimer.Time("JobGenerator.Total");
 
-                var source = GenerateSource(model);
+                var source = GenerateSource(model, allowUnsafe);
                 if (source == null)
                     return;
 
@@ -316,7 +340,24 @@ namespace Trecs.SourceGen
                 iterationMethod = method;
             }
 
-            // Custom jobs: [FromWorld] fields with no [ForEachX] on any Execute method.
+            // The user declaring IJobParallelForDefer is the opt-in to the deferred-count
+            // path: the generator stops supplying a job interface and threads the count
+            // through as a pointer/NativeList instead of an int.
+            bool declaresDeferred = DeclaresJobParallelForDefer(symbol);
+
+            if (declaresDeferred && iterationMethod != null)
+            {
+                diagnostics(
+                    DiagnosticInfo.Create(
+                        DiagnosticDescriptors.DeferredCountOnIterationJob,
+                        structDecl.Identifier.GetLocation(),
+                        symbol.Name
+                    )
+                );
+                return null;
+            }
+
+            // Custom jobs: world-wired fields with no [ForEachX] on any Execute method.
             //
             // Two flavors based on the user's Execute signature:
             //   - 'public void Execute()'      → CustomNonIteration → IJob
@@ -326,16 +367,7 @@ namespace Trecs.SourceGen
             // IJob.Execute() / IJobFor.Execute(int) respectively.
             if (iterationMethod == null)
             {
-                bool hasFromWorld = structDecl
-                    .Members.OfType<FieldDeclarationSyntax>()
-                    .Any(f =>
-                        f.AttributeLists.SelectMany(al => al.Attributes)
-                            .Any(attr =>
-                                IterationCriteriaParser.ExtractAttributeName(attr.Name.ToString())
-                                == TrecsAttributeNames.FromWorld
-                            )
-                    );
-                if (!hasFromWorld)
+                if (!HasWorldWiredField(structDecl))
                     return null; // Defensive — predicate already filters this out.
 
                 // Discriminate by Execute parameter shape: parameterless → IJob,
@@ -353,7 +385,8 @@ namespace Trecs.SourceGen
                         diagnostics,
                         structDecl,
                         symbol,
-                        semanticModel
+                        semanticModel,
+                        declaresDeferred
                     );
 
                 return ValidateCustomNonIterationJob(
@@ -1000,11 +1033,30 @@ namespace Trecs.SourceGen
             );
         }
 
+        /// <summary>
+        /// True if the struct itself declares <c>Unity.Jobs.IJobParallelForDefer</c>. Only the
+        /// user's own declaration can match: the generator's emitted partial is not part of
+        /// the compilation being analyzed, so the <c>IJobFor</c> it adds is invisible here.
+        /// </summary>
+        static bool DeclaresJobParallelForDefer(INamedTypeSymbol symbol)
+        {
+            foreach (var i in symbol.AllInterfaces)
+            {
+                if (
+                    i.Name == "IJobParallelForDefer"
+                    && PerformanceCache.GetDisplayString(i.ContainingNamespace) == "Unity.Jobs"
+                )
+                    return true;
+            }
+            return false;
+        }
+
         static JobInfo? ValidateCustomParallelIterationJob(
             Action<DiagnosticInfo> diagnostics,
             StructDeclarationSyntax structDecl,
             INamedTypeSymbol symbol,
-            SemanticModel semanticModel
+            SemanticModel semanticModel,
+            bool declaresDeferred
         )
         {
             // Locate the 'public void Execute(int i)' method. Other Execute overloads are
@@ -1083,7 +1135,9 @@ namespace Trecs.SourceGen
             return new JobInfo(
                 symbol,
                 structDecl,
-                JobKind.CustomParallelIteration,
+                declaresDeferred
+                    ? JobKind.CustomDeferredParallelIteration
+                    : JobKind.CustomParallelIteration,
                 aspect: null,
                 components: null,
                 fromWorldFields: fromWorldFields,
@@ -1666,6 +1720,8 @@ namespace Trecs.SourceGen
                 JobKind.Components => JobIterationKind.Components,
                 JobKind.CustomNonIteration => JobIterationKind.CustomNonIteration,
                 JobKind.CustomParallelIteration => JobIterationKind.CustomParallelIteration,
+                JobKind.CustomDeferredParallelIteration =>
+                    JobIterationKind.CustomDeferredParallelIteration,
                 _ => throw new InvalidOperationException($"Unhandled JobKind: {info.Kind}"),
             };
 
@@ -1800,7 +1856,7 @@ namespace Trecs.SourceGen
 
         // ─── Emission ───────────────────────────────────────────────────────────
 
-        static string GenerateSource(JobModel model)
+        static string GenerateSource(JobModel model, bool allowUnsafe)
         {
             var sb = new StringBuilder();
             sb.AppendLine("using Unity.Collections;");
@@ -1823,9 +1879,18 @@ namespace Trecs.SourceGen
 
             string ind = new(' ', indent * 4);
             var structName = model.StructName;
-            var jobInterface =
-                model.Kind == JobIterationKind.CustomNonIteration ? "IJob" : "IJobFor";
-            sb.AppendLine($"{ind}partial struct {structName} : {jobInterface}");
+            // Deferred jobs already carry IJobParallelForDefer from the user's declaration;
+            // adding IJobFor on top would give the struct two job producers for one Execute.
+            if (model.Kind == JobIterationKind.CustomDeferredParallelIteration)
+            {
+                sb.AppendLine($"{ind}partial struct {structName}");
+            }
+            else
+            {
+                var jobInterface =
+                    model.Kind == JobIterationKind.CustomNonIteration ? "IJob" : "IJobFor";
+                sb.AppendLine($"{ind}partial struct {structName} : {jobInterface}");
+            }
             sb.AppendLine($"{ind}{{");
             indent++;
             ind = new string(' ', indent * 4);
@@ -1837,6 +1902,9 @@ namespace Trecs.SourceGen
                     break;
                 case JobIterationKind.CustomParallelIteration:
                     EmitCustomParallelScheduleOverload(sb, model, ind);
+                    break;
+                case JobIterationKind.CustomDeferredParallelIteration:
+                    EmitCustomDeferredParallelScheduleOverloads(sb, model, ind, allowUnsafe);
                     break;
                 default:
                     EmitGeneratedFields(sb, model, ind);
@@ -2016,7 +2084,7 @@ namespace Trecs.SourceGen
             {
                 sb.AppendLine($"{ind}{GeneratedCodeAttributes.Line}");
                 sb.AppendLine(
-                    $"{ind}public JobHandle ScheduleParallel(WorldAccessor world{fromWorldParamDecl}, JobHandle extraDeps = default)"
+                    $"{ind}public JobHandle ScheduleParallel(WorldAccessor world{fromWorldParamDecl}, JobHandle extraDeps = default, int innerloopBatchCount = 0)"
                 );
                 sb.AppendLine($"{ind}{{");
                 var builderExpr = new StringBuilder("world.Query()");
@@ -2028,6 +2096,7 @@ namespace Trecs.SourceGen
                 var args = new List<string> { builderExpr.ToString() };
                 args.AddRange(paramFields.Select(p => p.ScheduleParamName));
                 args.Add("extraDeps");
+                args.Add("innerloopBatchCount");
                 sb.AppendLine($"{ind}    return ScheduleParallel({string.Join(", ", args)});");
                 sb.AppendLine($"{ind}}}");
                 sb.AppendLine();
@@ -2055,7 +2124,7 @@ namespace Trecs.SourceGen
         {
             sb.AppendLine($"{ind}{GeneratedCodeAttributes.Line}");
             sb.AppendLine(
-                $"{ind}public JobHandle ScheduleParallel(QueryBuilder builder{fromWorldParamDecl}, JobHandle extraDeps = default)"
+                $"{ind}public JobHandle ScheduleParallel(QueryBuilder builder{fromWorldParamDecl}, JobHandle extraDeps = default, int innerloopBatchCount = 0)"
             );
             sb.AppendLine($"{ind}{{");
             string body = ind + "    ";
@@ -2188,7 +2257,7 @@ namespace Trecs.SourceGen
             sb.AppendLine($"{body}#endif");
 
             sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}job.ScheduleParallel({FromWorldEmitter.GenPrefix}count, JobsUtil.ChooseBatchSize({FromWorldEmitter.GenPrefix}count), {FromWorldEmitter.GenPrefix}deps);"
+                $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}job.ScheduleParallel({FromWorldEmitter.GenPrefix}count, innerloopBatchCount > 0 ? innerloopBatchCount : JobsUtil.ChooseBatchSize({FromWorldEmitter.GenPrefix}count), {FromWorldEmitter.GenPrefix}deps);"
             );
 
             sb.AppendLine($"{body}#if SVKJ_IS_PROFILING");
@@ -2218,7 +2287,7 @@ namespace Trecs.SourceGen
         {
             sb.AppendLine($"{ind}{GeneratedCodeAttributes.Line}");
             sb.AppendLine(
-                $"{ind}public JobHandle ScheduleParallel(SparseQueryBuilder builder{fromWorldParamDecl}, JobHandle extraDeps = default)"
+                $"{ind}public JobHandle ScheduleParallel(SparseQueryBuilder builder{fromWorldParamDecl}, JobHandle extraDeps = default, int innerloopBatchCount = 0)"
             );
             sb.AppendLine($"{ind}{{");
             string body = ind + "    ";
@@ -2338,7 +2407,7 @@ namespace Trecs.SourceGen
                 $"{body}var {FromWorldEmitter.GenPrefix}shim = new {FromWorldEmitter.JobFieldPrefix}SparseShim {{ Inner = {FromWorldEmitter.GenPrefix}job, Indices = {FromWorldEmitter.GenPrefix}indices }};"
             );
             sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}shim.ScheduleParallel({FromWorldEmitter.GenPrefix}count, JobsUtil.ChooseBatchSize({FromWorldEmitter.GenPrefix}count), {FromWorldEmitter.GenPrefix}deps);"
+                $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}shim.ScheduleParallel({FromWorldEmitter.GenPrefix}count, innerloopBatchCount > 0 ? innerloopBatchCount : JobsUtil.ChooseBatchSize({FromWorldEmitter.GenPrefix}count), {FromWorldEmitter.GenPrefix}deps);"
             );
 
             sb.AppendLine($"{body}#if SVKJ_IS_PROFILING");
@@ -2374,44 +2443,14 @@ namespace Trecs.SourceGen
             sb.AppendLine(
                 $"{ind}public JobHandle Schedule(WorldAccessor world{fromWorldParamDecl}, JobHandle extraDeps = default)"
             );
-            sb.AppendLine($"{ind}{{");
-            string body = ind + "    ";
-
-            sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}world = world;");
-            sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}extraDeps = extraDeps;");
-
-            sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}scheduler = {FromWorldEmitter.GenPrefix}world.GetJobSchedulerForJob();"
+            EmitCustomScheduleBody(
+                sb,
+                model,
+                ind,
+                orderedEmits,
+                earlyOutCondition: null,
+                scheduleCall: $"{FromWorldEmitter.GenPrefix}job.Schedule({FromWorldEmitter.GenPrefix}deps)"
             );
-            sb.AppendLine(
-                $"{body}const string {FromWorldEmitter.GenPrefix}jobName = \"{model.StructName}\";"
-            );
-
-            FromWorldEmitter.EmitFromWorldHoistedSetup(sb, body, orderedEmits);
-            var fromEntityTargets = model
-                .FromSingleEntityFields.Select(f => f.ToEmitTarget())
-                .ToList();
-            FromSingleEntityEmitter.EmitHoistedSetup(sb, body, fromEntityTargets);
-
-            sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}deps = {FromWorldEmitter.GenPrefix}extraDeps;"
-            );
-            FromWorldEmitter.EmitFromWorldDepRegistration(sb, body, orderedEmits);
-            FromSingleEntityEmitter.EmitDepRegistration(sb, body, fromEntityTargets);
-
-            sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}job = this;");
-            FromWorldEmitter.EmitFromWorldFieldAssignments(sb, body, orderedEmits);
-            FromSingleEntityEmitter.EmitFieldAssignment(sb, body, fromEntityTargets);
-
-            sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}job.Schedule({FromWorldEmitter.GenPrefix}deps);"
-            );
-
-            FromWorldEmitter.EmitFromWorldTracking(sb, body, orderedEmits);
-            FromSingleEntityEmitter.EmitTracking(sb, body, fromEntityTargets);
-
-            sb.AppendLine($"{body}return {FromWorldEmitter.GenPrefix}handle;");
-            sb.AppendLine($"{ind}}}");
         }
 
         static void EmitCustomParallelScheduleOverload(
@@ -2426,15 +2465,86 @@ namespace Trecs.SourceGen
 
             sb.AppendLine($"{ind}{GeneratedCodeAttributes.Line}");
             sb.AppendLine(
-                $"{ind}public JobHandle ScheduleParallel(WorldAccessor world, int count{fromWorldParamDecl}, JobHandle extraDeps = default)"
+                $"{ind}public JobHandle ScheduleParallel(WorldAccessor world, int count{fromWorldParamDecl}, JobHandle extraDeps = default, int innerloopBatchCount = 0)"
             );
+            EmitCustomScheduleBody(
+                sb,
+                model,
+                ind,
+                orderedEmits,
+                earlyOutCondition: "count <= 0",
+                scheduleCall: $"{FromWorldEmitter.GenPrefix}job.ScheduleParallel(count, innerloopBatchCount > 0 ? innerloopBatchCount : JobsUtil.ChooseBatchSize(count), {FromWorldEmitter.GenPrefix}deps)"
+            );
+        }
+
+        /// <summary>
+        /// Deferred-count sibling of <see cref="EmitCustomParallelScheduleOverload"/>. Emits
+        /// up to two overloads — a <c>NativeList</c> form and, where the consuming assembly
+        /// permits unsafe code, a raw <c>int*</c> form — differing only in how the count
+        /// reaches <c>IJobParallelForDeferExtensions.Schedule</c>. The batch size is the
+        /// caller's: <c>JobsUtil.ChooseBatchSize</c> needs a count nobody has yet.
+        /// </summary>
+        static void EmitCustomDeferredParallelScheduleOverloads(
+            StringBuilder sb,
+            in JobModel model,
+            string ind,
+            bool allowUnsafe
+        )
+        {
+            var orderedEmits = model.FromWorldFields.ToList();
+            var paramFields = orderedEmits.Where(e => e.HasScheduleParam).ToList();
+            var fromWorldParamDecl = FormatFromWorldParamDecl(paramFields);
+
+            // No `count <= 0` early-out: not knowing the count on the main thread is the
+            // whole reason this path exists. A zero-length run costs one empty job.
+            // Called in static form: the extension would bind through the user's own struct,
+            // where a member named Schedule would silently win.
+            var scheduleCall =
+                $"Unity.Jobs.IJobParallelForDeferExtensions.Schedule({FromWorldEmitter.GenPrefix}job, forEachCount, innerloopBatchCount, {FromWorldEmitter.GenPrefix}deps)";
+
+            sb.AppendLine($"{ind}{GeneratedCodeAttributes.Line}");
+            sb.AppendLine(
+                $"{ind}public JobHandle ScheduleParallel<TCount>(WorldAccessor world, Unity.Collections.NativeList<TCount> forEachCount, int innerloopBatchCount{fromWorldParamDecl}, JobHandle extraDeps = default)"
+            );
+            sb.AppendLine($"{ind}    where TCount : unmanaged");
+            EmitCustomScheduleBody(sb, model, ind, orderedEmits, null, scheduleCall);
+
+            if (!allowUnsafe)
+                return;
+
+            sb.AppendLine();
+            sb.AppendLine($"{ind}{GeneratedCodeAttributes.Line}");
+            sb.AppendLine(
+                $"{ind}public unsafe JobHandle ScheduleParallel(WorldAccessor world, int* forEachCount, int innerloopBatchCount{fromWorldParamDecl}, JobHandle extraDeps = default)"
+            );
+            EmitCustomScheduleBody(sb, model, ind, orderedEmits, null, scheduleCall);
+        }
+
+        // Body of a custom job's schedule overload: wires world and singleton fields into a
+        // copy of the job, schedules it with scheduleCall (an expression over the job and
+        // deps locals), and tracks the handle. earlyOutCondition, when set, returns
+        // extraDeps before any setup.
+        static void EmitCustomScheduleBody(
+            StringBuilder sb,
+            in JobModel model,
+            string ind,
+            List<FromWorldFieldEmitModel> orderedEmits,
+            string? earlyOutCondition,
+            string scheduleCall
+        )
+        {
             sb.AppendLine($"{ind}{{");
             string body = ind + "    ";
 
             sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}world = world;");
             sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}extraDeps = extraDeps;");
 
-            sb.AppendLine($"{body}if (count <= 0) return {FromWorldEmitter.GenPrefix}extraDeps;");
+            if (earlyOutCondition != null)
+            {
+                sb.AppendLine(
+                    $"{body}if ({earlyOutCondition}) return {FromWorldEmitter.GenPrefix}extraDeps;"
+                );
+            }
             sb.AppendLine(
                 $"{body}var {FromWorldEmitter.GenPrefix}scheduler = {FromWorldEmitter.GenPrefix}world.GetJobSchedulerForJob();"
             );
@@ -2458,9 +2568,7 @@ namespace Trecs.SourceGen
             FromWorldEmitter.EmitFromWorldFieldAssignments(sb, body, orderedEmits);
             FromSingleEntityEmitter.EmitFieldAssignment(sb, body, fromEntityTargets);
 
-            sb.AppendLine(
-                $"{body}var {FromWorldEmitter.GenPrefix}handle = {FromWorldEmitter.GenPrefix}job.ScheduleParallel(count, JobsUtil.ChooseBatchSize(count), {FromWorldEmitter.GenPrefix}deps);"
-            );
+            sb.AppendLine($"{body}var {FromWorldEmitter.GenPrefix}handle = {scheduleCall};");
 
             FromWorldEmitter.EmitFromWorldTracking(sb, body, orderedEmits);
             FromSingleEntityEmitter.EmitTracking(sb, body, fromEntityTargets);
@@ -2517,6 +2625,7 @@ namespace Trecs.SourceGen
             Components,
             CustomNonIteration,
             CustomParallelIteration,
+            CustomDeferredParallelIteration,
         }
 
         internal class JobStructData

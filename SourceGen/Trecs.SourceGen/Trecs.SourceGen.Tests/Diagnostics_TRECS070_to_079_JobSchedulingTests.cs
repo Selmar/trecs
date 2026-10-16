@@ -13,10 +13,7 @@ namespace Trecs.SourceGen.Tests;
 /// <see cref="Microsoft.CodeAnalysis.Diagnostics.DiagnosticAnalyzer"/>, and is
 /// driven through <see cref="GeneratorTestHarness.RunAnalyzers"/>.
 ///
-/// Codes covered: 070, 071, 073, 074, 075, 076, 077, 078, 079.
-///
-/// Codes intentionally not covered here:
-/// - TRECS072: gap in numbering; no descriptor.
+/// Codes covered: 070, 071, 072, 073, 074, 075, 076, 077, 078, 079.
 /// </summary>
 [TestFixture]
 public class Diagnostics_TRECS070_to_079_JobSchedulingTests
@@ -59,6 +56,68 @@ public class Diagnostics_TRECS070_to_079_JobSchedulingTests
             "TRECS070",
             new DiagnosticAnalyzer[] { new RawScheduleMethodAnalyzer() }
         );
+    }
+
+    [Test]
+    public void TRECS070_RawDeferredScheduleOnJobWithTrecsField()
+    {
+        // Same rule for the deferred-count extension: scheduling through Unity's
+        // IJobParallelForDeferExtensions leaves the [FromWorld] fields at default and the
+        // scheduler unaware of the access. The generated ScheduleParallel(WorldAccessor,
+        // NativeList/int*, batch) overload is the supported route.
+        const string source = """
+            namespace Sample
+            {
+                using Unity.Jobs;
+
+                public partial struct CPos : Trecs.IEntityComponent { public float X; }
+
+                public partial struct MyJob : Unity.Jobs.IJobParallelForDefer
+                {
+                    [Trecs.FromWorld]
+                    public Trecs.NativeComponentBufferRead<CPos> Positions;
+
+                    public void Execute(int index) { }
+                }
+
+                public static class Caller
+                {
+                    public static unsafe void Go(int* count)
+                    {
+                        var job = new MyJob();
+                        job.Schedule(count, 32, default);
+                    }
+                }
+            }
+            """;
+
+        AssertAnalyzerDiagnostic(
+            source,
+            "TRECS070",
+            new DiagnosticAnalyzer[] { new RawScheduleMethodAnalyzer() }
+        );
+    }
+
+    [Test]
+    public void TRECS072_DeferredCountOnIterationJob()
+    {
+        // IJobParallelForDefer defers a count the generator would otherwise resolve from
+        // the query itself — the two ways of deciding the iteration count contradict.
+        const string source = """
+            namespace Sample
+            {
+                public partial struct CPos : Trecs.IEntityComponent { public float X; }
+                public struct MoverTag : Trecs.ITag { }
+
+                public partial struct BadJob : Unity.Jobs.IJobParallelForDefer
+                {
+                    [Trecs.ForEachEntity(Tag = typeof(MoverTag))]
+                    public void Execute(ref CPos pos) { }
+                }
+            }
+            """;
+
+        AssertDiagnostic(source, "TRECS072");
     }
 
     [Test]

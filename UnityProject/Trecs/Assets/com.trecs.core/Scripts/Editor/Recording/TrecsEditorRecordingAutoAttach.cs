@@ -6,10 +6,11 @@ using System.Collections.Generic;
 namespace Trecs.Internal
 {
     /// <summary>
-    /// Refcounted helper that constructs a <see cref="TrecsRewindBuffer"/> +
-    /// <see cref="TrecsRecordingSession"/> pair for every active
-    /// <see cref="World"/> while at least one <see cref="TrecsPlayerWindow"/>
-    /// is open, and disposes them when the last window closes.
+    /// Refcounted helper that holds a <see cref="TrecsRecordingSessionLease"/>
+    /// on every active <see cref="World"/> while at least one
+    /// <see cref="TrecsPlayerWindow"/> is open, and releases them when the last
+    /// window closes. The session itself is shared with game code that leased
+    /// it too, and outlives the window while game code holds it.
     ///
     /// User composition roots no longer need to wire these types up manually
     /// — the editor side discovers Worlds via <see cref="WorldRegistry"/> and
@@ -28,14 +29,12 @@ namespace Trecs.Internal
 
         struct AttachedSet
         {
-            public TrecsRewindBuffer Recorder;
-            public TrecsRecordingSession Session;
+            public TrecsRecordingSessionLease Lease;
             public TrecsSnapshotLibrary SnapshotLibrary;
 
-            // SnapshotSerializer is IDisposable; we own the instance here so
-            // we have to dispose it on detach. WorldStateSerializer is not
-            // IDisposable so it doesn't need tracking.
+            // The library's own serializer and pool, separate from the session's.
             public SnapshotSerializer Snapshots;
+            public SnapshotPayloadPool Pool;
         }
 
         /// <summary>
@@ -93,9 +92,9 @@ namespace Trecs.Internal
             WorldRegistry.WorldUnregistered -= DetachForWorld;
             foreach (var attached in _attached.Values)
             {
-                attached.Session.Dispose();
-                attached.Recorder.Dispose();
+                attached.Lease.Dispose();
                 attached.Snapshots.Dispose();
+                attached.Pool.Dispose();
             }
             _attached.Clear();
         }
@@ -107,62 +106,47 @@ namespace Trecs.Internal
                 return;
             }
 
-            var registry = world.SerializerRegistry;
-            var stateSerializer = new WorldStateSerializer(world);
+            TrecsRecordingSessionLease lease = null;
+            var pool = new SnapshotPayloadPool();
             SnapshotSerializer snapshots = null;
-            TrecsRewindBuffer recorder = null;
-            TrecsRecordingSession session = null;
             try
             {
-                var pool = new SnapshotPayloadPool();
-                snapshots = new SnapshotSerializer(stateSerializer, registry, world, pool);
-                recorder = new TrecsRewindBuffer(
+                // Builds the session unless game code leased it first. Fires
+                // ControllerRegistered on build, which TrecsGameStateActivator
+                // listens to so that auto-record-on-open kicks in.
+                lease = TrecsRecordingSessionRegistry.Acquire(world);
+                snapshots = new SnapshotSerializer(
+                    new WorldStateSerializer(world),
+                    world.SerializerRegistry,
                     world,
-                    stateSerializer,
-                    registry,
-                    new TrecsRewindBufferSettings(),
-                    snapshots,
                     pool
                 );
-                // Constructor fires TrecsRecordingSessionRegistry.ControllerRegistered,
-                // which TrecsGameStateActivator listens to so that auto-record-on-open
-                // kicks in without any extra wiring from us.
-                session = new TrecsRecordingSession(world, recorder);
+                _attached[world] = new AttachedSet
+                {
+                    Lease = lease,
+                    SnapshotLibrary = new TrecsSnapshotLibrary(world, snapshots, lease.Session),
+                    Snapshots = snapshots,
+                    Pool = pool,
+                };
             }
             catch (Exception e)
             {
-                // Partial init — dispose whatever did construct. Swallow
-                // further failures so a Dispose-throw doesn't mask the
+                // Swallow further failures so a Dispose-throw doesn't mask the
                 // original error.
-                try
-                {
-                    session?.Dispose();
-                }
-                catch { }
-                try
-                {
-                    recorder?.Dispose();
-                }
-                catch { }
                 try
                 {
                     snapshots?.Dispose();
                 }
                 catch { }
+                pool.Dispose();
+                try
+                {
+                    lease?.Dispose();
+                }
+                catch { }
                 _log.Error("Failed to auto-attach Trecs Player to world {0}: {1}", world, e);
                 return;
             }
-            // SnapshotLibrary depends on a fully-constructed session (it
-            // calls Stop/Start on it during LoadSnapshot), so construct it
-            // last. Stateless apart from its dependency refs.
-            var snapshotLibrary = new TrecsSnapshotLibrary(world, snapshots, session);
-            _attached[world] = new AttachedSet
-            {
-                Recorder = recorder,
-                Session = session,
-                SnapshotLibrary = snapshotLibrary,
-                Snapshots = snapshots,
-            };
             _log.Trace("Auto-attached Trecs Player to world {0}", world);
         }
 
@@ -173,9 +157,9 @@ namespace Trecs.Internal
                 return;
             }
             _attached.Remove(world);
-            attached.Session.Dispose();
-            attached.Recorder.Dispose();
+            attached.Lease.Dispose();
             attached.Snapshots.Dispose();
+            attached.Pool.Dispose();
             _log.Trace("Auto-detached Trecs Player from world {0}", world);
         }
     }

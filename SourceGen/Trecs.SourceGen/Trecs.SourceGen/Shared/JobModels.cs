@@ -21,6 +21,15 @@ namespace Trecs.SourceGen.Shared
         Components,
         CustomNonIteration,
         CustomParallelIteration,
+
+        /// <summary>
+        /// <c>CustomParallelIteration</c> whose iteration count is not known on the main
+        /// thread — the struct declares <c>Unity.Jobs.IJobParallelForDefer</c> and the count
+        /// is read when the job starts. The generator emits no job interface for these (the
+        /// user's declaration is the interface) and threads the count through as a
+        /// <c>NativeList</c> or an <c>int*</c> instead of an <c>int</c>.
+        /// </summary>
+        CustomDeferredParallelIteration,
     }
 
     /// <summary>

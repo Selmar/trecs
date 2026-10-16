@@ -2086,11 +2086,9 @@ namespace Trecs.Internal
             }
             // Refuse to step past the recording's tail in Playback.
             // runner.StepFixedFrame() bypasses the pause-at-tail logic in
-            // OnFixedFrameChange, so without this gate the next handler
-            // tick lands in the "frame > _lastAnchorFrame" branch — the
-            // loaded-recording side silently flips to live capture, and
-            // the scrubbed-back side advances into territory the buffer
-            // doesn't cover. Force Record/Fork as the only path out.
+            // OnFixedFrameChange, so without this gate the step advances
+            // into territory the buffer doesn't cover. Force Record/Fork as
+            // the only path out.
             var recorder = controller.AutoRecorder;
             if (
                 recorder != null

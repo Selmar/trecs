@@ -124,6 +124,54 @@ highlightedWrite.Clear();   // Order-insensitive: wins over any Add/Remove in th
 // Read-side iteration is via TryGetGroupEntry on a per-group basis.
 ```
 
+## Deferred iteration counts
+
+When the number of iterations is only known to a job scheduled earlier in the same frame — a container sized from a count a preceding job produced — declare `Unity.Jobs.IJobParallelForDefer` on the job struct. The generator stops adding a job interface of its own (yours is the interface) and emits schedule overloads that take the count indirectly instead of as an `int`:
+
+```csharp
+[BurstCompile]
+partial struct BroadphaseJob : IJobParallelForDefer
+{
+    // Filled with unique handles by an earlier job: its length is not known when this one is scheduled.
+    [ReadOnly] public NativeList<EntityHandle> Bodies;
+
+    // Each index writes only its own entity's state, so the parallel-for range check is
+    // not the right check here.
+    [NativeDisableParallelForRestriction]
+    [FromWorld(Tag = typeof(GameTags.Body))]
+    NativeComponentLookupWrite<CollisionState> _states;
+
+    [FromWorld] NativeWorldAccessor _world;
+
+    public void Execute(int index)
+    {
+        var entityIndex = Bodies[index].ToIndex(_world);
+        ref var state = ref _states[entityIndex];
+        state.Overlaps = 0;
+    }
+}
+```
+
+Both `[FromWorld]` fields are populated by the generated overload, exactly as on the non-deferred path — scheduling through Unity's `IJobParallelForDeferExtensions` instead leaves them at `default` and the scheduler unaware of the write (TRECS070).
+
+```csharp
+var job = new BroadphaseJob { Bodies = bodies };
+
+// NativeList form — count is the list's length when the job starts
+var listHandle = job.ScheduleParallel(world, bodies, batchSize, deps);
+
+// Raw pointer form — count is read when the job starts. Here an earlier job writes it into a
+// NativeReference<int>; GetUnsafePtr is in Unity.Collections.LowLevel.Unsafe and needs an unsafe context.
+var pointerHandle = job.ScheduleParallel(world, (int*)bodyCount.GetUnsafePtr(), batchSize, deps);
+```
+
+Two differences from the non-deferred path:
+
+- **The batch size is required, not optional.** Elsewhere it defaults to `JobsUtil.ChooseBatchSize(count)`, which needs a count nobody has yet.
+- **The `int*` overload is only emitted when the consuming assembly allows unsafe code.** The `NativeList` overload is always emitted.
+
+`IJobParallelForDefer` is rejected on a `[ForEachEntity]` job (TRECS072) — an iteration job's count comes from the query the generator resolves at schedule time, so there is nothing to defer.
+
 ## External job tracking
 
 When a job is scheduled manually without the Trecs source generator (e.g., a third-party job or custom scheduling pattern), register it with the world so the [dependency tracker](../performance/dependency-tracking.md) knows about it, via `TrackExternalJob` on the system's `WorldAccessor`:

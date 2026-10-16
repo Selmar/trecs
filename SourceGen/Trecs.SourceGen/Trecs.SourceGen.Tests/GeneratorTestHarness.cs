@@ -52,9 +52,13 @@ internal static class GeneratorTestHarness
     /// IterationAttributeRouting and need both the aspect generator and a foreach generator
     /// active at the same time.
     /// </summary>
-    public static GeneratorRun Run(IIncrementalGenerator[] generators, string userSource)
+    public static GeneratorRun Run(
+        IIncrementalGenerator[] generators,
+        string userSource,
+        bool allowUnsafe = true
+    )
     {
-        var compilation = BuildInputCompilation(userSource);
+        var compilation = BuildInputCompilation(userSource, allowUnsafe);
 
         // Match the parse options used for the input compilation so generated trees
         // (which the driver re-parses) don't trip "Inconsistent language versions"
@@ -130,7 +134,10 @@ internal static class GeneratorTestHarness
     /// generator driver to run against. Assembly name is "Trecs" so the source-gen project's
     /// AssemblyFilterHelper.CreateTrecsReferenceCheck doesn't filter out the user types.
     /// </summary>
-    private static CSharpCompilation BuildInputCompilation(string userSource)
+    private static CSharpCompilation BuildInputCompilation(
+        string userSource,
+        bool allowUnsafe = true
+    )
     {
         // The stubs and user sources use C# 11 generic attributes. The pinned
         // Microsoft.CodeAnalysis.CSharp 4.3.0 still treats them as a preview feature,
@@ -157,9 +164,11 @@ internal static class GeneratorTestHarness
             syntaxTrees: syntaxTrees,
             references: references,
             // AllowUnsafeBlocks because some emitted helpers (e.g. UnmanagedUtil) use unsafe.
+            // Without it the stubs themselves report CS0227; tests turning it off assert on
+            // the generated trees only.
             options: new CSharpCompilationOptions(
                 OutputKind.DynamicallyLinkedLibrary,
-                allowUnsafe: true
+                allowUnsafe: allowUnsafe
             )
         );
     }

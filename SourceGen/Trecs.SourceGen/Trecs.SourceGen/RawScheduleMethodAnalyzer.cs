@@ -73,6 +73,7 @@ namespace Trecs.SourceGen
                 containingType != "IJobForExtensions"
                 && containingType != "IJobExtensions"
                 && containingType != "IJobParallelForExtensions"
+                && containingType != "IJobParallelForDeferExtensions"
             )
                 return;
 

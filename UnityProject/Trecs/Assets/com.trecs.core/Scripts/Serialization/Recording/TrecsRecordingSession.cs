@@ -19,7 +19,7 @@ namespace Trecs.Internal
     ///   * Run: <see cref="IsPaused"/> — straight pass-through of the
     ///     SystemRunner's FixedIsPaused flag.
     /// </summary>
-    internal class TrecsRecordingSession : IDisposable
+    public class TrecsRecordingSession
     {
         static readonly TrecsLog _log = TrecsLog.Default;
 
@@ -37,16 +37,18 @@ namespace Trecs.Internal
         GameStateMode _lastBroadcastMode = GameStateMode.Idle;
         string _lastBroadcastLoadedRecordingName;
 
-        public TrecsRecordingSession(World world, TrecsRewindBuffer autoRecorder)
+        // Built and torn down by TrecsRecordingSessionRegistry; holders take
+        // a lease through Acquire.
+        internal TrecsRecordingSession(World world, TrecsRewindBuffer autoRecorder)
         {
             _world = world;
             _autoRecorder = autoRecorder;
             _accessor = _world.CreateAccessor(AccessorRole.Unrestricted, "TrecsRecordingSession");
             _lastBroadcastMode = CurrentMode;
-            // Poll on every fixed frame so auto-promotions (Playback →
-            // Recording when the simulation walks past the buffer tail) flip
-            // the input-system enable state immediately, even if no UI is
-            // open to call PollModeChanged for us.
+            // Poll on every fixed frame so a mode change made straight on the
+            // recorder, not through this session, flips the input-system
+            // enable state before the next step, even if no UI is open to
+            // call PollModeChanged for us.
             _frameSubscription = _accessor
                 .GetSystemRunner()
                 .FixedFrameChangeEvent.Subscribe(_ => PollModeChanged());
@@ -143,7 +145,7 @@ namespace Trecs.Internal
         /// </summary>
         public static void NotifySavesChanged() => SavesChanged?.Invoke();
 
-        public void Dispose()
+        internal void Dispose()
         {
             _frameSubscription.Dispose();
             if (_autoRecorder.IsRecording)

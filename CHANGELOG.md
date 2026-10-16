@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **World state sections.** `IWorldStateSection` and `World.AddStateSection` carry simulation state held outside components and heaps (a system's containers, a queue between systems) through snapshots, recordings, checksums and desync dumps.
+- **Deferred iteration counts.** A custom job that declares `IJobParallelForDefer` gets `ScheduleParallel` overloads that take the count as a `NativeList` length or, in an assembly that allows unsafe code, an `int*`, with a required batch size. TRECS072 rejects `IJobParallelForDefer` on a `[ForEachEntity]` job.
+- **Batch size override.** Every generated `ScheduleParallel` takes a trailing optional `innerloopBatchCount`. `0`, the default, keeps `JobsUtil.ChooseBatchSize`.
+- **Ordering on identity types.** `EntityHandle`, `TypeId`, `ComponentTypeId`, `Tag` and `BlobId` implement `IComparable<T>`, so they sort and can key sorted containers.
+
+### Changed
+
+- **Runtime rewind.** `TrecsRewindBuffer`, `TrecsRecordingSession`, `TrecsRecordingSessionRegistry` and `GameStateMode` moved from `Trecs.Editor` to the runtime assembly and are public (`Trecs.Internal`), so game code can record, scrub and replay a world outside the editor. A world's session is shared and built only through `TrecsRecordingSessionRegistry.Acquire`, which returns a lease; the session lives until every lease is disposed, so the Player window and game code drive one session and closing the window never disposes it under game code. A desync raises `TrecsRewindBuffer.Desynced`; the editor pauses play mode on it as before.
+- **Desync dumps in every build.** `TrecsRewindBuffer.DumpDesyncDiff`, `FlatPathSerializationWriter` and the serialization scopes that name its paths are no longer `DEBUG`-only, so a release build can write the two states of a desync as flat-path text. Outside a dump, a scope costs one type check. The native heap is dumped one entry per allocation, named by slot and type; `DEBUG` builds name it by the allocating file and line instead.
+- **Serialization format 3.** World state always carries its state-section block, even with no sections, so a snapshot and a world that disagree on their sections fail the load with a message that says so. Format 2 payloads still load; one holding world state loads only into a world without sections. `ISerializationReader` gains `FormatVersion`.
+- **A loaded recording never goes live on its own.** At its tail, and on any step past it, it pauses (or loops), as a scrubbed auto-recording does. `ForkAtCurrentFrame` (Record in the Player window) is the only way to live capture. Before, resuming past the tail promoted the recording to live capture.
+
+### Fixed
+
+- A custom job whose only world-wired fields are `[FromSingleEntity]` or `[FromGlobalEntity]` gets its `Schedule`. Before, the generator emitted nothing and gave no diagnostic, so the job could not pick up the dependency on the singleton's writers.
+
 ## [0.2.0] - 2026-05-07
 
 Large redesign pass covering package consolidation, accessor permissions, heap-backed collections, source-gen diagnostics, native pointer internals, and editor tooling. All breaking changes are mechanical text-level migrations unless otherwise noted.

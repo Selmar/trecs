@@ -1,5 +1,3 @@
-#if DEBUG
-
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -522,5 +520,3 @@ namespace Trecs
         }
     }
 }
-
-#endif

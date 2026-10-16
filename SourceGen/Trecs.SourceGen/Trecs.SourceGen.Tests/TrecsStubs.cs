@@ -79,6 +79,7 @@ internal static class TrecsStubs
             public interface IJob { void Execute(); }
             public interface IJobFor { void Execute(int index); }
             public interface IJobParallelForBatch { void Execute(int startIndex, int count); }
+            public interface IJobParallelForDefer { void Execute(int index); }
 
             // Generated job code calls `__trecs_job.ScheduleParallel(count, batchSize, deps)` —
             // mirrors Unity's IJobForExtensions.ScheduleParallel<T>(this T, int, int, JobHandle).
@@ -100,6 +101,24 @@ internal static class TrecsStubs
                 public static JobHandle ScheduleParallel<T>(
                     this T jobData, int arrayLength, int indicesPerJobCount, JobHandle dependsOn
                 ) where T : struct, IJobParallelForBatch => default;
+            }
+
+            // Mirrors Unity.Jobs.IJobParallelForDeferExtensions. The deferred-count job
+            // generation path emits `IJobParallelForDeferExtensions.Schedule(__trecs_job,
+            // forEachCount, innerloopBatchCount, deps)` in static form, against one of these
+            // two overloads: the NativeList form and the raw `int*` form.
+            public static unsafe class IJobParallelForDeferExtensions
+            {
+                public static JobHandle Schedule<T, U>(
+                    this T jobData,
+                    Unity.Collections.NativeList<U> list,
+                    int innerloopBatchCount,
+                    JobHandle dependsOn
+                ) where T : struct, IJobParallelForDefer where U : unmanaged => default;
+
+                public static JobHandle Schedule<T>(
+                    this T jobData, int* forEachCount, int innerloopBatchCount, JobHandle dependsOn
+                ) where T : struct, IJobParallelForDefer => default;
             }
         }
 
@@ -620,6 +639,7 @@ internal static class TrecsStubs
             {
                 public ref readonly T this[EntityIndex entityIndex]
                     => ref Trecs.Internal.RefStash<T>.Slot;
+                public ref readonly T Value => ref Trecs.Internal.RefStash<T>.Slot;
             }
 
             public readonly struct NativeComponentWrite<T>
@@ -785,9 +805,9 @@ internal static class TrecsStubs
                     where T : unmanaged, IEntityComponent => default;
                 public (NativeComponentBufferWrite<T>, int) GetBufferWriteForJob<T>(GroupIndex group)
                     where T : unmanaged, IEntityComponent => default;
-                public NativeComponentLookupRead<T> GetNativeComponentReadForJob<T>()
+                public NativeComponentRead<T> GetNativeComponentReadForJob<T>(EntityIndex entityIndex)
                     where T : unmanaged, IEntityComponent => default;
-                public NativeComponentLookupWrite<T> GetNativeComponentWriteForJob<T>()
+                public NativeComponentWrite<T> GetNativeComponentWriteForJob<T>(EntityIndex entityIndex)
                     where T : unmanaged, IEntityComponent => default;
                 // Returns (indices, lifetime, count) — emitted code deconstructs the tuple.
                 public (Trecs.Internal.JobSparseIndices, Trecs.Internal.JobIndicesLifetime, int)

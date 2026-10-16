@@ -5,7 +5,7 @@ using Unity.Burst;
 
 namespace Trecs
 {
-    public readonly struct TypeId : IEquatable<TypeId>
+    public readonly struct TypeId : IEquatable<TypeId>, IComparable<TypeId>
     {
         public readonly int Value;
 
@@ -29,6 +29,14 @@ namespace Trecs
         public override readonly int GetHashCode()
         {
             return Value;
+        }
+
+        // Orders by raw id: the explicit [TypeId] value, else a hash of the
+        // type's full name. Arbitrary, but stable across runs until a rename.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public readonly int CompareTo(TypeId other)
+        {
+            return Value.CompareTo(other.Value);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

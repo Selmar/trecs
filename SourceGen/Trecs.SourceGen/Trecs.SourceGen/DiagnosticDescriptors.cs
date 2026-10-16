@@ -360,7 +360,7 @@ namespace Trecs.SourceGen
             isEnabledByDefault: true
         );
 
-        // Job scheduling diagnostics (TRECS070, 071, 073-079; 072 unused)
+        // Job scheduling diagnostics (TRECS070-079)
 
         public static readonly DiagnosticDescriptor JobInsideGenericOuterTypeNotSupported = new(
             id: "TRECS073",
@@ -431,6 +431,15 @@ namespace Trecs.SourceGen
             messageFormat: "Job '{0}' has Trecs typed fields ({1}) — use the generated ScheduleParallel(WorldAccessor, ...) overload (iteration job) or Schedule(WorldAccessor, ...) overload (custom job) instead of Unity's '{2}' extension to ensure proper dependency tracking",
             category: TrecsCategory,
             DiagnosticSeverity.Warning,
+            isEnabledByDefault: true
+        );
+
+        public static readonly DiagnosticDescriptor DeferredCountOnIterationJob = new(
+            id: "TRECS072",
+            title: "IJobParallelForDefer is not supported on a [ForEachEntity] job",
+            messageFormat: "Job '{0}' implements IJobParallelForDefer but its Execute is decorated with [ForEachEntity]. An iteration job's count comes from the query the generator resolves at schedule time, so there is nothing to defer. Drop IJobParallelForDefer, or drop [ForEachEntity] and take the index yourself with 'public void Execute(int)'.",
+            category: TrecsCategory,
+            DiagnosticSeverity.Error,
             isEnabledByDefault: true
         );
 

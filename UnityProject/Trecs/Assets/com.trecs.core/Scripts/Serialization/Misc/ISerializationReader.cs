@@ -5,7 +5,17 @@ namespace Trecs
 {
     public interface ISerializationReader
     {
+        /// <summary>
+        /// The caller's own schema version, passed to the writer's <c>Start</c>.
+        /// </summary>
         int Version { get; }
+
+        /// <summary>
+        /// Trecs' wire-format version of the payload, from its header. Older
+        /// formats stay readable; Trecs branches on this where a later format
+        /// added a block.
+        /// </summary>
+        int FormatVersion { get; }
 
         long Flags { get; }
 

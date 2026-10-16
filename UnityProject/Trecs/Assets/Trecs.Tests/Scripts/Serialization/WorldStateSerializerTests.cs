@@ -70,7 +70,10 @@ namespace Trecs.Tests
             DefaultTrecsSerializers.RegisterCommonTrecsSerializers(_serializerRegistry);
         }
 
-        World CreateWorld(Action<WorldBuilder> customize = null)
+        World CreateWorld(
+            Action<WorldBuilder> customize = null,
+            Action<World> beforeInitialize = null
+        )
         {
             var testGlobals = new Template(
                 debugName: "TestGlobals",
@@ -91,7 +94,23 @@ namespace Trecs.Tests
 
             customize?.Invoke(builder);
 
-            return builder.BuildAndInitialize();
+            if (beforeInitialize == null)
+            {
+                return builder.BuildAndInitialize();
+            }
+
+            var world = builder.Build();
+            try
+            {
+                beforeInitialize(world);
+                world.Initialize();
+            }
+            catch
+            {
+                world.Dispose();
+                throw;
+            }
+            return world;
         }
 
         static readonly TagSet NativeListPartition = TagSet.FromTags(Tag<SerNativeListTag>.Value);
@@ -115,6 +134,180 @@ namespace Trecs.Tests
             reader.Start(data);
             serializer.DeserializeState(reader);
         }
+
+        #region State Sections
+
+        class CounterSection : IWorldStateSection
+        {
+            public int Value;
+            public string SectionName = "Counter";
+
+            public string Name => SectionName;
+
+            public void Serialize(ISerializationWriter writer) => writer.Write("value", Value);
+
+            public void Deserialize(ISerializationReader reader) =>
+                Value = reader.Read<int>("value");
+        }
+
+        [Test]
+        public void StateSection_RoundTrip_RestoresItsState()
+        {
+            var section = new CounterSection { Value = 7 };
+            using var world = CreateWorld(beforeInitialize: w => w.AddStateSection(section));
+
+            var data = SerializeWorld(world);
+            section.Value = 9;
+            DeserializeWorld(world, data);
+
+            NAssert.AreEqual(7, section.Value);
+        }
+
+        [Test]
+        public void StateSection_IsPartOfTheSerializedState()
+        {
+            var section = new CounterSection { Value = 7 };
+            using var world = CreateWorld(beforeInitialize: w => w.AddStateSection(section));
+
+            var before = SerializeWorld(world);
+            section.Value = 9;
+
+            CollectionAssert.AreNotEqual(before, SerializeWorld(world));
+        }
+
+        [Test]
+        public void StateSection_CountMismatch_Throws()
+        {
+            using var saved = CreateWorld(beforeInitialize: w =>
+                w.AddStateSection(new CounterSection())
+            );
+            var data = SerializeWorld(saved);
+
+            using var other = CreateWorld(beforeInitialize: w =>
+            {
+                w.AddStateSection(new CounterSection());
+                w.AddStateSection(new CounterSection { SectionName = "Second" });
+            });
+            NAssert.Throws<SerializationException>(() => DeserializeWorld(other, data));
+        }
+
+        [Test]
+        public void StateSection_OtherSectionAtSamePosition_Throws()
+        {
+            using var saved = CreateWorld(beforeInitialize: w =>
+                w.AddStateSection(new CounterSection())
+            );
+            var data = SerializeWorld(saved);
+
+            using var other = CreateWorld(beforeInitialize: w =>
+                w.AddStateSection(new CounterSection { SectionName = "Other" })
+            );
+            NAssert.Throws<SerializationException>(() => DeserializeWorld(other, data));
+        }
+
+        [Test]
+        public void StateSection_SnapshotWithoutSections_IntoWorldWithSections_Throws()
+        {
+            using var saved = CreateWorld();
+            var data = SerializeWorld(saved);
+
+            using var other = CreateWorld(beforeInitialize: w =>
+                w.AddStateSection(new CounterSection())
+            );
+            var ex = NAssert.Throws<SerializationException>(() => DeserializeWorld(other, data));
+            StringAssert.Contains("holds 0 state sections", ex.Message);
+        }
+
+        [Test]
+        public void StateSection_SnapshotWithSections_IntoWorldWithoutSections_Throws()
+        {
+            using var saved = CreateWorld(beforeInitialize: w =>
+                w.AddStateSection(new CounterSection())
+            );
+            var data = SerializeWorld(saved);
+
+            using var other = CreateWorld();
+            var ex = NAssert.Throws<SerializationException>(() => DeserializeWorld(other, data));
+            StringAssert.Contains("holds 1 state sections", ex.Message);
+        }
+
+        [Test]
+        public void StateSection_Format2Snapshot_LoadsIntoWorldWithoutSections()
+        {
+            using var world = CreateWorld();
+            var a = world.CreateAccessor(AccessorRole.Unrestricted);
+            a.AddEntity(PartitionA)
+                .Set(new SerTestInt { Value = 5 })
+                .Set(new SerTestFloat { Value = 0.5f })
+                .AssertComplete();
+            a.Submit();
+            var data = ToFormat2(SerializeWorld(world));
+            a.AddEntity(PartitionA)
+                .Set(new SerTestInt { Value = 6 })
+                .Set(new SerTestFloat { Value = 0.5f })
+                .AssertComplete();
+            a.Submit();
+
+            var reader = new BinarySerializationReader(_serializerRegistry);
+            reader.Start(data);
+            new WorldStateSerializer(world).DeserializeState(reader);
+            reader.Stop(verifySentinel: true);
+
+            NAssert.AreEqual(1, a.CountEntitiesWithTags(PartitionA));
+        }
+
+        [Test]
+        public void StateSection_Format2Snapshot_IntoWorldWithSections_Throws()
+        {
+            using var saved = CreateWorld();
+            var data = ToFormat2(SerializeWorld(saved));
+
+            using var other = CreateWorld(beforeInitialize: w =>
+                w.AddStateSection(new CounterSection())
+            );
+            var ex = NAssert.Throws<SerializationException>(() => DeserializeWorld(other, data));
+            StringAssert.Contains("predates state sections", ex.Message);
+        }
+
+        // Rewrites a sectionless format-3 payload as format 2 wrote it: header
+        // byte 2 is the format, and the data ends without the empty section
+        // block (int count 0, guard 0xA7) before the end-of-payload marker.
+        static byte[] ToFormat2(byte[] data)
+        {
+            const int blockSize = sizeof(int) + 1;
+            NAssert.AreEqual((byte)3, data[2], "Expected a format-3 payload");
+            NAssert.AreEqual((byte)0xA7, data[data.Length - 2]);
+            NAssert.AreEqual(0, BitConverter.ToInt32(data, data.Length - 2 - sizeof(int)));
+
+            var result = new byte[data.Length - blockSize];
+            Array.Copy(data, result, data.Length - 1 - blockSize);
+            result[result.Length - 1] = data[data.Length - 1];
+            result[2] = 2;
+            return result;
+        }
+
+        [Test]
+        public void StateSection_DuplicateName_Asserts()
+        {
+            NAssert.That(
+                () =>
+                    CreateWorld(beforeInitialize: w =>
+                    {
+                        w.AddStateSection(new CounterSection());
+                        w.AddStateSection(new CounterSection());
+                    }),
+                Throws.Exception
+            );
+        }
+
+        [Test]
+        public void StateSection_AddAfterInitialize_Asserts()
+        {
+            using var world = CreateWorld();
+            NAssert.That(() => world.AddStateSection(new CounterSection()), Throws.Exception);
+        }
+
+        #endregion
 
         #region Basic Round-Trip
 
@@ -1036,18 +1229,18 @@ namespace Trecs.Tests
 
         #endregion
 
-        #region Section guard drift
+        #region Block guard drift
 
         /// <summary>
-        /// Locks in the section-guard drift error path: corrupting the last
+        /// Locks in the block-guard drift error path: corrupting the last
         /// byte of the data buffer (which the wire format guarantees is the
-        /// <c>AfterSystemEnable</c> guard byte, 0xA6) must trigger a
+        /// <c>AfterStateSections</c> guard byte, 0xA7) must trigger a
         /// <see cref="SerializationException"/> whose message names the
         /// section that drifted.
         ///
         /// <para>
-        /// The other five section guards are covered by
-        /// <see cref="Deserialize_ThrowsSerializationException_WhenEachSectionGuardCorrupted"/>
+        /// The other six block guards are covered by
+        /// <see cref="Deserialize_ThrowsSerializationException_WhenEachBlockGuardCorrupted"/>
         /// via a value-scan; the last guard's position is structurally fixed
         /// (last byte of the data buffer, written immediately before the
         /// trailing EndOfPayloadMarker), so it gets its own targeted test
@@ -1055,7 +1248,7 @@ namespace Trecs.Tests
         /// </para>
         /// </summary>
         [Test]
-        public void Deserialize_ThrowsSerializationException_WhenLastSectionGuardCorrupted()
+        public void Deserialize_ThrowsSerializationException_WhenLastBlockGuardCorrupted()
         {
             using var world = CreateWorld();
             var a = world.CreateAccessor(AccessorRole.Unrestricted);
@@ -1068,8 +1261,8 @@ namespace Trecs.Tests
 
             var data = SerializeWorld(world);
 
-            // Wire format: [...data buffer ending with AfterSystemEnable
-            // guard byte 0xA6][EndOfPayloadMarker 0x5E]. The last guard byte
+            // Wire format: [...data buffer ending with AfterStateSections
+            // guard byte 0xA7][EndOfPayloadMarker 0x5E]. The last guard byte
             // therefore lives at data.Length - 2.
             NAssert.AreEqual(
                 (byte)0x5E,
@@ -1077,20 +1270,20 @@ namespace Trecs.Tests
                 "Trailing byte should be EndOfPayloadMarker"
             );
             NAssert.AreEqual(
-                (byte)0xA6,
+                (byte)0xA7,
                 data[data.Length - 2],
-                "Byte before EndOfPayloadMarker should be the AfterSystemEnable guard"
+                "Byte before EndOfPayloadMarker should be the AfterStateSections guard"
             );
 
             data[data.Length - 2] ^= 0xFF;
 
             var ex = NAssert.Throws<SerializationException>(() => DeserializeWorld(world, data));
-            StringAssert.Contains("AfterSystemEnable", ex.Message);
+            StringAssert.Contains("AfterStateSections", ex.Message);
         }
 
         /// <summary>
-        /// Drift-detection coverage for every section guard. For each guard
-        /// value (0xA1..0xA6), tries corrupting each occurrence of that byte
+        /// Drift-detection coverage for every block guard. For each guard
+        /// value (0xA1..0xA7), tries corrupting each occurrence of that byte
         /// in the snapshot stream and asserts that at least one corruption
         /// produces a <see cref="SerializationException"/> whose message
         /// names the section. The "at least one" framing is robust to
@@ -1114,9 +1307,10 @@ namespace Trecs.Tests
         [TestCase(0xA4, "AfterEntitySets")]
         [TestCase(0xA5, "AfterHeaps")]
         [TestCase(0xA6, "AfterSystemEnable")]
-        public void Deserialize_ThrowsSerializationException_WhenEachSectionGuardCorrupted(
+        [TestCase(0xA7, "AfterStateSections")]
+        public void Deserialize_ThrowsSerializationException_WhenEachBlockGuardCorrupted(
             int guardValue,
-            string sectionName
+            string blockName
         )
         {
             using var world = CreateWorld();
@@ -1164,13 +1358,13 @@ namespace Trecs.Tests
                 }
                 catch (SerializationException ex)
                 {
-                    if (ex.Message.Contains(sectionName))
+                    if (ex.Message.Contains(blockName))
                     {
                         foundNamedException = true;
                         break;
                     }
                     diagnostics.Add(
-                        $"pos {pos}: SerializationException not naming '{sectionName}': {ex.Message}"
+                        $"pos {pos}: SerializationException not naming '{blockName}': {ex.Message}"
                     );
                 }
                 catch (Exception ex)
@@ -1182,7 +1376,7 @@ namespace Trecs.Tests
             NAssert.IsTrue(
                 foundNamedException,
                 $"Expected at least one corruption of byte 0x{guardValue:X2} to throw "
-                    + $"SerializationException naming '{sectionName}'. "
+                    + $"SerializationException naming '{blockName}'. "
                     + $"Candidates tried: {candidates.Count}. Diagnostics: "
                     + string.Join(" | ", diagnostics)
             );
@@ -1190,7 +1384,7 @@ namespace Trecs.Tests
 
         /// <summary>
         /// Inserts one byte into the snapshot stream just after the first
-        /// section guard's expected position, shifting all subsequent reads
+        /// block guard's expected position, shifting all subsequent reads
         /// by one byte. Verifies the resulting drift is caught at some
         /// section boundary (rather than cascading silently through to a
         /// late, vague failure) — the whole point of having multiple guards
@@ -1213,7 +1407,7 @@ namespace Trecs.Tests
             // Insert a junk byte somewhere in the middle of the payload
             // (past the header / bit fields, before the trailing sentinel).
             // The exact position doesn't matter — any 1-byte shift inside
-            // the data buffer will cause section-guard drift.
+            // the data buffer will cause block-guard drift.
             int insertAt = data.Length / 2;
             var shifted = new byte[data.Length + 1];
             Array.Copy(data, 0, shifted, 0, insertAt);

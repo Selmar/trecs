@@ -1,3 +1,4 @@
+using System.Linq;
 using NUnit.Framework;
 using Trecs.SourceGen;
 
@@ -305,6 +306,256 @@ public class JobGeneratorTests
 
         Assert.That(run.CompileErrors, Is.Empty, run.Format());
         Assert.That(run.GenErrors, Is.Empty, run.Format());
+    }
+
+    [Test]
+    public void DeferredParallelJob_BothScheduleOverloadsCompileCleanly()
+    {
+        // A struct declaring IJobParallelForDefer opts into the deferred-count path: no
+        // IJobFor is added on top, and the count reaches Schedule as a NativeList length or
+        // an int* rather than an int. Both emitted overloads are exercised from a caller so
+        // the generated signatures have to actually bind.
+        const string source = """
+            namespace Sample
+            {
+                public partial struct CPos : Trecs.IEntityComponent { public float X; }
+                public struct MoverTag : Trecs.ITag { }
+
+                public partial struct DeferredJob : Unity.Jobs.IJobParallelForDefer
+                {
+                    [Unity.Collections.NativeDisableParallelForRestriction]
+                    [Trecs.FromWorld(Tag = typeof(MoverTag))]
+                    public Trecs.NativeComponentLookupWrite<CPos> Positions;
+
+                    [Trecs.FromWorld]
+                    public Trecs.NativeWorldAccessor World;
+
+                    public void Execute(int index) { }
+                }
+
+                public static class Caller
+                {
+                    public static unsafe void Go(
+                        Trecs.WorldAccessor world,
+                        Unity.Collections.NativeList<int> counts,
+                        int* countPtr)
+                    {
+                        var job = new DeferredJob();
+                        job.ScheduleParallel(world, counts, 32);
+                        job.ScheduleParallel(world, countPtr, 32);
+                    }
+                }
+            }
+            """;
+
+        var run = GeneratorTestHarness.Run(
+            new Microsoft.CodeAnalysis.IIncrementalGenerator[]
+            {
+                new JobGenerator(),
+                new AspectGenerator(),
+                new EntityComponentGenerator(),
+            },
+            source
+        );
+
+        Assert.That(run.CompileErrors, Is.Empty, run.Format());
+        Assert.That(run.GenErrors, Is.Empty, run.Format());
+    }
+
+    [Test]
+    public void DeferredParallelJob_WithoutAllowUnsafe_EmitsOnlyNativeListOverload()
+    {
+        // The int* overload would be CS0227 in an assembly without AllowUnsafeBlocks. The
+        // stubs are unsafe themselves, so only the generated trees are checked.
+        const string source = """
+            namespace Sample
+            {
+                public partial struct CPos : Trecs.IEntityComponent { public float X; }
+                public struct MoverTag : Trecs.ITag { }
+
+                public partial struct DeferredJob : Unity.Jobs.IJobParallelForDefer
+                {
+                    [Unity.Collections.NativeDisableParallelForRestriction]
+                    [Trecs.FromWorld(Tag = typeof(MoverTag))]
+                    public Trecs.NativeComponentLookupWrite<CPos> Positions;
+
+                    public void Execute(int index) { }
+                }
+
+                public static class Caller
+                {
+                    public static void Go(
+                        Trecs.WorldAccessor world,
+                        Unity.Collections.NativeList<int> counts)
+                    {
+                        new DeferredJob().ScheduleParallel(world, counts, 32);
+                    }
+                }
+            }
+            """;
+
+        var run = GeneratorTestHarness.Run(
+            new Microsoft.CodeAnalysis.IIncrementalGenerator[]
+            {
+                new JobGenerator(),
+                new AspectGenerator(),
+                new EntityComponentGenerator(),
+            },
+            source,
+            allowUnsafe: false
+        );
+
+        var deferredTrees = run
+            .GeneratedTrees.Where(t => t.ToString().Contains("partial struct DeferredJob"))
+            .ToList();
+        Assert.That(deferredTrees, Has.Count.EqualTo(1), run.Format());
+        var emitted = deferredTrees[0].ToString();
+        Assert.That(emitted, Does.Contain("NativeList<TCount> forEachCount"), run.Format());
+        Assert.That(emitted, Does.Not.Contain("int* forEachCount"), run.Format());
+
+        var errorsInJobOrCaller = run.CompileErrors.Where(d =>
+            d.Location.SourceTree == deferredTrees[0]
+            || d.Location.SourceTree?.ToString().Contains("class Caller") == true
+        );
+        Assert.That(errorsInJobOrCaller, Is.Empty, run.Format());
+        Assert.That(run.GenErrors, Is.Empty, run.Format());
+    }
+
+    [Test]
+    public void CustomJob_OnlyFromGlobalEntityField_GetsSchedule()
+    {
+        // A singleton field alone makes a custom job: its Schedule must exist, so the
+        // job picks up the dependency on the singleton's writers.
+        const string source = """
+            namespace Sample
+            {
+                public partial struct CScore : Trecs.IEntityComponent { public int Value; }
+
+                public partial struct ReadScoreJob
+                {
+                    [Trecs.FromGlobalEntity]
+                    Trecs.NativeComponentRead<CScore> _score;
+
+                    public int Read() => _score.Value.Value;
+
+                    public void Execute() { }
+                }
+
+                public static class Caller
+                {
+                    public static Unity.Jobs.JobHandle Go(Trecs.WorldAccessor world) =>
+                        new ReadScoreJob().Schedule(world);
+                }
+            }
+            """;
+
+        var run = GeneratorTestHarness.Run(
+            new Microsoft.CodeAnalysis.IIncrementalGenerator[]
+            {
+                new JobGenerator(),
+                new AspectGenerator(),
+                new EntityComponentGenerator(),
+            },
+            source
+        );
+
+        Assert.That(run.CompileErrors, Is.Empty, run.Format());
+        Assert.That(run.GenErrors, Is.Empty, run.Format());
+    }
+
+    [Test]
+    public void DeferredParallelJob_DoesNotDeclareIJobFor()
+    {
+        // The whole point of the separate kind: the user's IJobParallelForDefer is the only
+        // job interface. Emitting IJobFor alongside it would hand one Execute to two job
+        // producers.
+        const string source = """
+            namespace Sample
+            {
+                public partial struct CPos : Trecs.IEntityComponent { public float X; }
+                public struct MoverTag : Trecs.ITag { }
+
+                public partial struct DeferredJob : Unity.Jobs.IJobParallelForDefer
+                {
+                    [Unity.Collections.NativeDisableParallelForRestriction]
+                    [Trecs.FromWorld(Tag = typeof(MoverTag))]
+                    public Trecs.NativeComponentLookupWrite<CPos> Positions;
+
+                    public void Execute(int index) { }
+                }
+            }
+            """;
+
+        var run = GeneratorTestHarness.Run(
+            new Microsoft.CodeAnalysis.IIncrementalGenerator[]
+            {
+                new JobGenerator(),
+                new AspectGenerator(),
+                new EntityComponentGenerator(),
+            },
+            source
+        );
+
+        Assert.That(run.CompileErrors, Is.Empty, run.Format());
+
+        var emitted = string.Join(
+            "\n",
+            run.GeneratedTrees.Select(t => t.ToString()).Where(s => s.Contains("DeferredJob"))
+        );
+        Assert.That(emitted, Does.Contain("partial struct DeferredJob"), run.Format());
+        Assert.That(emitted, Does.Not.Contain("IJobFor"), run.Format());
+    }
+
+    [Test]
+    public void IterationJob_BatchSizeOverride_FallsBackToChooseBatchSize()
+    {
+        // innerloopBatchCount is opt-in and trails the existing optional parameters, so
+        // callers that never pass it keep JobsUtil.ChooseBatchSize. Both branches have to
+        // survive into the emitted schedule call.
+        const string source = """
+            namespace Sample
+            {
+                public partial struct CPos : Trecs.IEntityComponent { public float X; }
+                public struct MoverTag : Trecs.ITag { }
+
+                public partial struct MoveJob : Unity.Jobs.IJobFor
+                {
+                    [Trecs.ForEachEntity(Tag = typeof(MoverTag))]
+                    public void Execute(ref CPos pos) { }
+                }
+
+                public static class Caller
+                {
+                    public static void Go(Trecs.WorldAccessor world)
+                    {
+                        var job = new MoveJob();
+                        job.ScheduleParallel(world);
+                        job.ScheduleParallel(world, default, 64);
+                    }
+                }
+            }
+            """;
+
+        var run = GeneratorTestHarness.Run(
+            new Microsoft.CodeAnalysis.IIncrementalGenerator[]
+            {
+                new JobGenerator(),
+                new EntityComponentGenerator(),
+            },
+            source
+        );
+
+        Assert.That(run.CompileErrors, Is.Empty, run.Format());
+        Assert.That(run.GenErrors, Is.Empty, run.Format());
+
+        var emitted = string.Join("\n", run.GeneratedTrees.Select(t => t.ToString()));
+        Assert.That(
+            emitted,
+            Does.Contain(
+                "innerloopBatchCount > 0 ? innerloopBatchCount : JobsUtil.ChooseBatchSize"
+            ),
+            run.Format()
+        );
     }
 
     [Test]

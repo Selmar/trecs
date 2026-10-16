@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text;
 using Trecs.Collections;
 using Trecs.Internal;
 using UnityEngine;
@@ -51,6 +52,8 @@ namespace Trecs
         readonly SystemLoader _systemLoader;
         readonly SystemEnableState _systemEnableState = new();
         readonly List<ISystem> _systems;
+        readonly List<IWorldStateSection> _stateSections = new();
+        readonly List<ulong> _stateSectionIds = new();
 
         bool _hasRemovedAllEntities;
         bool _initializeCompleted;
@@ -164,6 +167,16 @@ namespace Trecs
         /// </summary>
         public ComponentArraySerializerRegistry ComponentArraySerializerRegistry =>
             _componentArraySerializerRegistry;
+
+        /// <summary>
+        /// Sections added with <see cref="AddStateSection"/>, in registration order.
+        /// </summary>
+        internal IReadOnlyList<IWorldStateSection> StateSections => _stateSections;
+
+        /// <summary>
+        /// Each section's id, the hash of its name, parallel to <see cref="StateSections"/>.
+        /// </summary>
+        internal IReadOnlyList<ulong> StateSectionIds => _stateSectionIds;
 
         public bool IsDisposed
         {
@@ -749,6 +762,34 @@ namespace Trecs
         {
             TrecsDebugAssert.That(!_systemAddLocked);
             _systems.AddRange(systems);
+        }
+
+        /// <summary>
+        /// Adds simulation state held outside components to every snapshot,
+        /// recording and checksum of this world. Register after
+        /// <see cref="WorldBuilder.Build"/> and before <see cref="Initialize"/>,
+        /// in the same order on every world that loads the same snapshots.
+        /// Throws if called after initialization or for a name already added.
+        /// </summary>
+        public void AddStateSection(IWorldStateSection section)
+        {
+            TrecsAssert.That(section != null, "AddStateSection: section is null");
+            TrecsAssert.That(!_hasInitialized, "AddStateSection: add sections before Initialize");
+            TrecsAssert.That(
+                !string.IsNullOrEmpty(section.Name),
+                "AddStateSection: the section has no name"
+            );
+
+            // Stable across processes and builds, unlike string.GetHashCode.
+            var id = CollisionResistantHashCalculator.ComputeXxHash64(
+                new ReadOnlySpan<byte>(Encoding.UTF8.GetBytes(section.Name))
+            );
+            TrecsAssert.That(
+                !_stateSectionIds.Contains(id),
+                $"AddStateSection: a section named '{section.Name}' is already added"
+            );
+            _stateSections.Add(section);
+            _stateSectionIds.Add(id);
         }
 
         /// <summary>

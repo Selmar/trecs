@@ -791,13 +791,11 @@ namespace Trecs.Internal
             TrecsDebugAssert.That(!_isDisposed);
             TrecsDebugAssert.That(UnityThreadHelper.IsMainThread);
 
-#if DEBUG
             if (writer.HasFlag(SerializationFlags.DesyncFriendlyHeaps))
             {
                 SerializeDesyncFriendly(writer);
                 return;
             }
-#endif
 
             var heapHeader = new SerializedHeapHeader
             {
@@ -883,7 +881,9 @@ namespace Trecs.Internal
             }
         }
 
-#if DEBUG
+        // One entry per allocation, keyed by side-table slot, so a diff lines
+        // up allocation by allocation instead of by page layout. Caller
+        // file and line name the entry in DEBUG builds only.
         unsafe void SerializeDesyncFriendly(ISerializationWriter writer)
         {
             writer.Write<int>("LiveCount", _liveCount);
@@ -896,16 +896,24 @@ namespace Trecs.Internal
                 var slotSize = page.SlotSize;
                 var slotAddr = (byte*)page.Address.ToPointer() + payload.SlotIndex * slotSize;
 
+                string scopeName = null;
+#if DEBUG
                 uint handleValue = (uint)payload.Generation << 24 | (uint)sideTableIdx;
-                string scopeName;
                 if (_callerInfoByHandle.TryGetValue(handleValue, out var caller))
                 {
                     var fileName = Path.GetFileNameWithoutExtension(caller.File);
                     scopeName = $"{fileName}_L{caller.Line}_Slot{sideTableIdx}";
                 }
-                else
+#endif
+                if (scopeName == null)
                 {
-                    scopeName = $"Slot{sideTableIdx}_Type{payload.TypeHash}";
+                    var typeName = TypeIdReverseLookup.TryGetTypeFromId(
+                        new TypeId(payload.TypeHash),
+                        out var type
+                    )
+                        ? type.GetPrettyName()
+                        : $"Type{payload.TypeHash}";
+                    scopeName = $"Slot{sideTableIdx}_{typeName}";
                 }
                 writer.PushScope(scopeName);
                 writer.Write<int>("TypeHash", payload.TypeHash);
@@ -914,7 +922,6 @@ namespace Trecs.Internal
                 writer.PopScope();
             }
         }
-#endif
 
         /// <summary>
         /// Restores the chunk store from a stream produced by <see cref="Serialize"/>.

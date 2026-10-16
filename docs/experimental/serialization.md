@@ -275,6 +275,50 @@ public sealed class CollisionGroupSerializer : IComponentArraySerializer<CCollis
 
 The same versioning rules apply as for `ISerializer<T>`: read what you wrote in the same order, branch on `reader.Version` if the layout has changed.
 
+## State outside the world
+
+Some simulation state does not live in components or on the heap: a system's own containers, or a queue one system fills and another drains in a later step. A snapshot cannot see it, so a restore leaves it as it was. Register an `IWorldStateSection` for it, after `WorldBuilder.Build()` and before `world.Initialize()`:
+
+```csharp
+public sealed class PendingSpawnsSection : IWorldStateSection
+{
+    readonly SpawnQueue _queue;
+
+    public PendingSpawnsSection(SpawnQueue queue) => _queue = queue;
+
+    public string Name => "PendingSpawns";
+
+    public void Serialize(ISerializationWriter writer)
+    {
+        writer.Write("count", _queue.Count);
+        foreach (var spawn in _queue)
+            writer.Write("spawn", spawn);
+    }
+
+    public void Deserialize(ISerializationReader reader)
+    {
+        _queue.Clear();
+        var count = reader.Read<int>("count");
+        for (int i = 0; i < count; i++)
+            _queue.Add(reader.Read<SpawnRequest>("spawn"));
+    }
+}
+
+var world = builder.Build();
+world.AddStateSection(new PendingSpawnsSection(spawnQueue));
+world.Initialize();
+```
+
+Sections are written after the heaps, in registration order, and read back in that order before `OnDeserializeCompleted` fires. Every snapshot, recording, checksum and desync dump includes them, the same as component arrays — so state in a section also takes part in desync detection.
+
+`Name` identifies the section: a hash of it is written ahead of the section's data and checked on load, and it scopes the section in flat-path dumps. Names must be unique per world, and must not change while saved snapshots still need to load.
+
+A snapshot must be loaded into a world that registers the same sections in the same order; a different count, or a different name at the same position, fails the load with a `SerializationException`. A section's own layout versions like a serializer's: branch on `reader.Version`.
+
+Snapshots written before sections existed (serialization format 2) still load into a world without sections. A world with sections refuses them, since they hold no state for its sections.
+
+Prefer components or heap collections where they fit; a section is for state that deliberately stays outside them. Wrapping `WorldStateSerializer` in your own `IWorldStateSerializer` also adds data, but only on the code paths that construct your wrapper — editor tooling such as the Player window builds its own and would miss it.
+
 ## Explicit type IDs
 
 By default, Trecs derives type identifiers from `BurstRuntime.GetHashCode32(type)` — a hash of the fully qualified type name. Renaming or moving a type to a different namespace changes the hash and silently corrupts saved files that reference the old ID.

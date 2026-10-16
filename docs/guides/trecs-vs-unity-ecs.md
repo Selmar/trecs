@@ -118,7 +118,7 @@ The chunk model's advantage is per-chunk metadata: change-filter version numbers
 | | Unity ECS | Trecs |
 |---|---|---|
 | **Stance toward determinism** | Nice-to-have, not enforced | Core design goal, enforced via API |
-| **Recording / playback with desync detection** | Not built-in | Built-in via the [Trecs Player editor window](../editor-windows/player.md) — scrub back, replay forward, fork the timeline |
+| **Recording / playback with desync detection** | Not built-in | Built-in via the [Trecs Player editor window](../editor-windows/player.md) — scrub back, replay forward, fork the timeline — and at runtime through the same recording session ([from game code](../editor-windows/player.md#from-game-code)) |
 | **Deterministic RNG** | None built-in | Framework-level [`World.Rng`](../advanced/time-and-rng.md) with fork support |
 | **Frame-isolated input for replay** | Not built-in (NetCode for Entities provides one) | [Input system](../core/input-system.md) with frame isolation |
 | **Networking** | NetCode for Entities (separate package) — Client / Server / ThinClient world roles | No direct equivalent |

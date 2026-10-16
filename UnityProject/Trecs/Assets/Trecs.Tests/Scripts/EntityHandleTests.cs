@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Unity.Collections;
 using Unity.Mathematics;
 using NAssert = NUnit.Framework.Assert;
 
@@ -288,6 +289,57 @@ namespace Trecs.Tests
             var entityIndex2 = entityHandle.ToIndex(a);
 
             NAssert.AreEqual(entityIndex1, entityIndex2);
+        }
+
+        #endregion
+
+        #region Ordering
+
+        [Test]
+        public void EntityHandle_CompareTo_OrdersByIdThenVersion()
+        {
+            var a = new EntityHandle(1, 5);
+            var b = new EntityHandle(1, 6);
+            var c = new EntityHandle(2, 0);
+
+            NAssert.Less(a.CompareTo(b), 0);
+            NAssert.Less(b.CompareTo(c), 0);
+            NAssert.Greater(c.CompareTo(a), 0);
+        }
+
+        [Test]
+        public void EntityHandle_CompareTo_EqualHandles_IsZero()
+        {
+            var a = new EntityHandle(3, 7);
+            var b = new EntityHandle(3, 7);
+
+            NAssert.AreEqual(0, a.CompareTo(b));
+        }
+
+        [Test]
+        public void EntityHandle_CompareTo_NullSortsFirst()
+        {
+            NAssert.Less(EntityHandle.Null.CompareTo(new EntityHandle(1, 0)), 0);
+        }
+
+        [Test]
+        public void EntityHandle_UsableAsMultiHashMapUniqueKey()
+        {
+            using var map = new NativeParallelMultiHashMap<EntityHandle, int>(8, Allocator.Temp);
+
+            var first = new EntityHandle(1, 0);
+            var second = new EntityHandle(2, 0);
+            map.Add(first, 10);
+            map.Add(first, 11);
+            map.Add(second, 20);
+
+            var (keys, uniqueCount) = map.GetUniqueKeyArray(Allocator.Temp);
+            using (keys)
+            {
+                NAssert.AreEqual(2, uniqueCount);
+                NAssert.AreEqual(first, keys[0]);
+                NAssert.AreEqual(second, keys[1]);
+            }
         }
 
         #endregion
