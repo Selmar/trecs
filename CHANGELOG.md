@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Changed
 
 - **Runtime rewind.** `TrecsRewindBuffer`, `TrecsRecordingSession`, `TrecsRecordingSessionRegistry` and `GameStateMode` moved from `Trecs.Editor` to the runtime assembly and are public (`Trecs.Internal`), so game code can record, scrub and replay a world outside the editor. The editor window reuses a session game code registered. A desync raises `TrecsRewindBuffer.Desynced`; the editor pauses play mode on it as before.
-- **Desync dumps in every build.** `TrecsRewindBuffer.DumpDesyncDiff`, `FlatPathSerializationWriter` and the serialization scopes that name its paths are no longer `DEBUG`-only, so a release build can write the two states of a desync as flat-path text. Outside a dump, a scope costs one type check. The native heap is dumped per allocation only in `DEBUG` builds; a release dump holds its raw pages.
+- **Desync dumps in every build.** `TrecsRewindBuffer.DumpDesyncDiff`, `FlatPathSerializationWriter` and the serialization scopes that name its paths are no longer `DEBUG`-only, so a release build can write the two states of a desync as flat-path text. Outside a dump, a scope costs one type check. The native heap is dumped one entry per allocation, named by slot and type; `DEBUG` builds name it by the allocating file and line instead.
 
 - **A loaded recording never goes live on its own.** At its tail, and on any step past it, it pauses (or loops), as a scrubbed auto-recording does. `ForkAtCurrentFrame` (Record in the Player window) is the only way to live capture. Before, resuming past the tail promoted the recording to live capture.
 
