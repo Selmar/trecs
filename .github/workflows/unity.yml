@@ -15,7 +15,7 @@ jobs:
     name: Run Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           lfs: true
 
@@ -24,7 +24,7 @@ jobs:
         with:
           tool-cache: false
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: UnityProject/Trecs/Library
           key: Library-${{ hashFiles('UnityProject/Trecs/Packages/manifest.json', 'UnityProject/Trecs/Packages/packages-lock.json') }}
@@ -41,4 +41,53 @@ jobs:
           testMode: all
           unityVersion: 6000.3.10f1
           customImage: unityci/editor:ubuntu-6000.3.10f1-base-3
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+
+  # Editor test runs (the `test` job above) execute under Mono in the editor,
+  # where Burst JIT-compiles lazily and silently falls back to managed code on a
+  # compile error — so a Burst AOT error like BC1040 ("Tag<T>.Value cannot be
+  # burst compiled", issue #10) never fails those runs. Building a Standalone
+  # Player invokes the Burst AOT compiler, where such an error is fatal. This job
+  # builds + runs the PlayMode tests as a StandaloneLinux64 IL2CPP player (the
+  # project's configured Standalone backend), so Burst AOT errors turn CI red.
+  standalone-test:
+    name: Run Standalone (AOT) Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          lfs: true
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+
+      - uses: actions/cache@v5
+        with:
+          path: UnityProject/Trecs/Library
+          key: Library-standalone-${{ hashFiles('UnityProject/Trecs/Packages/manifest.json', 'UnityProject/Trecs/Packages/packages-lock.json') }}
+          restore-keys: |
+            Library-standalone-
+
+      - uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: UnityProject/Trecs
+          testMode: standalone
+          unityVersion: 6000.3.10f1
+          # IL2CPP StandaloneLinux64 needs the linux-il2cpp module image, not -base-.
+          customImage: unityci/editor:ubuntu-6000.3.10f1-linux-il2cpp-3
+          # Run the whole Trecs.Tests.PlayMode assembly under AOT: the Burst regression
+          # test plus the sample-scene smoke tests. The samples are headless-safe — the
+          # simulation ticks and its Burst jobs run; only the GPU draw submission is skipped
+          # when there's no graphics device (see SampleRenderingPath.IsHeadless). This
+          # exercises a broad slice of generated Burst + generic code under IL2CPP at
+          # runtime, not just at compile time. -assemblyNames keeps vendor/package PlayMode
+          # tests (e.g. render-pipeline tests that need a GPU) out of the run.
+          customParameters: -assemblyNames Trecs.Tests.PlayMode
           githubToken: ${{ secrets.GITHUB_TOKEN }}

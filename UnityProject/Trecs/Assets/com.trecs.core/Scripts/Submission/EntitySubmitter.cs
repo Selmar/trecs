@@ -292,7 +292,7 @@ namespace Trecs.Internal
         //     resets _currentlyExecutingAccessorId to 0 before calling
         //     Submit(). Observers may therefore use a separately-
         //     created service accessor (e.g. the OnRemoved pointer-cleanup
-        //     pattern in samples/10_Pointers) without tripping the assert.
+        //     pattern in samples/10_DynamicCollections) without tripping the assert.
         void SubmitImpl()
         {
             _eventsManager.NotifyOnSubmissionStarted();

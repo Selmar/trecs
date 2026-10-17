@@ -7,11 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-17
+
 ### Added
 
 - **World state sections.** `IWorldStateSection` and `World.AddStateSection` carry simulation state held outside components and heaps (a system's containers, a queue between systems) through snapshots, recordings, checksums and desync dumps.
 - **Deferred iteration counts.** A custom job that declares `IJobParallelForDefer` gets `ScheduleParallel` overloads that take the count as a `NativeList` length or, in an assembly that allows unsafe code, an `int*`, with a required batch size. TRECS072 rejects `IJobParallelForDefer` on a `[ForEachEntity]` job.
 - **Batch size override.** Every generated `ScheduleParallel` takes a trailing optional `innerloopBatchCount`. `0`, the default, keeps `JobsUtil.ChooseBatchSize`.
+- **Burst AOT coverage in CI.** A standalone IL2CPP job runs the PlayMode tests under Burst AOT, with a regression test that reads `Tag<T>.Value` inside a Burst job (issue #10). In-editor Burst falls back to managed code on such a compile error; a player build fails.
+- **Committed generator DLL checked in CI.** CI decompiles the committed `Trecs.SourceGen.dll` and a fresh build and fails when they differ. The DLL builds reproducibly: no debug block, no git SHA.
+- **Frame counts in jobs.** `NativeWorldAccessor` gains `FixedFrame` and `Frame`. `Frame` follows `WorldAccessor.Frame`: a fixed or phase-less accessor gets the fixed frame.
 - **Ordering on identity types.** `EntityHandle`, `TypeId`, `ComponentTypeId`, `Tag` and `BlobId` implement `IComparable<T>`, so they sort and can key sorted containers.
 
 ### Changed
@@ -24,6 +29,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - A custom job whose only world-wired fields are `[FromSingleEntity]` or `[FromGlobalEntity]` gets its `Schedule`. Before, the generator emitted nothing and gave no diagnostic, so the job could not pick up the dependency on the singleton's writers.
+- `Tag<T>.Value` is readable from Burst AOT code (issue #10). It was a mutable static, which Burst rejects with BC1040 in Standalone and IL2CPP builds.
+- The `[FromGlobalEntity]` error for an unresolved `TrecsTags.Globals` is TRECS131. It shared TRECS119 with the `[NonCopyable]` by-value parameter rule, which keeps TRECS119.
+- `SampleCycler` works in a project the samples were imported into: it no longer reads the build settings.
+- `package.json` has the `license` and `repository` fields that UPM and OpenUPM need.
+- Samples run without a graphics device: the simulation and its Burst jobs tick, only the draw submission is skipped.
+- Sample and docs links: tutorial companion-doc slugs, sample 10 named Dynamic Collections everywhere.
 
 ## [0.2.0] - 2026-05-07
 

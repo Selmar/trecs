@@ -673,7 +673,7 @@ namespace Trecs.SourceGen
             );
 
         public static readonly DiagnosticDescriptor FromGlobalEntityCouldNotResolveGlobalsTag = new(
-            id: "TRECS119",
+            id: "TRECS131",
             title: "[FromGlobalEntity] could not resolve TrecsTags.Globals",
             messageFormat: "[FromGlobalEntity] on '{0}' could not resolve the built-in TrecsTags.Globals tag type. "
                 + "Ensure the assembly references com.trecs.core.",

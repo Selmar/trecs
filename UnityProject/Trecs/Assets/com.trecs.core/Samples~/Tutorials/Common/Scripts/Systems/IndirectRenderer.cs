@@ -21,6 +21,10 @@ namespace Trecs.Samples
 
         readonly bool _supportsIndirect;
 
+        // Captured once: the graphics device can't appear/disappear mid-run, and this
+        // keeps the headless decision a single source of truth across ctor and Execute.
+        readonly bool _isHeadless;
+
         readonly GraphicsBuffer.IndirectDrawIndexedArgs[] _argsCache;
 
         readonly List<RenderableInfo> _renderables = new();
@@ -32,7 +36,11 @@ namespace Trecs.Samples
 
         public IndirectRenderer()
         {
-            _supportsIndirect = !SampleRenderingPath.UseFallback;
+            // Headless forces the fallback (NativeArray) path: GraphicsBuffer allocation
+            // needs a graphics device, whereas the fallback path stages instance data in
+            // CPU memory and only the final draw call touches the GPU (skipped below).
+            _isHeadless = SampleRenderingPath.IsHeadless;
+            _supportsIndirect = !SampleRenderingPath.UseFallback && !_isHeadless;
 
             if (_supportsIndirect)
             {
@@ -140,6 +148,10 @@ namespace Trecs.Samples
 
         void ExecuteIndirect()
         {
+            // Guaranteed by the ctor (_supportsIndirect excludes headless); asserted here
+            // so a future change to that gate can't silently issue GPU calls with no device.
+            Assert.That(!_isHeadless);
+
             var combined = default(JobHandle);
 
             foreach (var info in _renderables)
@@ -229,6 +241,11 @@ namespace Trecs.Samples
             {
                 combined.Complete();
             }
+
+            // The BuildInstanceData job above still runs headless (CPU work, Burst-
+            // compiled) — only the GPU submission is skipped, since there's no device.
+            if (_isHeadless)
+                return;
 
             using (TrecsProfiling.Start("Graphics.RenderMeshInstanced"))
             {

@@ -74,6 +74,36 @@ TRECS114 | Trecs | Error | [FromSingleEntity] requires inline Tag or Tags
 TRECS115 | Trecs | Error | [FromSingleEntity] conflicts with [FromWorld] or [PassThroughArgument]
 TRECS116 | Trecs | Warning | [FromSingleEntity] write-aspect field on a parallel job needs [NativeDisableParallelForRestriction]
 TRECS117 | Trecs | Error | [GlobalIndex] parameter must be int
-TRECS119 | Trecs | Error | [FromGlobalEntity] could not resolve TrecsTags.Globals
+TRECS119 | Trecs | Error | [NonCopyable] struct must not be passed by value
 TRECS996 | Trecs | Error | Source generation error
 TRECS999 | Trecs | Error | Source generation error
+
+## Release 0.3.0
+
+### New Rules
+
+Rule ID | Category | Severity | Notes
+--------|----------|----------|-------
+TRECS038 | Trecs | Warning | Template generates many partitions
+TRECS039 | Trecs | Error | Cannot register an abstract template
+TRECS072 | Trecs | Error | IJobParallelForDefer is not supported on a [ForEachEntity] job
+TRECS118 | Trecs | Error | [NonCopyable] struct must not be copied to a by-value local
+TRECS120 | Trecs | Error | [NonCopyable] and [Copyable] cannot both be applied to the same struct
+TRECS121 | Trecs | Error | [Input] component must not contain persistent-pointer fields
+TRECS122 | Trecs | Error | [Input] component must not contain TrecsList fields
+TRECS123 | Trecs | Error | [Input(MissingInputBehavior.Retain)] component cannot contain InputXxxPtr fields
+TRECS124 | Trecs | Error | NativeSharedPtr<T> requires T to be a readonly struct
+TRECS125 | Trecs | Error | SharedPtr<T> requires T (class or interface) to carry [Trecs.Immutable]
+TRECS126 | Trecs | Error | [Immutable] type violates immutability rules
+TRECS127 | Trecs | Warning | [Immutable] interface method returns a non-immutable type
+TRECS128 | Trecs | Warning | Iteration over Dictionary/HashSet is non-deterministic
+TRECS129 | Trecs | Warning | Iteration over NativeHashMap/NativeHashSet is non-deterministic
+TRECS130 | Trecs | Warning | Non-deterministic API used in fixed-update system
+TRECS131 | Trecs | Error | [FromGlobalEntity] could not resolve TrecsTags.Globals
+
+### Removed Rules
+
+Rule ID | Category | Severity | Notes
+--------|----------|----------|-------
+TRECS110 | Trecs | Error | NativeUniquePtr must not be copied to a by-value local — replaced by per-allocation AtomicSafetyHandle on NativeUniqueRead/Write wrappers
+TRECS111 | Trecs | Error | NativeUniquePtr must not be passed by value — replaced by per-allocation AtomicSafetyHandle on NativeUniqueRead/Write wrappers
