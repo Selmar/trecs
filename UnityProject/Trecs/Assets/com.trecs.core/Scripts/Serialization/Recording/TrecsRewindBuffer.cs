@@ -1278,9 +1278,7 @@ namespace Trecs.Internal
         // capturing or trimming. At the tail, and on any step past it:
         //   * Loop on  → rewind to the start, keep playing.
         //   * Loop off → pause. Record (Fork) commits and goes live.
-        // A step past the tail happens when several fixed steps run in one
-        // frame (the runner honours a pause only before a frame's fixed
-        // loop), or when a caller steps the paused runner.
+        // A step past the tail happens when a caller steps the paused runner.
         void HandlePlaybackTick(int frame)
         {
             // No-op on frames without a recorded checksum.

@@ -544,10 +544,20 @@ namespace Trecs.Internal
             var fixedTimeStep = _settings.FixedTimeStep;
             TrecsDebugAssert.That(fixedTimeStep > 0);
 
+            // Fast-forward and single-step run with the pause already
+            // requested; only a request made by a step of this loop stops it.
+            var wasPauseRequested = _desiredFixedIsPaused;
+
             // Keep running until the physics time exceeds the current time
             // so we can interpolate to get the current time
             while (_elapsedFixedTime <= endOfFrameTime)
             {
+                // A pause requested mid-loop (a recording's tail, a desync)
+                // stops at the step that asked, not at the end of the frame.
+                if (!wasPauseRequested && _desiredFixedIsPaused)
+                {
+                    break;
+                }
                 // Stop FF catch-up exactly at target — the variable-time
                 // bound above would otherwise let one extra iteration
                 // through, firing FixedFrameChangeEvent for a frame past
