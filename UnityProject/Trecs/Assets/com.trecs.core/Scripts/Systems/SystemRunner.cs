@@ -69,10 +69,6 @@ namespace Trecs.Internal
         // External fast-forward request: set by callers via the public
         // FastForwardTargetFrame property, consumed at the start of the next
         // variable tick when the catch-up loop kicks off (see Tick()).
-        // Frame-typed (not time-typed) because _elapsedFixedTime can drift
-        // away from _currentFixedFrameCount * FixedTimeStep when
-        // MaxSecondsPerFixedUpdate forces a skip-forward; a time-typed target
-        // then maps to the wrong frame.
         int? _pendingFastForwardRequest;
 
         // While a fast-forward request is being serviced the catch-up loop
@@ -167,12 +163,6 @@ namespace Trecs.Internal
         /// <see cref="FixedFrame"/> reaches this value, then auto-pause.
         /// Requires <see cref="FixedIsPaused"/> to be false at the start of
         /// that tick. No-op if the target is at or below the current frame.
-        ///
-        /// Frame-typed (not time-typed): when MaxSecondsPerFixedUpdate forces
-        /// a skip-forward, _elapsedFixedTime can drift away from
-        /// FixedFrame * FixedTimeStep. A time-based target then computes the
-        /// wrong number of frames to advance and lands a few frames short of
-        /// the user's intent.
         /// </summary>
         public int? FastForwardTargetFrame
         {
@@ -677,15 +667,17 @@ namespace Trecs.Internal
 
             if (skipForward)
             {
-                var fallBehindTime = endOfFrameTime - _elapsedFixedTime;
-                _elapsedFixedTime += fallBehindTime + 0.01f;
-                _fixedElapsedTimeChangeEvent.Invoke(_elapsedFixedTime);
+                // Variable time drops the backlog. Fixed time is sim state:
+                // it advances only by steps.
+                var droppedTime = endOfFrameTime - _elapsedFixedTime + 0.01f;
+                _elapsedVariableTime -= droppedTime;
+                _elapsedVariableTimeChangeEvent.Invoke(_elapsedVariableTime);
 
                 if (_settings.WarnOnFixedUpdateFallingBehind)
                 {
                     _log.Warning(
-                        "Fixed update is falling behind variable update!  Skipping forward by {0} seconds to catch up",
-                        fallBehindTime + 0.01f
+                        "Fixed update is falling behind variable update!  Dropping {0} seconds to catch up",
+                        droppedTime
                     );
                 }
             }
@@ -709,7 +701,7 @@ namespace Trecs.Internal
                 if (_settings.WarnOnFixedUpdateFallingBehind)
                 {
                     _log.Warning(
-                        "Fixed update has started falling behind render update! ({0} frames behind) This could enter the dreaded physics timestep spiral of death.  To fix this - provide a value for MaxSecondsPerFixedUpdate in trecs setting.  Note that if you do this that it may get out of sync with recordings or online environments",
+                        "Fixed update has started falling behind render update! ({0} frames behind) This could enter the dreaded physics timestep spiral of death.  To fix this - provide a value for MaxSecondsPerFixedUpdate in trecs setting.  Note that the simulation then runs slower than real time while it falls behind",
                         numUpdates
                     );
                 }

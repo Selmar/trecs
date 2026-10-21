@@ -22,12 +22,12 @@ namespace Trecs
 
         /// <summary>
         /// Maximum wall-clock time (in seconds) that can be spent on fixed updates
-        /// in a single frame. When exceeded, the simulation skips forward to prevent
+        /// in a single frame. When exceeded, the remaining backlog is dropped to prevent
         /// the spiral of death (where falling behind causes ever-increasing catch-up work).
-        /// Note that skipping forward means fixed update ticks are dropped, which breaks
-        /// determinism and may cause desyncs with recordings or networked peers.
+        /// The simulation then runs slower than real time; it stays deterministic, since
+        /// <see cref="WorldAccessor.FixedElapsedTime"/> advances only by fixed steps.
         /// Defaults to 1/3s, matching Unity's <c>Time.maximumDeltaTime</c>.
-        /// Set to null for unlimited updates (e.g. deterministic replay), but note
+        /// Set to null for unlimited updates, but note
         /// this risks the spiral of death if fixed updates are too expensive.
         /// </summary>
         public float? MaxSecondsForFixedUpdatePerFrame { get; init; } =
