@@ -111,6 +111,10 @@ namespace Trecs.Internal
         // buckets here.
         readonly HashSet<JobHandle> _completedThisCall = new();
 
+        // Handles already inside _combinedResult. See CombineOnce.
+        readonly List<JobHandle> _combinedHandles = new();
+        JobHandle _combinedResult;
+
         int _outstandingJobCount;
         bool _isSubmitting;
 
@@ -172,7 +176,7 @@ namespace Trecs.Internal
 
             if (_writers.TryGetValue(key, out var writer))
             {
-                return JobHandle.CombineDependencies(baseDeps, writer.Handle);
+                return CombineOnce(baseDeps, writer.Handle);
             }
 
             return baseDeps;
@@ -192,18 +196,50 @@ namespace Trecs.Internal
 
             if (_writers.TryGetValue(key, out var writer))
             {
-                baseDeps = JobHandle.CombineDependencies(baseDeps, writer.Handle);
+                baseDeps = CombineOnce(baseDeps, writer.Handle);
             }
 
             if (_readers.TryGetValue(key, out var readerList))
             {
                 for (int i = 0; i < readerList.Count; i++)
                 {
-                    baseDeps = JobHandle.CombineDependencies(baseDeps, readerList[i].Handle);
+                    baseDeps = CombineOnce(baseDeps, readerList[i].Handle);
                 }
             }
 
             return baseDeps;
+        }
+
+        // A job is tracked once per (resource, group), so one schedule's includes name the
+        // same handle many times, and each native combine allocates a job.
+        JobHandle CombineOnce(JobHandle baseDeps, JobHandle handle)
+        {
+            if (baseDeps.Equals(default(JobHandle)))
+            {
+                _combinedHandles.Clear();
+                _combinedHandles.Add(handle);
+                _combinedResult = handle;
+                return handle;
+            }
+
+            if (!baseDeps.Equals(_combinedResult))
+            {
+                _combinedHandles.Clear();
+                _combinedHandles.Add(baseDeps);
+            }
+
+            for (int i = 0; i < _combinedHandles.Count; i++)
+            {
+                if (_combinedHandles[i].Equals(handle))
+                {
+                    _combinedResult = baseDeps;
+                    return baseDeps;
+                }
+            }
+
+            _combinedHandles.Add(handle);
+            _combinedResult = JobHandle.CombineDependencies(baseDeps, handle);
+            return _combinedResult;
         }
 
         /// <summary>
