@@ -56,8 +56,15 @@ namespace Trecs.SourceGen.Shared
             {
                 if (e.NeedsHoistedGroups)
                 {
+                    // A group without the component holds nothing for a lookup to reach,
+                    // so it gets no entry and no dependency.
+                    var groupsCall =
+                        e.Kind == FromWorldFieldKind.NativeComponentLookupRead
+                        || e.Kind == FromWorldFieldKind.NativeComponentLookupWrite
+                            ? $"GetGroupsWithTagsAndComponents<{e.GenericArgDisplay}>"
+                            : "GetGroupsWithTags";
                     sb.AppendLine(
-                        $"{body}var {e.HoistedGroupsLocal} = {GenPrefix}world.WorldInfo.GetGroupsWithTags({e.TagSetExpression});"
+                        $"{body}var {e.HoistedGroupsLocal} = {GenPrefix}world.WorldInfo.{groupsCall}({e.TagSetExpression});"
                     );
                 }
                 else if (e.NeedsHoistedSingleGroup)

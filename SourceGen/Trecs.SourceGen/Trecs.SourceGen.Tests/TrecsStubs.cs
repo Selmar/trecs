@@ -860,6 +860,9 @@ internal static class TrecsStubs
             {
                 public System.Collections.Generic.IEnumerable<GroupIndex> GetGroupsWithTags(TagSet tags) =>
                     System.Linq.Enumerable.Empty<GroupIndex>();
+                public System.Collections.Generic.IEnumerable<GroupIndex> GetGroupsWithTagsAndComponents<T1>(TagSet tags)
+                    where T1 : unmanaged, IEntityComponent =>
+                    System.Linq.Enumerable.Empty<GroupIndex>();
                 public System.Collections.Generic.IEnumerable<GroupIndex> GetGroupsWithComponents<T1>()
                     where T1 : unmanaged, IEntityComponent =>
                     System.Linq.Enumerable.Empty<GroupIndex>();
