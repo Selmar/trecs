@@ -104,6 +104,12 @@ namespace Trecs
             get => _entries != null;
         }
 
+        internal bool OwnsEntries => _allocator != Allocator.None;
+
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
+        internal AtomicSafetyHandle SafetyHandle => m_Safety;
+#endif
+
         public ref readonly T this[EntityIndex entityIndex]
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -234,7 +240,8 @@ namespace Trecs
 
         public void Dispose()
         {
-            if (_entries == null)
+            // default(lookup): nothing to release.
+            if (_allocator == Allocator.Invalid)
                 return;
 
             // Struct is `readonly` so we can't clear _entries after free.
@@ -247,7 +254,7 @@ namespace Trecs
             AtomicSafetyHandle.Release(m_Safety);
 #endif
             // Allocator.None: the world owns the entries, see EntityQuerier.GetLookupEntries.
-            if (_allocator != Allocator.None)
+            if (_entries != null && _allocator != Allocator.None)
                 UnsafeUtility.FreeTracked(_entries, _allocator);
         }
     }
@@ -300,6 +307,12 @@ namespace Trecs
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _entries != null;
         }
+
+        internal bool OwnsEntries => _allocator != Allocator.None;
+
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
+        internal AtomicSafetyHandle SafetyHandle => m_Safety;
+#endif
 
         public ref T this[EntityIndex entityIndex]
         {
@@ -418,16 +431,16 @@ namespace Trecs
 
         public void Dispose()
         {
-            if (_entries == null)
+            // See NativeComponentLookupRead.Dispose for the rationale.
+            if (_allocator == Allocator.Invalid)
                 return;
 
-            // See NativeComponentLookupRead.Dispose for the rationale.
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
             AtomicSafetyHandle.CheckDeallocateAndThrow(m_Safety);
             AtomicSafetyHandle.Release(m_Safety);
 #endif
             // Allocator.None: the world owns the entries, see EntityQuerier.GetLookupEntries.
-            if (_allocator != Allocator.None)
+            if (_entries != null && _allocator != Allocator.None)
                 UnsafeUtility.FreeTracked(_entries, _allocator);
         }
     }

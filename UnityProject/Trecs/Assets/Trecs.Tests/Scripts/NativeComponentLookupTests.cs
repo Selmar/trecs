@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using Trecs.Internal;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using NAssert = NUnit.Framework.Assert;
 
 namespace Trecs.Tests
@@ -70,6 +71,27 @@ namespace Trecs.Tests
             using var moved = a.CreateNativeComponentLookupReadForJob<TestInt>(groups);
             NAssert.AreEqual(10, moved[new EntityIndex(0, group)].Value);
             NAssert.AreEqual(999, moved[new EntityIndex(1000, group)].Value);
+        }
+
+        #endregion
+
+        #region Dispose
+
+        [Test]
+        public void EmptyLookup_ReleasesSafetyHandleOnDispose()
+        {
+            using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
+            var lookup = env.Accessor.CreateNativeComponentLookupRead<TestInt>(
+                TestTags.Alpha,
+                Allocator.TempJob
+            );
+            NAssert.IsFalse(lookup.IsCreated, "no entities gives no entries");
+
+            lookup.Dispose();
+
+            NAssert.Throws<System.ObjectDisposedException>(
+                () => AtomicSafetyHandle.CheckExistsAndThrow(lookup.SafetyHandle)
+            );
         }
 
         #endregion

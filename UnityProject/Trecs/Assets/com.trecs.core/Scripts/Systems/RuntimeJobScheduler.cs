@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Trecs.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 #if TRECS_IS_PROFILING
 using Unity.Jobs.LowLevel.Unsafe;
@@ -88,6 +89,11 @@ namespace Trecs.Internal
         // element type itself contains a native container (e.g. NativeComponentLookupEntry
         // wraps a NativeBuffer).
         readonly List<IDisposable> _pendingDisposes = new();
+
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
+        // Handles of the lookups on world-owned entries: all a Dispose would do for them.
+        readonly List<AtomicSafetyHandle> _pendingSafetyReleases = new();
+#endif
 
         // Pool of reader lists to avoid allocation
         readonly Stack<List<JobEntry>> _listPool = new();
@@ -422,6 +428,35 @@ namespace Trecs.Internal
             _pendingDisposes.Add(disposable);
         }
 
+        // Overloads so a lookup per schedule does not box into the IDisposable list.
+        public void RegisterPendingDispose<T>(NativeComponentLookupRead<T> lookup)
+            where T : unmanaged, IEntityComponent
+        {
+            AssertMainThread();
+            if (lookup.OwnsEntries)
+            {
+                _pendingDisposes.Add(lookup);
+                return;
+            }
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
+            _pendingSafetyReleases.Add(lookup.SafetyHandle);
+#endif
+        }
+
+        public void RegisterPendingDispose<T>(NativeComponentLookupWrite<T> lookup)
+            where T : unmanaged, IEntityComponent
+        {
+            AssertMainThread();
+            if (lookup.OwnsEntries)
+            {
+                _pendingDisposes.Add(lookup);
+                return;
+            }
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
+            _pendingSafetyReleases.Add(lookup.SafetyHandle);
+#endif
+        }
+
         /// <summary>
         /// Complete all outstanding jobs and clear tracking state.
         /// Called at phase boundaries. Main thread only.
@@ -501,6 +536,16 @@ namespace Trecs.Internal
                 }
 
                 _pendingDisposes.Clear();
+
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
+                for (int i = 0; i < _pendingSafetyReleases.Count; i++)
+                {
+                    AtomicSafetyHandle.CheckDeallocateAndThrow(_pendingSafetyReleases[i]);
+                    AtomicSafetyHandle.Release(_pendingSafetyReleases[i]);
+                }
+
+                _pendingSafetyReleases.Clear();
+#endif
             }
 
             _outstandingJobCount = 0;
