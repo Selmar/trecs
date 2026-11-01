@@ -815,13 +815,14 @@ internal static class TrecsStubs
 
                 // [FromWorld] cross-entity factories: jobs allocate per-group lookups via
                 // these and dispose them via JobScheduler.RegisterPendingDispose.
+                public System.Collections.Generic.IEnumerable<GroupIndex> GetLookupGroupsForJob<T>(
+                    System.Collections.Generic.IEnumerable<GroupIndex> groups
+                ) where T : unmanaged, IEntityComponent => groups;
                 public NativeComponentLookupRead<T> CreateNativeComponentLookupReadForJob<T>(
-                    System.Collections.Generic.IEnumerable<GroupIndex> groups,
-                    Unity.Collections.Allocator allocator
+                    System.Collections.Generic.IEnumerable<GroupIndex> groups
                 ) where T : unmanaged, IEntityComponent => default;
                 public NativeComponentLookupWrite<T> CreateNativeComponentLookupWriteForJob<T>(
-                    System.Collections.Generic.IEnumerable<GroupIndex> groups,
-                    Unity.Collections.Allocator allocator
+                    System.Collections.Generic.IEnumerable<GroupIndex> groups
                 ) where T : unmanaged, IEntityComponent => default;
 
                 // Set-related job scheduling helpers. Real impls are extension methods in

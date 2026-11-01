@@ -320,6 +320,7 @@ namespace Trecs.Internal
                     {
                         hasEverSubmitted = true;
 
+                        _entitiesQuerier.InvalidateLookupEntries();
                         SingleSubmission();
                         FlushAllDeferredOps();
                     }
@@ -468,6 +469,8 @@ namespace Trecs.Internal
             IComponentBuilder[] entityComponentsToBuild
         )
         {
+            _entitiesQuerier.InvalidateLookupEntries();
+
             using (TrecsProfiling.Start("PreallocateDBGroup"))
             {
                 _componentStore.PreallocateDBGroup(groupId, size, entityComponentsToBuild);

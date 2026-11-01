@@ -112,22 +112,28 @@ namespace Trecs.Internal
             world.GetComponentWriteForJobScheduling<T>(entityIndex);
 
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public static NativeComponentLookupRead<T> CreateNativeComponentLookupReadForJob<T>(
+        public static ReadOnlyList<GroupIndex> GetLookupGroupsForJob<T>(
             this WorldAccessor world,
-            ReadOnlyList<GroupIndex> groups,
-            Allocator allocator
+            ReadOnlyList<GroupIndex> groups
         )
             where T : unmanaged, IEntityComponent =>
-            world.CreateNativeComponentLookupRead<T>(groups, allocator);
+            world.GetLookupGroupsForJobScheduling<T>(groups);
+
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public static NativeComponentLookupRead<T> CreateNativeComponentLookupReadForJob<T>(
+            this WorldAccessor world,
+            ReadOnlyList<GroupIndex> groups
+        )
+            where T : unmanaged, IEntityComponent =>
+            world.CreateNativeComponentLookupReadForJobScheduling<T>(groups);
 
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static NativeComponentLookupWrite<T> CreateNativeComponentLookupWriteForJob<T>(
             this WorldAccessor world,
-            ReadOnlyList<GroupIndex> groups,
-            Allocator allocator
+            ReadOnlyList<GroupIndex> groups
         )
             where T : unmanaged, IEntityComponent =>
-            world.CreateNativeComponentLookupWrite<T>(groups, allocator);
+            world.CreateNativeComponentLookupWriteForJobScheduling<T>(groups);
 
         // ── NativeFactory helpers (buffer extraction from lookups) ──
 

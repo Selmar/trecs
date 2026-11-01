@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Trecs.Collections;
 using Unity.Collections;
@@ -24,6 +25,12 @@ namespace Trecs.Internal
         // callback window. Liveness checks (Exists, EntityIndexExists) are
         // intentionally unchanged. Zero means "no extension active".
         int[] _removalExtendedCounts;
+
+        // Entries of the lookups scheduled jobs use, per (component, candidate groups).
+        // ponytail: one version for the whole world, so any structural change rebuilds
+        // every lookup on next use. Version per group if combat spawning keeps this cold.
+        readonly Dictionary<(int, object), LookupEntries> _lookupEntries = new();
+        int _lookupEntriesVersion = 1;
 
         internal EntityQuerier(
             TrecsLog log,
@@ -343,6 +350,76 @@ namespace Trecs.Internal
             }
 
             count = writeIdx;
+        }
+
+        internal unsafe sealed class LookupEntries
+        {
+            public NativeComponentLookupEntry* Entries;
+            public int Count;
+            public int Version;
+
+            // Groups with an entry: they hold T and are not empty.
+            public readonly List<GroupIndex> Groups = new();
+        }
+
+        /// <summary>
+        /// Entries shared by every lookup over these groups until the next
+        /// <see cref="InvalidateLookupEntries"/>. Lookups do not own them.
+        /// </summary>
+        internal unsafe LookupEntries GetLookupEntries<T>(ReadOnlyList<GroupIndex> groups)
+            where T : unmanaged, IEntityComponent
+        {
+            var key = (TypeId<T>.Value.Value, groups.Identity);
+            if (!_lookupEntries.TryGetValue(key, out var cached))
+            {
+                cached = new LookupEntries();
+                _lookupEntries.Add(key, cached);
+            }
+
+            if (cached.Version != _lookupEntriesVersion)
+            {
+                FreeEntries(cached);
+                BuildNativeComponentLookupEntries<T>(
+                    groups,
+                    Allocator.Persistent,
+                    out cached.Entries,
+                    out cached.Count
+                );
+                cached.Groups.Clear();
+                for (int i = 0; i < cached.Count; i++)
+                {
+                    cached.Groups.Add(cached.Entries[i].GroupIndex);
+                }
+                cached.Version = _lookupEntriesVersion;
+            }
+
+            return cached;
+        }
+
+        /// <summary>
+        /// Component buffers moved or changed size. No job may hold a lookup across this.
+        /// </summary>
+        internal void InvalidateLookupEntries()
+        {
+            _lookupEntriesVersion++;
+        }
+
+        internal void FreeLookupEntries()
+        {
+            foreach (var cached in _lookupEntries.Values)
+            {
+                FreeEntries(cached);
+            }
+            _lookupEntries.Clear();
+        }
+
+        static unsafe void FreeEntries(LookupEntries cached)
+        {
+            if (cached.Entries != null)
+            {
+                UnsafeUtility.FreeTracked(cached.Entries, Allocator.Persistent);
+                cached.Entries = null;
+            }
         }
 
         // ── Sets ────────────────────────────────────────────────────────

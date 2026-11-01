@@ -13,6 +13,9 @@ namespace Trecs.Collections
 
         readonly List<T> _list;
 
+        // Identity of the wrapped list, for keying caches on it.
+        internal object Identity => _list;
+
         public ReadOnlyList(List<T> list)
         {
             TrecsDebugAssert.IsNotNull(list);

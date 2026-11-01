@@ -610,6 +610,8 @@ namespace Trecs
 
         void DeserializeImpl(ISerializationReader reader)
         {
+            _world.EntityQuerier.InvalidateLookupEntries();
+
             reader.ReadInPlace("rngSeed", _world.FixedRng);
             _world.SystemRunner._currentFixedFrameCount = reader.Read<int>("FixedFrameCount");
             _world.SystemRunner._elapsedFixedTime = reader.Read<float>("FixedElapsedTime");

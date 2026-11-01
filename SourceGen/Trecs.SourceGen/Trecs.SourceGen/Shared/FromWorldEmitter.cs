@@ -56,16 +56,23 @@ namespace Trecs.SourceGen.Shared
             {
                 if (e.NeedsHoistedGroups)
                 {
-                    // A group without the component holds nothing for a lookup to reach,
-                    // so it gets no entry and no dependency.
-                    var groupsCall =
-                        e.Kind == FromWorldFieldKind.NativeComponentLookupRead
-                        || e.Kind == FromWorldFieldKind.NativeComponentLookupWrite
-                            ? $"GetGroupsWithTagsAndComponents<{e.GenericArgDisplay}>"
-                            : "GetGroupsWithTags";
-                    sb.AppendLine(
-                        $"{body}var {e.HoistedGroupsLocal} = {GenPrefix}world.WorldInfo.{groupsCall}({e.TagSetExpression});"
-                    );
+                    // A group without the component holds nothing for a lookup to reach, and
+                    // neither does an empty one, so they get no entry and no dependency.
+                    if (IsLookup(e))
+                    {
+                        sb.AppendLine(
+                            $"{body}var {e.HoistedGroupsLocal} = {GenPrefix}world.WorldInfo.GetGroupsWithTagsAndComponents<{e.GenericArgDisplay}>({e.TagSetExpression});"
+                        );
+                        sb.AppendLine(
+                            $"{body}var {LiveGroupsLocal(e)} = {GenPrefix}world.GetLookupGroupsForJob<{e.GenericArgDisplay}>({e.HoistedGroupsLocal});"
+                        );
+                    }
+                    else
+                    {
+                        sb.AppendLine(
+                            $"{body}var {e.HoistedGroupsLocal} = {GenPrefix}world.WorldInfo.GetGroupsWithTags({e.TagSetExpression});"
+                        );
+                    }
                 }
                 else if (e.NeedsHoistedSingleGroup)
                 {
@@ -75,6 +82,13 @@ namespace Trecs.SourceGen.Shared
                 }
             }
         }
+
+        static bool IsLookup(in FromWorldFieldEmitModel e) =>
+            e.Kind == FromWorldFieldKind.NativeComponentLookupRead
+            || e.Kind == FromWorldFieldKind.NativeComponentLookupWrite;
+
+        static string LiveGroupsLocal(in FromWorldFieldEmitModel e) =>
+            e.HoistedGroupsLocal + "_live";
 
         internal static void EmitFromWorldDepRegistration(
             StringBuilder sb,
@@ -121,9 +135,7 @@ namespace Trecs.SourceGen.Shared
                             e.Kind == FromWorldFieldKind.NativeComponentLookupRead
                                 ? "IncludeReadDep"
                                 : "IncludeWriteDep";
-                        sb.AppendLine(
-                            $"{body}foreach (var {GenPrefix}lg in {e.HoistedGroupsLocal})"
-                        );
+                        sb.AppendLine($"{body}foreach (var {GenPrefix}lg in {LiveGroupsLocal(e)})");
                         sb.AppendLine(
                             $"{body}    {GenPrefix}deps = {GenPrefix}scheduler.{method}({GenPrefix}deps, {rid}, {GenPrefix}lg);"
                         );
@@ -234,7 +246,7 @@ namespace Trecs.SourceGen.Shared
                 lookupLocals.Add(local);
 
                 sb.AppendLine(
-                    $"{body}var {local} = {GenPrefix}world.{createMethod}<{compName}>({e.HoistedGroupsLocal}, Unity.Collections.Allocator.TempJob);"
+                    $"{body}var {local} = {GenPrefix}world.{createMethod}<{compName}>({e.HoistedGroupsLocal});"
                 );
                 sb.AppendLine($"{body}{GenPrefix}scheduler.RegisterPendingDispose({local});");
             }
@@ -282,7 +294,7 @@ namespace Trecs.SourceGen.Shared
                         break;
                     case FromWorldFieldKind.NativeComponentLookupRead:
                         sb.AppendLine(
-                            $"{body}var {GenPrefix}lookup_{e.FieldName} = {GenPrefix}world.CreateNativeComponentLookupReadForJob<{t}>({e.HoistedGroupsLocal}, Unity.Collections.Allocator.TempJob);"
+                            $"{body}var {GenPrefix}lookup_{e.FieldName} = {GenPrefix}world.CreateNativeComponentLookupReadForJob<{t}>({e.HoistedGroupsLocal});"
                         );
                         sb.AppendLine(
                             $"{body}{GenPrefix}scheduler.RegisterPendingDispose({GenPrefix}lookup_{e.FieldName});"
@@ -293,7 +305,7 @@ namespace Trecs.SourceGen.Shared
                         break;
                     case FromWorldFieldKind.NativeComponentLookupWrite:
                         sb.AppendLine(
-                            $"{body}var {GenPrefix}lookup_{e.FieldName} = {GenPrefix}world.CreateNativeComponentLookupWriteForJob<{t}>({e.HoistedGroupsLocal}, Unity.Collections.Allocator.TempJob);"
+                            $"{body}var {GenPrefix}lookup_{e.FieldName} = {GenPrefix}world.CreateNativeComponentLookupWriteForJob<{t}>({e.HoistedGroupsLocal});"
                         );
                         sb.AppendLine(
                             $"{body}{GenPrefix}scheduler.RegisterPendingDispose({GenPrefix}lookup_{e.FieldName});"
@@ -386,9 +398,7 @@ namespace Trecs.SourceGen.Shared
                             e.Kind == FromWorldFieldKind.NativeComponentLookupRead
                                 ? "TrackJobRead"
                                 : "TrackJobWrite";
-                        sb.AppendLine(
-                            $"{body}foreach (var {GenPrefix}lg in {e.HoistedGroupsLocal})"
-                        );
+                        sb.AppendLine($"{body}foreach (var {GenPrefix}lg in {LiveGroupsLocal(e)})");
                         sb.AppendLine(
                             $"{body}    {GenPrefix}scheduler.{method}({GenPrefix}handle, {rid}, {GenPrefix}lg, {GenPrefix}jobName);"
                         );

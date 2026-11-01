@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Trecs.Internal;
 using Unity.Collections;
 using NAssert = NUnit.Framework.Assert;
 
@@ -34,6 +35,41 @@ namespace Trecs.Tests
             NAssert.AreEqual(10, lookup[new EntityIndex(0, group)].Value);
             NAssert.AreEqual(20, lookup[new EntityIndex(1, group)].Value);
             NAssert.AreEqual(30, lookup[new EntityIndex(2, group)].Value);
+        }
+
+        #endregion
+
+        #region Job Lookup — Shared Entries
+
+        [Test]
+        public void JobLookup_RebuildsAfterStructuralChange_SkipsEmptyGroups()
+        {
+            using var env = EcsTestHelper.CreateEnvironment(TestTemplates.SimpleAlpha);
+            var a = env.Accessor;
+            var groups = a.WorldInfo.GetGroupsWithTagsAndComponents<TestInt>(TestTags.Alpha);
+            var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
+
+            NAssert.AreEqual(0, a.GetLookupGroupsForJob<TestInt>(groups).Count);
+
+            a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 10 }).AssertComplete();
+            a.Submit();
+
+            NAssert.AreEqual(1, a.GetLookupGroupsForJob<TestInt>(groups).Count);
+            using (var lookup = a.CreateNativeComponentLookupReadForJob<TestInt>(groups))
+            {
+                NAssert.AreEqual(10, lookup[new EntityIndex(0, group)].Value);
+            }
+
+            // Enough to move the buffer.
+            for (int i = 0; i < 1000; i++)
+            {
+                a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = i }).AssertComplete();
+            }
+            a.Submit();
+
+            using var moved = a.CreateNativeComponentLookupReadForJob<TestInt>(groups);
+            NAssert.AreEqual(10, moved[new EntityIndex(0, group)].Value);
+            NAssert.AreEqual(999, moved[new EntityIndex(1000, group)].Value);
         }
 
         #endregion

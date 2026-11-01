@@ -559,6 +559,7 @@ namespace Trecs
             _systemEnableState.Dispose();
             _heapAllocator.Dispose();
 
+            _querier.FreeLookupEntries();
             _entitySubmitter.Dispose();
 
             _structuralOps.MarkDisposed();

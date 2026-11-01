@@ -227,7 +227,9 @@ namespace Trecs
             AtomicSafetyHandle.CheckDeallocateAndThrow(m_Safety);
             AtomicSafetyHandle.Release(m_Safety);
 #endif
-            UnsafeUtility.FreeTracked(_entries, _allocator);
+            // Allocator.None: the world owns the entries, see EntityQuerier.GetLookupEntries.
+            if (_allocator != Allocator.None)
+                UnsafeUtility.FreeTracked(_entries, _allocator);
         }
     }
 
@@ -405,7 +407,9 @@ namespace Trecs
             AtomicSafetyHandle.CheckDeallocateAndThrow(m_Safety);
             AtomicSafetyHandle.Release(m_Safety);
 #endif
-            UnsafeUtility.FreeTracked(_entries, _allocator);
+            // Allocator.None: the world owns the entries, see EntityQuerier.GetLookupEntries.
+            if (_allocator != Allocator.None)
+                UnsafeUtility.FreeTracked(_entries, _allocator);
         }
     }
 }
