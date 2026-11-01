@@ -815,9 +815,15 @@ internal static class TrecsStubs
 
                 // [FromWorld] cross-entity factories: jobs allocate per-group lookups via
                 // these and dispose them via JobScheduler.RegisterPendingDispose.
-                public System.Collections.Generic.IEnumerable<GroupIndex> GetLookupGroupsForJob<T>(
+                public LookupEntries GetLookupEntriesForJob<T>(
                     System.Collections.Generic.IEnumerable<GroupIndex> groups
-                ) where T : unmanaged, IEntityComponent => groups;
+                ) where T : unmanaged, IEntityComponent => default;
+                public NativeComponentLookupRead<T> CreateNativeComponentLookupReadForJob<T>(
+                    LookupEntries entries
+                ) where T : unmanaged, IEntityComponent => default;
+                public NativeComponentLookupWrite<T> CreateNativeComponentLookupWriteForJob<T>(
+                    LookupEntries entries
+                ) where T : unmanaged, IEntityComponent => default;
                 public NativeComponentLookupRead<T> CreateNativeComponentLookupReadForJob<T>(
                     System.Collections.Generic.IEnumerable<GroupIndex> groups
                 ) where T : unmanaged, IEntityComponent => default;
@@ -855,6 +861,11 @@ internal static class TrecsStubs
                 // AutoJobGenerator's ScheduleParallel shim calls this when forwarding into
                 // a Burst job that takes `in NativeWorldAccessor`.
                 public NativeWorldAccessor ToNative() => default;
+            }
+
+            public sealed class LookupEntries
+            {
+                public System.Collections.Generic.List<GroupIndex> Groups => new();
             }
 
             public class WorldInfo

@@ -1460,38 +1460,10 @@ namespace Trecs
             return new NativeComponentLookupWrite<T>(entries, count, allocator);
         }
 
-        internal ReadOnlyList<GroupIndex> GetLookupGroupsForJobScheduling<T>(
-            ReadOnlyList<GroupIndex> groups
-        )
+        internal LookupEntries GetLookupEntriesForJobScheduling<T>(ReadOnlyList<GroupIndex> groups)
             where T : unmanaged, IEntityComponent
         {
-            return new ReadOnlyList<GroupIndex>(_entitiesDb.GetLookupEntries<T>(groups).Groups);
-        }
-
-        internal unsafe NativeComponentLookupRead<T> CreateNativeComponentLookupReadForJobScheduling<T>(
-            ReadOnlyList<GroupIndex> groups
-        )
-            where T : unmanaged, IEntityComponent
-        {
-            var cached = _entitiesDb.GetLookupEntries<T>(groups);
-            return new NativeComponentLookupRead<T>(
-                cached.Entries,
-                cached.Count,
-                Allocator.None
-            );
-        }
-
-        internal unsafe NativeComponentLookupWrite<T> CreateNativeComponentLookupWriteForJobScheduling<T>(
-            ReadOnlyList<GroupIndex> groups
-        )
-            where T : unmanaged, IEntityComponent
-        {
-            var cached = _entitiesDb.GetLookupEntries<T>(groups);
-            return new NativeComponentLookupWrite<T>(
-                cached.Entries,
-                cached.Count,
-                Allocator.None
-            );
+            return _entitiesDb.GetLookupEntries<T>(groups);
         }
 
         /// <summary>

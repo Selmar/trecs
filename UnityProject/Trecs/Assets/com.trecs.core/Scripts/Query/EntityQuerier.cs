@@ -350,16 +350,6 @@ namespace Trecs.Internal
             count = writeIdx;
         }
 
-        internal unsafe sealed class LookupEntries
-        {
-            public NativeComponentLookupEntry* Entries;
-            public int Count;
-            public int Version;
-
-            // Groups with an entry: they hold T and are not empty.
-            public readonly List<GroupIndex> Groups = new();
-        }
-
         /// <summary>
         /// Entries shared by every lookup over these groups until the next
         /// <see cref="InvalidateLookupEntries"/>. Lookups do not own them.
@@ -383,10 +373,10 @@ namespace Trecs.Internal
                     out cached.Entries,
                     out cached.Count
                 );
-                cached.Groups.Clear();
+                cached.GroupList.Clear();
                 for (int i = 0; i < cached.Count; i++)
                 {
-                    cached.Groups.Add(cached.Entries[i].GroupIndex);
+                    cached.GroupList.Add(cached.Entries[i].GroupIndex);
                 }
                 cached.Version = _lookupEntriesVersion;
             }

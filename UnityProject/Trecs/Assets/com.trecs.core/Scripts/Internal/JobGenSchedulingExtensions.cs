@@ -112,12 +112,20 @@ namespace Trecs.Internal
             world.GetComponentWriteForJobScheduling<T>(entityIndex);
 
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public static ReadOnlyList<GroupIndex> GetLookupGroupsForJob<T>(
+        public static LookupEntries GetLookupEntriesForJob<T>(
             this WorldAccessor world,
             ReadOnlyList<GroupIndex> groups
         )
             where T : unmanaged, IEntityComponent =>
-            world.GetLookupGroupsForJobScheduling<T>(groups);
+            world.GetLookupEntriesForJobScheduling<T>(groups);
+
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public static unsafe NativeComponentLookupRead<T> CreateNativeComponentLookupReadForJob<T>(
+            this WorldAccessor world,
+            LookupEntries entries
+        )
+            where T : unmanaged, IEntityComponent =>
+            new(entries.Entries, entries.Count, Allocator.None);
 
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static NativeComponentLookupRead<T> CreateNativeComponentLookupReadForJob<T>(
@@ -125,7 +133,15 @@ namespace Trecs.Internal
             ReadOnlyList<GroupIndex> groups
         )
             where T : unmanaged, IEntityComponent =>
-            world.CreateNativeComponentLookupReadForJobScheduling<T>(groups);
+            world.CreateNativeComponentLookupReadForJob<T>(world.GetLookupEntriesForJob<T>(groups));
+
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public static unsafe NativeComponentLookupWrite<T> CreateNativeComponentLookupWriteForJob<T>(
+            this WorldAccessor world,
+            LookupEntries entries
+        )
+            where T : unmanaged, IEntityComponent =>
+            new(entries.Entries, entries.Count, Allocator.None);
 
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static NativeComponentLookupWrite<T> CreateNativeComponentLookupWriteForJob<T>(
@@ -133,7 +149,7 @@ namespace Trecs.Internal
             ReadOnlyList<GroupIndex> groups
         )
             where T : unmanaged, IEntityComponent =>
-            world.CreateNativeComponentLookupWriteForJobScheduling<T>(groups);
+            world.CreateNativeComponentLookupWriteForJob<T>(world.GetLookupEntriesForJob<T>(groups));
 
         // ── NativeFactory helpers (buffer extraction from lookups) ──
 

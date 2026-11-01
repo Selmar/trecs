@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using Trecs.Collections;
 using Trecs.Internal;
 using Unity.Burst;
 using Unity.Collections;
@@ -16,6 +19,22 @@ namespace Trecs
         public GroupIndex GroupIndex;
         public void* DataPtr; // raw pointer into the underlying ComponentArray's NativeList<T>
         public int Count;
+    }
+
+    /// <summary>
+    /// One (component, groups) pair's entries, owned by the world and shared by every lookup
+    /// over them until the next structural change. Held across one schedule only.
+    /// </summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public sealed unsafe class LookupEntries
+    {
+        internal NativeComponentLookupEntry* Entries;
+        internal int Count;
+        internal int Version;
+        internal readonly List<GroupIndex> GroupList = new();
+
+        /// <summary>Groups with an entry: they hold the component and are not empty.</summary>
+        public ReadOnlyList<GroupIndex> Groups => new(GroupList);
     }
 
     /// <summary>

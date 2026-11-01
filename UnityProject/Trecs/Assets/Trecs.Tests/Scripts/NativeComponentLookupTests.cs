@@ -49,12 +49,12 @@ namespace Trecs.Tests
             var groups = a.WorldInfo.GetGroupsWithTagsAndComponents<TestInt>(TestTags.Alpha);
             var group = a.WorldInfo.GetSingleGroupWithTags(TestTags.Alpha);
 
-            NAssert.AreEqual(0, a.GetLookupGroupsForJob<TestInt>(groups).Count);
+            NAssert.AreEqual(0, a.GetLookupEntriesForJob<TestInt>(groups).Groups.Count);
 
             a.AddEntity(TestTags.Alpha).Set(new TestInt { Value = 10 }).AssertComplete();
             a.Submit();
 
-            NAssert.AreEqual(1, a.GetLookupGroupsForJob<TestInt>(groups).Count);
+            NAssert.AreEqual(1, a.GetLookupEntriesForJob<TestInt>(groups).Groups.Count);
             using (var lookup = a.CreateNativeComponentLookupReadForJob<TestInt>(groups))
             {
                 NAssert.AreEqual(10, lookup[new EntityIndex(0, group)].Value);

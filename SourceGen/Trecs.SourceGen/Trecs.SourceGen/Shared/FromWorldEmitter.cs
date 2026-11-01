@@ -61,10 +61,7 @@ namespace Trecs.SourceGen.Shared
                     if (IsLookup(e))
                     {
                         sb.AppendLine(
-                            $"{body}var {e.HoistedGroupsLocal} = {GenPrefix}world.WorldInfo.GetGroupsWithTagsAndComponents<{e.GenericArgDisplay}>({e.TagSetExpression});"
-                        );
-                        sb.AppendLine(
-                            $"{body}var {LiveGroupsLocal(e)} = {GenPrefix}world.GetLookupGroupsForJob<{e.GenericArgDisplay}>({e.HoistedGroupsLocal});"
+                            $"{body}var {EntriesLocal(e)} = {GenPrefix}world.GetLookupEntriesForJob<{e.GenericArgDisplay}>({GenPrefix}world.WorldInfo.GetGroupsWithTagsAndComponents<{e.GenericArgDisplay}>({e.TagSetExpression}));"
                         );
                     }
                     else
@@ -87,8 +84,8 @@ namespace Trecs.SourceGen.Shared
             e.Kind == FromWorldFieldKind.NativeComponentLookupRead
             || e.Kind == FromWorldFieldKind.NativeComponentLookupWrite;
 
-        static string LiveGroupsLocal(in FromWorldFieldEmitModel e) =>
-            e.HoistedGroupsLocal + "_live";
+        static string EntriesLocal(in FromWorldFieldEmitModel e) =>
+            e.HoistedGroupsLocal + "_entries";
 
         internal static void EmitFromWorldDepRegistration(
             StringBuilder sb,
@@ -135,7 +132,7 @@ namespace Trecs.SourceGen.Shared
                             e.Kind == FromWorldFieldKind.NativeComponentLookupRead
                                 ? "IncludeReadDep"
                                 : "IncludeWriteDep";
-                        sb.AppendLine($"{body}foreach (var {GenPrefix}lg in {LiveGroupsLocal(e)})");
+                        sb.AppendLine($"{body}foreach (var {GenPrefix}lg in {EntriesLocal(e)}.Groups)");
                         sb.AppendLine(
                             $"{body}    {GenPrefix}deps = {GenPrefix}scheduler.{method}({GenPrefix}deps, {rid}, {GenPrefix}lg);"
                         );
@@ -294,7 +291,7 @@ namespace Trecs.SourceGen.Shared
                         break;
                     case FromWorldFieldKind.NativeComponentLookupRead:
                         sb.AppendLine(
-                            $"{body}var {GenPrefix}lookup_{e.FieldName} = {GenPrefix}world.CreateNativeComponentLookupReadForJob<{t}>({e.HoistedGroupsLocal});"
+                            $"{body}var {GenPrefix}lookup_{e.FieldName} = {GenPrefix}world.CreateNativeComponentLookupReadForJob<{t}>({EntriesLocal(e)});"
                         );
                         sb.AppendLine(
                             $"{body}{GenPrefix}scheduler.RegisterPendingDispose({GenPrefix}lookup_{e.FieldName});"
@@ -305,7 +302,7 @@ namespace Trecs.SourceGen.Shared
                         break;
                     case FromWorldFieldKind.NativeComponentLookupWrite:
                         sb.AppendLine(
-                            $"{body}var {GenPrefix}lookup_{e.FieldName} = {GenPrefix}world.CreateNativeComponentLookupWriteForJob<{t}>({e.HoistedGroupsLocal});"
+                            $"{body}var {GenPrefix}lookup_{e.FieldName} = {GenPrefix}world.CreateNativeComponentLookupWriteForJob<{t}>({EntriesLocal(e)});"
                         );
                         sb.AppendLine(
                             $"{body}{GenPrefix}scheduler.RegisterPendingDispose({GenPrefix}lookup_{e.FieldName});"
@@ -398,9 +395,14 @@ namespace Trecs.SourceGen.Shared
                             e.Kind == FromWorldFieldKind.NativeComponentLookupRead
                                 ? "TrackJobRead"
                                 : "TrackJobWrite";
-                        sb.AppendLine($"{body}foreach (var {GenPrefix}lg in {LiveGroupsLocal(e)})");
+                        sb.AppendLine($"{body}foreach (var {GenPrefix}lg in {EntriesLocal(e)}.Groups)");
                         sb.AppendLine(
                             $"{body}    {GenPrefix}scheduler.{method}({GenPrefix}handle, {rid}, {GenPrefix}lg, {GenPrefix}jobName);"
+                        );
+                        // No group to track it under, and it still has to finish by the phase boundary.
+                        sb.AppendLine($"{body}if ({EntriesLocal(e)}.Groups.Count == 0)");
+                        sb.AppendLine(
+                            $"{body}    {GenPrefix}scheduler.TrackJob({GenPrefix}handle, {GenPrefix}jobName);"
                         );
                         break;
                     }
