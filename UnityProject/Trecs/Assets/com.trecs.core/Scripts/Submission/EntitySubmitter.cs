@@ -338,6 +338,8 @@ namespace Trecs.Internal
 
                     if (hasEverSubmitted)
                     {
+                        _entitiesQuerier.AssertComponentCountsMatch();
+
                         using (TrecsProfiling.Start("NotifyOnSubmissionCompleted"))
                         {
                             _eventsManager.NotifyOnSubmissionCompleted();

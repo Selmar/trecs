@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Trecs.Collections;
 using Unity.Collections;
@@ -143,34 +144,31 @@ namespace Trecs.Internal
                 "Attempted to get count for unrecognized group {0}",
                 group
             );
-            var entitiesInGroupPerType = _componentStore.GroupEntityComponentsDB[group.Index];
-
-            // Zero-component templates (e.g. tag/filter-only) have no
-            // component arrays, so we can't sample from one. They also can't
-            // hold per-entity data, so the live count is always 0.
-            if (entitiesInGroupPerType.Count == 0)
+            // Every array holds the same count, see AssertComponentCountsMatch. Zero-component
+            // templates (e.g. tag/filter-only) have no array to sample and hold no per-entity
+            // data, so their live count is always 0.
+            foreach (var (_, value) in _componentStore.GroupEntityComponentsDB[group.Index])
             {
-                return 0;
+                return value.Count;
             }
 
-            int? count = null;
+            return 0;
+        }
 
-            foreach (var (key, value) in entitiesInGroupPerType)
+        // Structural changes are the only writers of a count, so checked once per submission.
+        [Conditional("DEBUG")]
+        internal void AssertComponentCountsMatch()
+        {
+            var groups = _componentStore.GroupEntityComponentsDB;
+            for (int i = 0; i < groups.Length; i++)
             {
-                if (count == null)
+                int? count = null;
+                foreach (var (_, value) in groups[i])
                 {
-                    count = value.Count;
-#if !DEBUG
-                    break;
-#endif
-                }
-                else
-                {
+                    count ??= value.Count;
                     TrecsDebugAssert.IsEqual(count, value.Count);
                 }
             }
-
-            return count.Value;
         }
 
         // ── Native query methods ────────────────────────────────────────
