@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using Unity.Jobs;
 using UnityEngine;
 
 namespace Trecs.Internal
@@ -746,6 +747,10 @@ namespace Trecs.Internal
                 {
                     ((ISystem)systemInfo.System).Execute();
                 }
+
+                // Batched jobs start only on a kick or a Complete. Costs ~0.1 us when
+                // the system scheduled nothing.
+                JobHandle.ScheduleBatchedJobs();
             }
             finally
             {

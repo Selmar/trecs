@@ -1189,6 +1189,42 @@ namespace Trecs
 #endif
         }
 
+        internal NativeComponentRead<T> GetComponentReadForJobScheduling<T>(EntityIndex entityIndex)
+            where T : unmanaged, IEntityComponent
+        {
+            AssertIsCurrentlyExecutingAccessor();
+            AssertCanReadComponent<T>(entityIndex.GroupIndex);
+            var buf = _entitiesDb.QueryEntitiesAndIndex<T>(entityIndex, out var index);
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
+            var safety = SafetyManager.GetReadHandle(
+                ResourceId.Component(TypeId<T>.Value),
+                entityIndex.GroupIndex
+            );
+            return new(new NativeComponentBufferRead<T>(buf, safety), (int)index);
+#else
+            return new(new NativeComponentBufferRead<T>(buf), (int)index);
+#endif
+        }
+
+        internal NativeComponentWrite<T> GetComponentWriteForJobScheduling<T>(
+            EntityIndex entityIndex
+        )
+            where T : unmanaged, IEntityComponent
+        {
+            AssertIsCurrentlyExecutingAccessor();
+            AssertCanWriteComponent<T>(entityIndex.GroupIndex);
+            var buf = _entitiesDb.QueryEntitiesAndIndex<T>(entityIndex, out var index);
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
+            var safety = SafetyManager.GetWriteHandle(
+                ResourceId.Component(TypeId<T>.Value),
+                entityIndex.GroupIndex
+            );
+            return new(new NativeComponentBufferWrite<T>(buf, safety), (int)index);
+#else
+            return new(new NativeComponentBufferWrite<T>(buf), (int)index);
+#endif
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         void SyncAndRecord<T>(GroupIndex group)
             where T : unmanaged, IEntityComponent

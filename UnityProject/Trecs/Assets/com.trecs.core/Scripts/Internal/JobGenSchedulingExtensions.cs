@@ -100,14 +100,16 @@ namespace Trecs.Internal
             this WorldAccessor world,
             EntityIndex entityIndex
         )
-            where T : unmanaged, IEntityComponent => world.GetComponentRead<T>(entityIndex);
+            where T : unmanaged, IEntityComponent =>
+            world.GetComponentReadForJobScheduling<T>(entityIndex);
 
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static NativeComponentWrite<T> GetNativeComponentWriteForJob<T>(
             this WorldAccessor world,
             EntityIndex entityIndex
         )
-            where T : unmanaged, IEntityComponent => world.GetComponentWrite<T>(entityIndex);
+            where T : unmanaged, IEntityComponent =>
+            world.GetComponentWriteForJobScheduling<T>(entityIndex);
 
         [EditorBrowsable(EditorBrowsableState.Never)]
         public static NativeComponentLookupRead<T> CreateNativeComponentLookupReadForJob<T>(
