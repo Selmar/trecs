@@ -56,8 +56,14 @@ namespace Trecs
             return Value.ToString();
         }
 
+        // The hash formats the type's assembly-qualified name, so only the first call may pay it.
         public static TypeId FromType(Type type)
         {
+            if (TypeIdReverseLookup.TryGetId(type, out var known))
+            {
+                return known;
+            }
+
 #if TRECS_REQUIRE_EXPLICIT_TYPE_IDS
             var id = new TypeId(ExplicitTypeIdProvider.GetTypeId(type));
 #else

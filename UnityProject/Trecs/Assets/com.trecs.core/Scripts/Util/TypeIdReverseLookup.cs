@@ -70,6 +70,12 @@ namespace Trecs.Internal
             _idToType.Add(id, type);
         }
 
+        public static bool TryGetId(Type type, out TypeId id)
+        {
+            TrecsDebugAssert.That(UnityThreadHelper.IsMainThread);
+            return _typeToId.TryGetValue(type, out id);
+        }
+
         public static bool IsRegistered(Type type)
         {
             TrecsDebugAssert.That(UnityThreadHelper.IsMainThread);

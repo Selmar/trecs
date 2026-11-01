@@ -481,6 +481,15 @@ namespace Trecs.Internal
         public ReadOnlyList<GroupIndex> GetGroupsWithTagsAndComponents<T1>(TagSet tagset)
             where T1 : unmanaged, IEntityComponent
         {
+            // Same key GetComponentsListHash gives one type.
+            if (
+                GetTagsetInfo(tagset)
+                    .WithComponentsSubsets.TryGetValue(TypeId<T1>.Value.Value, out var groups)
+            )
+            {
+                return groups;
+            }
+
             // Use a cached list to avoid any per frame allocs
             _tempComponentTypeList.Clear();
             _tempComponentTypeList.Add(typeof(T1));
