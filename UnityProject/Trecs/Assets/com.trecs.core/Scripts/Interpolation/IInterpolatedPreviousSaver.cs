@@ -1,5 +1,4 @@
 using System;
-using Unity.Jobs;
 
 namespace Trecs
 {
@@ -10,7 +9,7 @@ namespace Trecs
     internal interface IInterpolatedPreviousSaver
     {
         void Initialize(World world);
-        JobHandle Save();
+        void Save();
 
         public Type ComponentType { get; }
     }

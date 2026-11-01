@@ -1,8 +1,6 @@
 using System;
 using Trecs.Internal;
-using Unity.Burst;
-using Unity.Collections;
-using Unity.Jobs;
+using Unity.Collections.LowLevel.Unsafe;
 using EditorBrowsable = System.ComponentModel.EditorBrowsableAttribute;
 using EditorBrowsableState = System.ComponentModel.EditorBrowsableState;
 
@@ -12,8 +10,6 @@ namespace Trecs
     public sealed class InterpolatedPreviousSaver<T> : IInterpolatedPreviousSaver
         where T : unmanaged, IEntityComponent
     {
-        static readonly string JobName = "InterpolatedPreviousSaver<" + typeof(T).Name + ">";
-
         WorldAccessor _world;
 
         public Type ComponentType
@@ -26,12 +22,19 @@ namespace Trecs
             _world = world.CreateAccessor(AccessorRole.Unrestricted);
         }
 
-        public JobHandle Save()
+        // ponytail: serial copy on the main thread. Jobs lose below ~200k entities and win
+        // only 3.3 ms vs 2.6 ms at 1M (28 MB, memory-bound, ~8 GB/s). Chunk into jobs if
+        // worlds reach that size and those 0.7 ms matter.
+        public unsafe void Save()
         {
-            var combined = default(JobHandle);
-            var scheduler = _world.JobScheduler;
-            var currentRid = ResourceId.Component(TypeId<T>.Value);
-            var previousRid = ResourceId.Component(TypeId<InterpolatedPrevious<T>>.Value);
+            TrecsDebugAssert.That(
+                !_world.JobScheduler.HasOutstandingJobs,
+                "Saving previous values needs every job completed"
+            );
+            TrecsDebugAssert.That(
+                UnsafeUtility.SizeOf<T>() == UnsafeUtility.SizeOf<InterpolatedPrevious<T>>(),
+                "InterpolatedPrevious<T> must have the layout of T"
+            );
 
             foreach (
                 var group in _world.WorldInfo.GetGroupsWithComponents<T, InterpolatedPrevious<T>>()
@@ -44,46 +47,11 @@ namespace Trecs
                     InterpolatedPrevious<T>
                 >(group);
 
-                var deps = default(JobHandle);
-                deps = scheduler.IncludeReadDep(deps, currentRid, group);
-                deps = scheduler.IncludeWriteDep(deps, previousRid, group);
-
-                // Manual scheduling: SavePreviousJob is nested inside the generic
-                // InterpolatedPreviousSaver<T>, which JobGenerator rejects (TRECS073),
-                // so we can't get a generated ScheduleParallel(WorldAccessor) overload
-                // here. The IncludeRead/Write/TrackJobRead/Write calls around this
-                // block reproduce the same dependency-tracking dance JobGenerator
-                // emits in JobGenerator.cs:1162-1213, so suppressing TRECS070 is safe.
-#pragma warning disable TRECS070
-                var handle = new SavePreviousJob
-                {
-                    CurrentValues = currents,
-                    PreviousValues = previouses,
-                }.ScheduleParallel(count, JobsUtil.ChooseBatchSize(count), deps);
-#pragma warning restore TRECS070
-
-                scheduler.TrackJobRead(handle, currentRid, group, JobName);
-                scheduler.TrackJobWrite(handle, previousRid, group, JobName);
-
-                combined = JobHandle.CombineDependencies(combined, handle);
-            }
-
-            return combined;
-        }
-
-        [BurstCompile]
-        internal struct SavePreviousJob : IJobFor
-        {
-            public NativeComponentBufferRead<T> CurrentValues;
-
-            [NativeDisableParallelForRestriction]
-            public NativeComponentBufferWrite<InterpolatedPrevious<T>> PreviousValues;
-
-            public readonly void Execute(int i)
-            {
-                ref readonly var current = ref CurrentValues[i];
-                ref var previous = ref PreviousValues[i];
-                previous.Value = current;
+                UnsafeUtility.MemCpy(
+                    previouses.GetRawPointer(out _).ToPointer(),
+                    currents.GetRawPointer(out _).ToPointer(),
+                    count * (long)UnsafeUtility.SizeOf<T>()
+                );
             }
         }
     }

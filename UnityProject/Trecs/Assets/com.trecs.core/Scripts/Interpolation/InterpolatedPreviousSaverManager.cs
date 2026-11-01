@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using Unity.Jobs;
 
 namespace Trecs.Internal
 {
@@ -35,14 +34,10 @@ namespace Trecs.Internal
 
         internal void SaveAll()
         {
-            var combined = default(JobHandle);
-
             for (int i = 0; i < _savers.Count; i++)
             {
-                combined = JobHandle.CombineDependencies(combined, _savers[i].Save());
+                _savers[i].Save();
             }
-
-            combined.Complete();
         }
     }
 }
