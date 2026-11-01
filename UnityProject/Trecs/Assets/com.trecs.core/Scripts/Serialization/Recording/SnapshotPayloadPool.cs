@@ -53,7 +53,9 @@ namespace Trecs.Internal
                     return candidate;
                 }
             }
-            return new byte[minLength];
+            // Headroom: snapshots grow a little between captures, and a pooled buffer
+            // too small for the next one is dropped, so exact sizes would never reuse.
+            return new byte[minLength + minLength / 8];
         }
 
         /// <summary>
