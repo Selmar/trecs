@@ -38,16 +38,16 @@ namespace Trecs.Internal
             if (!_tagSetInfos.TryGetValue(tagset, out var info))
             {
                 var groupsList = new List<GroupIndex>();
+                var tags = tagset.Tags;
 
                 foreach (var group in _allGroups)
                 {
                     var hasAllTags = true;
 
-                    var groupTagSet = _worldInfo.ToTagSet(group);
-                    var tags = tagset.Tags;
-                    foreach (var tag in tags)
+                    var groupTags = _worldInfo.ToTagSet(group).Tags;
+                    for (int i = 0; i < tags.Count; i++)
                     {
-                        if (!groupTagSet.Tags.Contains(tag))
+                        if (!ContainsTag(groupTags, tags[i]))
                         {
                             hasAllTags = false;
                             break;
@@ -65,6 +65,19 @@ namespace Trecs.Internal
             }
 
             return info;
+        }
+
+        // Not Enumerable.Contains: on an array it boxes per compare.
+        static bool ContainsTag(IReadOnlyList<Tag> tags, Tag tag)
+        {
+            for (int i = 0; i < tags.Count; i++)
+            {
+                if (tags[i] == tag)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         int GetComponentsListHash(List<Type> componentTypes)
